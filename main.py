@@ -1,0 +1,473 @@
+    # -*- coding: utf-8 -*-
+"""
+ALPHA FOOTBALL v0.4 — PUNTO DE ENTRADA Y ORQUESTADOR.
+
+Arranca pygame, inicializa la paleta visual, el sistema de audio,
+y gestiona la máquina de estados que transiciona entre pantallas de la UI.
+Implementa autoguardado resiliente al cerrar el juego.
+"""
+
+from __future__ import annotations
+
+import sys
+import os
+import logging
+import subprocess
+
+# --- DETECCION DE ARGUMENTO DE IMPRESION DE TIMEOUT ---
+# Si el usuario o sistema invoca el juego con la bandera '--print-timeout',
+# debemos imprimir el valor de timeout configurado para descargas de musica y salir.
+try:
+    if "--print-timeout" in sys.argv:
+        # Ocultamos la advertencia/bienvenida de pygame al importar audio
+        os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "hide"
+        try:
+            # Intentamos importar la constante del modulo de audio
+            from alpha_football.audio import SOCKET_TIMEOUT
+            print(SOCKET_TIMEOUT)
+        except Exception as error_imp:
+            # En caso de fallo en la importacion, usamos un valor de respaldo por defecto
+            print(15)
+        sys.exit(0)
+except SystemExit:
+    # Permitimos la salida del sistema controlada
+    sys.exit(0)
+except Exception as error_global_args:
+    # Manejo de error de respaldo para evitar cualquier interrupcion catastrofica
+    print(15)
+    sys.exit(0)
+
+# Configuración básica del logging inicial
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("alpha_football_bootstrap")
+
+def instalar_dependencia(nombre_paquete: str) -> bool:
+    """
+    Intenta instalar un paquete utilizando pip de forma silenciosa y automática.
+    Retorna True si la instalación reportó éxito, de lo contrario False.
+    """
+    try:
+        logger.info(f"Intentando instalar la dependencia faltante '{nombre_paquete}' de forma automatica...")
+        # Se ejecuta utilizando el mismo intérprete activo
+        resultado = subprocess.run(
+            [sys.executable, "-m", "pip", "install", nombre_paquete],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        logger.info(f"Instalacion exitosa de '{nombre_paquete}': {resultado.stdout.strip()}")
+        return True
+    except subprocess.CalledProcessError as error_proceso:
+        logger.error(
+            f"Fallo al instalar la dependencia '{nombre_paquete}' mediante pip. "
+            f"Codigo de retorno: {error_proceso.returncode}. "
+            f"Detalle de error: {error_proceso.stderr.strip()}"
+        )
+        return False
+    except Exception as error_general:
+        logger.error(f"Error inesperado al intentar instalar '{nombre_paquete}': {error_general}")
+        return False
+
+# Verificación de la dependencia crítica pygame
+try:
+    import pygame
+except ImportError as error_importacion:
+    logger.warning(
+        f"La libreria Pygame no esta instalada en el sistema: {error_importacion}. "
+        "Iniciando instalacion automatica para evitar el cierre del juego..."
+    )
+    exito = instalar_dependencia("pygame")
+    if not exito:
+        logger.critical(
+            "No se pudo instalar Pygame de forma automatica. "
+            "Por favor, instala la libreria manualmente ejecutando: pip install pygame"
+        )
+        sys.exit(1)
+    
+    # Reintento de importación
+    try:
+        import pygame
+    except ImportError as error_reintento:
+        logger.critical(
+            f"Aunque la instalacion reporto exito, la importacion de Pygame volvio a fallar: {error_reintento}."
+        )
+        sys.exit(1)
+
+# Continuación del logging con el logger oficial
+logger = logging.getLogger("alpha_football_main")
+
+# --- MONKEYPATCH PARA EVITAR CONFLICTOS EN LA COLA DE EVENTOS DE PYGAME ---
+# Guardamos la función original de pygame.event.get para llamarla una vez por frame
+_original_event_get = pygame.event.get
+_cached_frame_events = []
+
+def _custom_event_get(eventtype=None, pump=True):
+    """
+    Retorna la lista de eventos del frame actual sin limpiar la cola repetidamente.
+    Permite que tanto las pantallas como el bucle principal inspeccionen los mismos eventos.
+    """
+    global _cached_frame_events
+    try:
+        if eventtype is not None:
+            if isinstance(eventtype, (list, tuple)):
+                return [e for e in _cached_frame_events if e.type in eventtype]
+            return [e for e in _cached_frame_events if e.type == eventtype]
+        return list(_cached_frame_events)
+    except Exception as error_get:
+        logger.error(f"Error en el manejador personalizado de eventos: {error_get}")
+        return []
+
+# Reemplazamos globalmente en pygame
+pygame.event.get = _custom_event_get
+
+# Dimensiones de la pantalla
+SCREEN_W = 1280
+SCREEN_H = 720
+FPS = 60
+
+
+# --- Autoguardado al Salir ════════════════════════════════════════════════════
+
+def guardar_al_salir(estado: dict) -> None:
+    """Intenta guardar la partida automáticamente de forma segura antes de cerrar."""
+    try:
+        from alpha_football.save import guardar_partida
+        from alpha_football.models import EstadoJuego
+        
+        liga = estado.get('liga')
+        mi_equipo = estado.get('mi_equipo')
+        
+        # Si no hay partida activa en curso, no hacemos nada
+        if not liga or not mi_equipo:
+            return
+            
+        alin = estado.get('alineacion_activa')
+        datos_estado = {
+            "ligas": [liga.to_dict()],
+            "copas": [c.to_dict() for c in estado.get("copas", [])],
+            "equipo_usuario_id": mi_equipo.id,
+            "liga_usuario_id": liga.tipo,
+            "temporada": estado.get("temporada", 1),
+            "historial": estado.get("transfer_log", []),
+            "pantalla_actual": "temporada",
+            "alineacion_activa": {
+                "titulares": list(alin.titulares),
+                "formacion": str(alin.formacion)
+            } if alin else None
+        }
+        
+        estado_juego = EstadoJuego.from_dict(datos_estado)
+        guardar_partida(estado_juego)
+        logger.info("Partida autoguardada con éxito antes de salir.")
+    except Exception as e:
+        logger.error(f"Error al intentar realizar el autoguardado: {e}")
+
+# --- Coordenadas del Widget de Volumen Global ═════════════════════════════════
+# Ubicación del panel principal del control de volumen
+RECT_PANEL_VOLUMEN = pygame.Rect(1110, 20, 150, 80)
+# Ubicación del indicador visual de barra de progreso de volumen
+RECT_BARRA_VOLUMEN = pygame.Rect(1125, 47, 120, 6)
+# Botón para disminuir el volumen (-10%)
+RECT_BOTON_MINUS = pygame.Rect(1125, 58, 35, 22)
+# Botón para silenciar o restaurar el volumen (Mute)
+RECT_BOTON_MUTE = pygame.Rect(1167, 58, 35, 22)
+# Botón para aumentar el volumen (+10%)
+RECT_BOTON_PLUS = pygame.Rect(1210, 58, 35, 22)
+
+
+def procesar_eventos_volumen(estado: dict, eventos_frame: list) -> list:
+    """
+    Intercepta y procesa eventos de teclado o mouse relacionados con el volumen.
+    Retorna una lista de eventos que deben ser removidos para evitar que otras pantallas los capturen.
+    Implementa resiliencia y manejo robusto de excepciones de acuerdo a las reglas del usuario.
+    """
+    eventos_a_eliminar = []
+    try:
+        from alpha_football import audio
+    except Exception as error_importacion:
+        logger.error(f"No se pudo importar el modulo de audio al procesar eventos: {error_importacion}")
+        # En caso de excepción, retornamos lista vacía como alternativa segura para asegurar continuidad
+        return []
+
+    for evento in eventos_frame:
+        try:
+            # Procesamiento de clicks con el mouse
+            if evento.type == pygame.MOUSEBUTTONDOWN and evento.button == 1:
+                if RECT_BOTON_MINUS.collidepoint(evento.pos):
+                    # Reducir volumen en 10%
+                    nuevo_volumen = max(0.0, audio.CURRENT_VOLUME - 0.1)
+                    audio.set_volume(nuevo_volumen)
+                    eventos_a_eliminar.append(evento)
+                elif RECT_BOTON_PLUS.collidepoint(evento.pos):
+                    # Aumentar volumen en 10%
+                    nuevo_volumen = min(1.0, audio.CURRENT_VOLUME + 0.1)
+                    audio.set_volume(nuevo_volumen)
+                    eventos_a_eliminar.append(evento)
+                elif RECT_BOTON_MUTE.collidepoint(evento.pos):
+                    # Alternar silencio (Mute)
+                    if audio.CURRENT_VOLUME > 0.0:
+                        estado['last_non_zero_volume'] = audio.CURRENT_VOLUME
+                        audio.set_volume(0.0)
+                    else:
+                        volumen_restaurado = estado.get('last_non_zero_volume', 0.5)
+                        audio.set_volume(volumen_restaurado)
+                    eventos_a_eliminar.append(evento)
+            
+            # Procesamiento de teclas (M para mutear, - y + para control de volumen)
+            elif evento.type == pygame.KEYDOWN:
+                if evento.key == pygame.K_m:
+                    # Alternar silencio por teclado
+                    if audio.CURRENT_VOLUME > 0.0:
+                        estado['last_non_zero_volume'] = audio.CURRENT_VOLUME
+                        audio.set_volume(0.0)
+                    else:
+                        volumen_restaurado = estado.get('last_non_zero_volume', 0.5)
+                        audio.set_volume(volumen_restaurado)
+                    eventos_a_eliminar.append(evento)
+                elif evento.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+                    # Reducir volumen por teclado
+                    nuevo_volumen = max(0.0, audio.CURRENT_VOLUME - 0.1)
+                    audio.set_volume(nuevo_volumen)
+                    eventos_a_eliminar.append(evento)
+                elif evento.key in (pygame.K_PLUS, pygame.K_KP_PLUS, pygame.K_EQUALS):
+                    # Aumentar volumen por teclado
+                    nuevo_volumen = min(1.0, audio.CURRENT_VOLUME + 0.1)
+                    audio.set_volume(nuevo_volumen)
+                    eventos_a_eliminar.append(evento)
+                    
+        except Exception as error_evento:
+            logger.error(f"Error al procesar un evento de volumen individual: {error_evento}. Continuando...")
+            # En caso de error en un evento, no hacemos nada y continuamos para asegurar continuidad
+            continue
+
+    return eventos_a_eliminar
+
+
+def renderizar_widget_volumen(screen: pygame.Surface) -> None:
+    """
+    Dibuja el widget de volumen en la esquina superior derecha con diseño premium.
+    Incluye indicador de porcentaje, barra de progreso y botones con efectos de hover.
+    Resistente a fallos de inicialización del sistema de audio o de recursos visuales.
+    """
+    try:
+        from alpha_football.ui.theme import draw_panel, get_font, COLORS
+        from alpha_football import audio
+    except Exception as error_carga:
+        logger.error(f"Error al cargar modulos para dibujar volumen: {error_carga}")
+        # En caso de fallo de dependencias, no dibujamos para no colgar la renderización
+        return
+
+    try:
+        # 1. Dibujar el panel contenedor con diseño unificado
+        draw_panel(screen, RECT_PANEL_VOLUMEN)
+        
+        # 2. Determinar porcentaje de volumen y preparar el texto
+        try:
+            volumen_actual = getattr(audio, 'CURRENT_VOLUME', 0.5)
+        except Exception:
+            volumen_actual = 0.5
+            
+        porcentaje_vol = int(volumen_actual * 100)
+        texto_volumen = "MUTED" if porcentaje_vol == 0 else f"VOL: {porcentaje_vol}%"
+        
+        # 3. Renderizar el texto de volumen
+        try:
+            fuente_sm = get_font('sm')
+            color_texto = (255, 215, 0) if porcentaje_vol > 0 else (255, 68, 68)  # Dorado si activo, Rojo si mutado
+            superficie_texto = fuente_sm.render(texto_volumen, True, color_texto)
+            rect_texto = superficie_texto.get_rect(center=(RECT_PANEL_VOLUMEN.centerx, RECT_PANEL_VOLUMEN.top + 15))
+            screen.blit(superficie_texto, rect_texto)
+        except Exception as error_texto:
+            logger.error(f"Error al renderizar texto del volumen: {error_texto}")
+            
+        # 4. Dibujar la barra de progreso de volumen
+        try:
+            # Fondo de la barra (gris oscuro)
+            pygame.draw.rect(screen, (40, 50, 75), RECT_BARRA_VOLUMEN, border_radius=2)
+            # Relleno de la barra (azul celeste o verde neón si tiene volumen)
+            ancho_relleno = int(RECT_BARRA_VOLUMEN.width * volumen_actual)
+            if ancho_relleno > 0:
+                rect_relleno = pygame.Rect(RECT_BARRA_VOLUMEN.left, RECT_BARRA_VOLUMEN.top, ancho_relleno, RECT_BARRA_VOLUMEN.height)
+                color_relleno = COLORS.get('verde', (0, 255, 136)) if volumen_actual > 0.3 else COLORS.get('azul', (0, 191, 255))
+                pygame.draw.rect(screen, color_relleno, rect_relleno, border_radius=2)
+        except Exception as error_barra:
+            logger.error(f"Error al dibujar barra de volumen: {error_barra}")
+            
+        # 5. Dibujar los mini botones interactivos
+        try:
+            posicion_mouse = pygame.mouse.get_pos()
+            
+            def dibujar_mini_boton(rect_boton, texto_boton):
+                """Dibuja un botón con cambio de color dinámico al pasar el cursor (hover)."""
+                try:
+                    hover = rect_boton.collidepoint(posicion_mouse)
+                    color_fondo = (30, 45, 75) if hover else (20, 26, 46)
+                    color_borde = COLORS.get('verde', (0, 255, 136)) if hover else COLORS.get('azul', (0, 191, 255))
+                    color_texto = COLORS.get('verde', (0, 255, 136)) if hover else (255, 255, 255)
+                    
+                    try:
+                        pygame.draw.rect(screen, color_fondo, rect_boton, border_radius=4)
+                        pygame.draw.rect(screen, color_borde, rect_boton, width=1, border_radius=4)
+                    except TypeError:
+                        # Resiliencia si pygame es antiguo y no soporta border_radius en rect
+                        pygame.draw.rect(screen, color_fondo, rect_boton)
+                        pygame.draw.rect(screen, color_borde, rect_boton, width=1)
+                        
+                    superficie_btn = fuente_sm.render(texto_boton, True, color_texto)
+                    rect_btn_txt = superficie_btn.get_rect(center=rect_boton.center)
+                    screen.blit(superficie_btn, rect_btn_txt)
+                except Exception as error_interno_btn:
+                    logger.error(f"Fallo al dibujar botón '{texto_boton}': {error_interno_btn}")
+
+            dibujar_mini_boton(RECT_BOTON_MINUS, "-")
+            dibujar_mini_boton(RECT_BOTON_MUTE, "M")
+            dibujar_mini_boton(RECT_BOTON_PLUS, "+")
+            
+        except Exception as error_botones:
+            logger.error(f"Error al procesar botones del widget de volumen: {error_botones}")
+
+    except Exception as error_general:
+        logger.critical(f"Excepción general no controlada en renderizar_widget_volumen: {error_general}")
+
+
+# --- Bucle Principal ══════════════════════════════════════════════════════════
+
+def main():
+    try:
+        # Inicialización de Pygame
+        pygame.init()
+        pygame.font.init()
+        
+        screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
+        pygame.display.set_caption("Alpha Football v0.4")
+        clock = pygame.time.Clock()
+        
+        # Estado inicial vacío de la sesión
+        estado = {
+            'current_screen': 'menu',
+            'liga': None,
+            'mi_equipo': None,
+            'equipos': [],
+            'temporada': 1,
+            'jornada': 1,
+            'copas': [],
+            'transfer_log': [],
+            'fichajes_realizados': 0,
+            'audio_activado': True,
+            'volumen': 0.5
+        }
+        
+        # Inicializar música de fondo
+        try:
+            from alpha_football import audio
+            audio.init_audio()
+            audio.start_music()
+            logger.info("Música de fondo iniciada.")
+        except Exception as e_audio:
+            logger.warning(f"No se pudo inicializar la música: {e_audio}. El juego correrá en silencio.")
+            
+        running = True
+        while running:
+            # Consumir y cachear todos los eventos acumulados al inicio del frame
+            try:
+                global _cached_frame_events
+                _cached_frame_events = _original_event_get()
+            except Exception as e_events_cache:
+                logger.error(f"Error al actualizar la cola de eventos del frame: {e_events_cache}")
+                _cached_frame_events = []
+
+            # 0. Interceptar eventos y clics en el widget de volumen global
+            try:
+                eventos_a_eliminar = procesar_eventos_volumen(estado, _cached_frame_events)
+                for ev in eventos_a_eliminar:
+                    _cached_frame_events.remove(ev)
+            except Exception as e_vol_click:
+                logger.error(f"Error al procesar clics o teclas de volumen: {e_vol_click}")
+
+            # 1. Gestionar el tipo de pantalla actual
+            current_screen = estado.get('current_screen', 'menu')
+            
+            # 2. Despachar a la UI correspondiente
+            next_screen = None
+            try:
+                if current_screen == 'menu':
+                    from alpha_football.ui.menu import render as menu_render
+                    next_screen = menu_render(screen, estado)
+                elif current_screen == 'league_screen':
+                    from alpha_football.ui.league_screen import render as league_render
+                    next_screen = league_render(screen, estado)
+                elif current_screen == 'match_screen':
+                    from alpha_football.ui.match_screen import render as match_render
+                    next_screen = match_render(screen, estado)
+                elif current_screen == 'market_screen':
+                    from alpha_football.ui.market_screen import render as market_render
+                    next_screen = market_render(screen, estado)
+                elif current_screen == 'copa_screen':
+                    from alpha_football.ui.copa_screen import render as copa_render
+                    next_screen = copa_render(screen, estado)
+                elif current_screen == 'career_screen':
+                    from alpha_football.ui.career_screen import render as career_render
+                    next_screen = career_render(screen, estado)
+                elif current_screen == 'team_screen':
+                    from alpha_football.ui.team_screen import render as team_render
+                    next_screen = team_render(screen, estado)
+                else:
+                    logger.error(f"Pantalla desconocida: {current_screen}. Redirigiendo al menú.")
+                    estado['current_screen'] = 'menu'
+            except Exception as render_err:
+                logger.error(f"Error renderizando pantalla '{current_screen}': {render_err}", exc_info=True)
+                # Volvemos a league_screen o menú si algo explota
+                estado['current_screen'] = 'menu' if current_screen == 'menu' else 'league_screen'
+            
+            # 3. Transicionar o salir según la respuesta de la pantalla
+            if next_screen:
+                if next_screen == 'volver':
+                    estado['current_screen'] = 'league_screen'
+                elif next_screen == 'quit':
+                    running = False
+                elif next_screen == 'menu':
+                    estado['current_screen'] = 'menu'
+                else:
+                    estado['current_screen'] = next_screen
+                    
+            # 4. Manejo global de eventos para música y cierre de ventana
+            # Leemos la cola de eventos si es que las pantallas dejaron alguno (p.ej. QUIT)
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+                # Gestionamos eventos de fin de pista del reproductor de audio
+                try:
+                    from alpha_football import audio
+                    audio.check_music_event(event.type)
+                except Exception:
+                    pass
+                    
+            # DIBUJAR WIDGET DE VOLUMEN GLOBAL
+            try:
+                renderizar_widget_volumen(screen)
+            except Exception as e_vol_draw:
+                logger.error(f"Error al renderizar widget de volumen: {e_vol_draw}")
+                    
+            pygame.display.flip()
+            clock.tick(FPS)
+            
+        # Al salir del bucle, guardar partida y detener audio
+        logger.info("Cerrando el juego...")
+        guardar_al_salir(estado)
+        
+        try:
+            from alpha_football import audio
+            audio.stop_music()
+        except Exception:
+            pass
+            
+        pygame.quit()
+        sys.exit()
+        
+    except Exception as e_main:
+        logger.critical(f"Fallo catastrófico en la ejecución del juego: {e_main}", exc_info=True)
+        pygame.quit()
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

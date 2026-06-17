@@ -1,0 +1,41 @@
+# Archivos y carpetas compilados de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Archivos de guardado de partidas locales de AlphaFootball
+alpha_football_save.json
+alpha_football_save.json.bak
+alpha_football_save.json.tmp
+server.log
+
+# IDEs y configuración local de Editores
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+*.swo
+
+# Carpetas de Orquestación y metadatos del Agente Antigravity/Gemini
+.orq/
