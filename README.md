@@ -27,14 +27,21 @@ Este proyecto está desarrollado sobre **Pygame** y simula la experiencia comple
    - IA activa: los clubes rivales pueden realizar traspasos entre sí en segundo plano.
    - Aparición periódica de **Agentes Libres** e historial de fichajes detallado.
 
-5. **Banda Sonora y Widget Global de Volumen**:
+5. **Banda Sonora, Opciones y Música de YouTube**:
    - Sistema de sonido inteligente con reproducción asíncrona (shuffle) para evitar patrones repetitivos.
-   - **Widget Global**: Ubicado permanentemente en la esquina superior derecha para subir, bajar o silenciar el sonido de forma táctil o mediante atajos de teclado (`+`, `-`, `M`).
+   - Control de volumen en la pantalla de **Opciones** (atajos de teclado `+`, `-`, `M` siguen activos en el juego).
+   - **Importar música de YouTube**: pega una URL en Opciones (incluido **Ctrl+V** desde el portapapeles) y se descarga en segundo plano con `yt-dlp`.
+   - **Aviso "Sonando ahora"**: al cambiar de canción aparece el nombre de la pista en la parte inferior unos segundos y luego desaparece solo.
    - Resiliencia integrada: si la conexión falla o no hay codecs, el sistema sigue corriendo en silencio de forma segura sin colgar el juego.
 
 6. **Persistencia e Historial**:
    - Guardado automático al salir en formato JSON.
    - Recuperación resiliente en caso de corrupción de archivos utilizando un backup `.bak` automático.
+
+7. **Partidos, Plantillas y Velocidad (Novedades v0.5)**:
+   - **Plantillas más profundas**: cada club tiene 5 suplentes extra (un arquero de respaldo y relevos por línea), tanto en liga y copa como en carrera y amistosos.
+   - **Amistosos entre ligas diferentes**: elige la liga del equipo local y, por separado, la del visitante; pueden ser de ligas distintas.
+   - **Velocidad x2**: durante el partido, un botón `VEL x1/x2` duplica la rapidez de la simulación al instante.
 
 ---
 
@@ -123,7 +130,9 @@ AlphaFootball/
 
 - **Navegación**: Click izquierdo en los botones correspondientes de la pantalla.
 - **Volumen**:
-  - Tecla `+` / Botón `+`: Subir el volumen (incrementos del 10%).
-  - Tecla `-` / Botón `-`: Bajar el volumen (decrementos del 10%).
-  - Tecla `M` / Botón `M`: Silenciar / Restaurar el audio (Mute).
+  - Tecla `+`: Subir el volumen (incrementos del 10%).
+  - Tecla `-`: Bajar el volumen (decrementos del 10%).
+  - Tecla `M`: Silenciar / Restaurar el audio (Mute).
+- **Importar música (Opciones)**: clic en el campo de URL y `Ctrl+V` para pegar, o escribe y `Enter` para descargar.
+- **Velocidad del partido**: botón `VEL x1 / x2` en el marcador para duplicar la rapidez de la simulación.
 - **Salir**: Clic en la `X` de la ventana para guardar automáticamente tu progreso en la partida local.

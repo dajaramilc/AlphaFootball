@@ -32,10 +32,21 @@ try:
         draw_gradient_bg,
         draw_panel,
         draw_button,
-        draw_text
+        draw_text,
+        BLANCO,
+        AMARILLO,
+        GRIS_CLAR,
+        VERDE_CAMPO,
+        VERDE_CAMPO2
     )
 except Exception as error_theme:
     logger.warning(f"No se pudo cargar el tema visual ({error_theme}). Usando fallback.")
+    # Bug B: constantes de color del campo/alertas, también en el fallback para no romper.
+    BLANCO = (255, 255, 255)
+    AMARILLO = (255, 215, 0)
+    GRIS_CLAR = (200, 200, 200)
+    VERDE_CAMPO = (34, 110, 45)
+    VERDE_CAMPO2 = (40, 125, 52)
     SCREEN_W = 1280
     SCREEN_H = 720
     COLORS = {

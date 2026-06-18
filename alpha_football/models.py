@@ -53,6 +53,13 @@ class Jugador:
     id: int = 0                  # Identificador para mercado/guardado
     partidos_sancion: int = 0
     goles: int = 0
+    # --- Fase 3: desarrollo dinámico y valor de mercado ---
+    asistencias: int = 0
+    partidos_jugados: int = 0
+    promedio_nota: float = 0.0
+    progreso_desarrollo: float = 0.0   # acumulador oculto; al llegar a 1.0 sube OVR
+    valor: int = 0                     # valor de mercado recalculado tras cada partido
+    edad: int = 25
 
     @property
     def overall(self) -> int:
@@ -140,6 +147,13 @@ class Jugador:
                 
             partidos_sancion = int(datos.get("partidos_sancion", 0))
             goles = int(datos.get("goles", 0))
+            # Fase 3: campos de desarrollo y valor (tolerantes con saves viejos)
+            asistencias = int(datos.get("asistencias", 0))
+            partidos_jugados = int(datos.get("partidos_jugados", 0))
+            promedio_nota = float(datos.get("promedio_nota", 0.0))
+            progreso_desarrollo = float(datos.get("progreso_desarrollo", 0.0))
+            valor = int(datos.get("valor", 0))
+            edad = int(datos.get("edad", 25))
             import random
             id_jug = int(datos.get("id", random.randint(1000, 9999) if "id" not in datos else datos["id"]))
 
@@ -157,7 +171,13 @@ class Jugador:
                 lesion_partidos=lesion_partidos,
                 id=id_jug,
                 partidos_sancion=partidos_sancion,
-                goles=goles
+                goles=goles,
+                asistencias=asistencias,
+                partidos_jugados=partidos_jugados,
+                promedio_nota=promedio_nota,
+                progreso_desarrollo=progreso_desarrollo,
+                valor=valor,
+                edad=edad
             )
         except Exception as e:
             logger.warning(f"Excepción al reconstruir Jugador: {e}. Usando fallback.")

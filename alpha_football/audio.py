@@ -195,6 +195,102 @@ def _descargar_musica() -> None:
     except Exception as e:
         logger.error(f"Error inesperado en el modulo de descarga de musica: {e}")
 
+# --- Fase 7: importador interactivo de música (YouTube) + preferencias --------
+
+# Estado simple de la descarga interactiva para que la UI muestre feedback sin bloquearse.
+_DOWNLOAD_STATUS = {"activo": False, "mensaje": ""}
+
+def estado_descarga() -> dict:
+    """Devuelve una copia del estado de la última/actual descarga interactiva."""
+    return dict(_DOWNLOAD_STATUS)
+
+def descargar_url_async(url: str) -> None:
+    """
+    Descarga UNA URL de YouTube en un hilo aparte (no bloquea la UI). Resiliente:
+    intenta MP3 (FFmpeg) y cae a formato original; si yt-dlp falla, silencio funcional.
+    """
+    global _DOWNLOAD_STATUS
+    url = (url or "").strip()
+    if not url:
+        _DOWNLOAD_STATUS = {"activo": False, "mensaje": "Pega una URL válida."}
+        return
+    if _DOWNLOAD_STATUS.get("activo"):
+        return  # ya hay una descarga en curso
+
+    def _worker(target_url: str) -> None:
+        global _DOWNLOAD_STATUS
+        _DOWNLOAD_STATUS = {"activo": True, "mensaje": "Descargando…"}
+        try:
+            try:
+                import yt_dlp
+            except ImportError:
+                if _intentar_instalar_ytdlp():
+                    import yt_dlp
+                else:
+                    _DOWNLOAD_STATUS = {"activo": False, "mensaje": "yt-dlp no disponible."}
+                    return
+            os.makedirs(MUSIC_DIR, exist_ok=True)
+            out_pattern = os.path.join(MUSIC_DIR, "%(title)s.%(ext)s")
+            opts = {
+                'format': 'bestaudio/best',
+                'outtmpl': out_pattern,
+                'quiet': True,
+                'no_warnings': True,
+                'noplaylist': True,
+                'socket_timeout': SOCKET_TIMEOUT,
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }],
+            }
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    ydl.download([target_url])
+            except Exception as ffmpeg_err:
+                logger.warning(f"Descarga MP3 falló ({ffmpeg_err}); intentando formato original…")
+                opts.pop('postprocessors', None)
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    ydl.download([target_url])
+            _actualizar_playlist()
+            _DOWNLOAD_STATUS = {"activo": False, "mensaje": "¡Listo! Pista agregada a la música."}
+        except Exception as e:
+            logger.error(f"Error al descargar la URL '{target_url}': {e}")
+            _DOWNLOAD_STATUS = {"activo": False, "mensaje": "Falló la descarga (el juego sigue normal)."}
+
+    threading.Thread(target=_worker, args=(url,), daemon=True).start()
+
+
+# Preferencias persistentes (volumen, música activada, liga por defecto).
+_PREFS_PATH = os.path.join(PROJECT_ROOT, "preferencias.json")
+_PREFS_DEFECTO = {"volumen": 0.5, "musica_activada": True, "liga_por_defecto": None}
+
+def cargar_preferencias() -> dict:
+    """Lee las preferencias del usuario; devuelve los valores por defecto si no existen/ilegibles."""
+    import json
+    prefs = dict(_PREFS_DEFECTO)
+    try:
+        if os.path.exists(_PREFS_PATH):
+            with open(_PREFS_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                prefs.update({k: data[k] for k in _PREFS_DEFECTO if k in data})
+    except Exception as e:
+        logger.warning(f"No se pudieron leer las preferencias: {e}")
+    return prefs
+
+def guardar_preferencias(prefs: dict) -> None:
+    """Guarda las preferencias del usuario (fail-soft)."""
+    import json
+    try:
+        actual = cargar_preferencias()
+        actual.update({k: v for k, v in (prefs or {}).items() if k in _PREFS_DEFECTO})
+        with open(_PREFS_PATH, "w", encoding="utf-8") as f:
+            json.dump(actual, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.warning(f"No se pudieron guardar las preferencias: {e}")
+
+
 def start_music() -> None:
     """Arranca la reproducción de música en modo aleatorio si no está sonando."""
     global IS_PLAYING
@@ -216,9 +312,32 @@ def start_music() -> None:
 
 _LAST_PLAYED_TRACK: str | None = None
 
+# "Sonando ahora": nombre legible de la pista actual y bandera de que cambió la canción,
+# para que la UI muestre un aviso breve abajo y luego lo oculte sola.
+_CURRENT_TRACK_NAME: str = ""
+_TRACK_CHANGED: bool = False
+
+
+def cancion_actual() -> str:
+    """Devuelve el nombre legible de la pista que está sonando (sin ruta ni extensión)."""
+    return _CURRENT_TRACK_NAME
+
+
+def hay_cancion_nueva() -> bool:
+    """
+    True una sola vez cuando empezó a sonar una pista nueva (consume la bandera).
+    La UI lo usa para mostrar el aviso de 'sonando ahora' justo al cambiar de canción.
+    """
+    global _TRACK_CHANGED
+    if _TRACK_CHANGED:
+        _TRACK_CHANGED = False
+        return True
+    return False
+
+
 def _reproducir_siguiente() -> None:
     """Carga y reproduce la siguiente pista disponible en la playlist eligiéndola de forma aleatoria."""
-    global PLAYLIST, _LAST_PLAYED_TRACK
+    global PLAYLIST, _LAST_PLAYED_TRACK, _CURRENT_TRACK_NAME, _TRACK_CHANGED
     try:
         if not IS_PLAYING or not PLAYLIST:
             return
@@ -236,6 +355,9 @@ def _reproducir_siguiente() -> None:
         if os.path.exists(pista):
             pygame.mixer.music.load(pista)
             pygame.mixer.music.play()
+            # Guardar el nombre legible y avisar a la UI de que cambió la canción.
+            _CURRENT_TRACK_NAME = os.path.splitext(os.path.basename(pista))[0]
+            _TRACK_CHANGED = True
             logger.info(f"Reproduciendo pista: {pista}")
             # Definir un evento personalizado para indicar el final de la pista
             pygame.mixer.music.set_endevent(pygame.USEREVENT + 100)

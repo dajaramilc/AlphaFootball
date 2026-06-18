@@ -426,6 +426,38 @@ def simular_partido(
     return Resultado(local.nombre, visitante.nombre, gl, gv, eventos=eventos_partido)
 
 
+def simular_rango(
+    local:     Equipo,
+    visitante: Equipo,
+    min_inicio: int,
+    min_fin:    int,
+    mult:       Optional[dict] = None,
+    eventos:    Optional[list] = None,
+) -> tuple[int, int, list]:
+    """
+    Simula SOLO los minutos [min_inicio, min_fin] (inclusive) entre dos equipos.
+
+    Permite al frontend simular una mitad a la vez: la decisión de medio tiempo
+    (multiplicadores atk_l/def_l/atk_v/def_v en `mult`) afecta de verdad la 2ª mitad,
+    porque esos minutos se simulan DESPUÉS de elegir la charla. Reutiliza procesar_minuto.
+
+    Retorna (goles_local_del_rango, goles_visitante_del_rango, eventos_acumulados).
+    """
+    m = mult or {}
+    al = float(m.get("atk_l", 1.0)); dl = float(m.get("def_l", 1.0))
+    av = float(m.get("atk_v", 1.0)); dv = float(m.get("def_v", 1.0))
+    jl = local.once_disponible
+    jv = visitante.once_disponible
+    ev = eventos if eventos is not None else []
+    gl, gv = 0, 0
+    for minuto in range(int(min_inicio), int(min_fin) + 1):
+        gl, gv = procesar_minuto(
+            minuto, local, visitante, jl, jv, gl, gv, False, al, dl, av, dv,
+            eventos_acumulados=ev,
+        )
+    return gl, gv, ev
+
+
 def simular_penales(
     moral_local:     float,
     moral_visitante: float,

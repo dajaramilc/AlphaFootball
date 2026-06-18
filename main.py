@@ -157,8 +157,25 @@ def guardar_al_salir(estado: dict) -> None:
         }
         
         estado_juego = EstadoJuego.from_dict(datos_estado)
-        guardar_partida(estado_juego)
-        logger.info("Partida autoguardada con éxito antes de salir.")
+
+        # Fase 2: autoguardar en un SLOT (multislot). Si no hay slot activo, se elige el primer
+        # slot libre (o el 1) para no pisar otras partidas; los juegos cargados conservan su slot.
+        try:
+            from alpha_football import save as _save
+            slot = estado.get('slot_activo')
+            if not slot:
+                try:
+                    libres = [i + 1 for i, h in enumerate(_save.listar_slots()) if h is None]
+                    slot = libres[0] if libres else 1
+                except Exception:
+                    slot = 1
+                estado['slot_activo'] = slot
+            nombre = getattr(mi_equipo, 'nombre', None) or "Partida"
+            _save.guardar_en_slot(estado_juego, slot, nombre)
+            logger.info(f"Partida autoguardada en el slot {slot} antes de salir.")
+        except Exception as e_slot:
+            logger.warning(f"No se pudo autoguardar en slot ({e_slot}); usando archivo por defecto.")
+            guardar_partida(estado_juego)
     except Exception as e:
         logger.error(f"Error al intentar realizar el autoguardado: {e}")
 
@@ -330,6 +347,46 @@ def renderizar_widget_volumen(screen: pygame.Surface) -> None:
         logger.critical(f"Excepción general no controlada en renderizar_widget_volumen: {error_general}")
 
 
+def _dibujar_now_playing(screen: pygame.Surface, estado: dict) -> None:
+    """
+    Dibuja abajo, de forma breve, la canción que está sonando y luego desaparece sola.
+    El temporizador vive en el estado (now_playing_until); si ya venció, no dibuja nada.
+    """
+    try:
+        until = estado.get('now_playing_until', 0)
+        texto = estado.get('now_playing_text', "")
+        if not texto or pygame.time.get_ticks() > until:
+            return
+
+        from alpha_football.ui.theme import get_font, COLORS
+
+        etiqueta = f"♪ Sonando: {texto}"
+        if len(etiqueta) > 60:
+            etiqueta = etiqueta[:57] + "…"
+
+        fuente = get_font('sm')
+        color_verde = COLORS.get('verde', (0, 255, 136))
+        superficie = fuente.render(etiqueta, True, color_verde)
+
+        ancho = superficie.get_width() + 30
+        alto = 34
+        x = (SCREEN_W - ancho) // 2
+        y = SCREEN_H - alto - 16
+
+        # Panel translúcido para que el texto se lea sobre cualquier pantalla.
+        try:
+            panel = pygame.Surface((ancho, alto), pygame.SRCALPHA)
+            panel.fill((10, 14, 26, 205))
+            screen.blit(panel, (x, y))
+            pygame.draw.rect(screen, color_verde, pygame.Rect(x, y, ancho, alto), width=1, border_radius=8)
+        except Exception:
+            pass
+
+        screen.blit(superficie, (x + 15, y + 8))
+    except Exception as error_now_playing:
+        logger.error(f"Error al dibujar el aviso de canción actual: {error_now_playing}")
+
+
 # --- Bucle Principal ══════════════════════════════════════════════════════════
 
 def main():
@@ -365,7 +422,33 @@ def main():
             logger.info("Música de fondo iniciada.")
         except Exception as e_audio:
             logger.warning(f"No se pudo inicializar la música: {e_audio}. El juego correrá en silencio.")
-            
+
+        # Importar los renderers de pantalla UNA SOLA VEZ (antes se hacía `from ... import`
+        # dentro del bucle, en cada frame). Se cargan tras pygame.init() para evitar problemas
+        # de orden de inicialización.
+        PANTALLAS = {}
+        try:
+            from alpha_football.ui.menu import render as menu_render
+            from alpha_football.ui.league_screen import render as league_render
+            from alpha_football.ui.match_screen import render as match_render
+            from alpha_football.ui.market_screen import render as market_render
+            from alpha_football.ui.copa_screen import render as copa_render
+            from alpha_football.ui.career_screen import render as career_render
+            from alpha_football.ui.team_screen import render as team_render
+            from alpha_football.ui.options_screen import render as options_render
+            PANTALLAS = {
+                'menu': menu_render,
+                'league_screen': league_render,
+                'match_screen': match_render,
+                'market_screen': market_render,
+                'copa_screen': copa_render,
+                'career_screen': career_render,
+                'team_screen': team_render,
+                'options_screen': options_render,
+            }
+        except Exception as e_import_pantallas:
+            logger.critical(f"No se pudieron importar las pantallas del juego: {e_import_pantallas}", exc_info=True)
+
         running = True
         while running:
             # Consumir y cachear todos los eventos acumulados al inicio del frame
@@ -376,41 +459,25 @@ def main():
                 logger.error(f"Error al actualizar la cola de eventos del frame: {e_events_cache}")
                 _cached_frame_events = []
 
-            # 0. Interceptar eventos y clics en el widget de volumen global
-            try:
-                eventos_a_eliminar = procesar_eventos_volumen(estado, _cached_frame_events)
-                for ev in eventos_a_eliminar:
-                    _cached_frame_events.remove(ev)
-            except Exception as e_vol_click:
-                logger.error(f"Error al procesar clics o teclas de volumen: {e_vol_click}")
+            # 0. Atajos globales de volumen (+/-/M). Se SUPRIMEN en la pantalla de Opciones,
+            #    que tiene sus propios controles y un campo de texto (la URL podría contener -, +, =).
+            if estado.get('current_screen') != 'options_screen':
+                try:
+                    eventos_a_eliminar = procesar_eventos_volumen(estado, _cached_frame_events)
+                    for ev in eventos_a_eliminar:
+                        _cached_frame_events.remove(ev)
+                except Exception as e_vol_click:
+                    logger.error(f"Error al procesar clics o teclas de volumen: {e_vol_click}")
 
             # 1. Gestionar el tipo de pantalla actual
             current_screen = estado.get('current_screen', 'menu')
             
-            # 2. Despachar a la UI correspondiente
+            # 2. Despachar a la UI correspondiente (renderers ya importados una sola vez)
             next_screen = None
             try:
-                if current_screen == 'menu':
-                    from alpha_football.ui.menu import render as menu_render
-                    next_screen = menu_render(screen, estado)
-                elif current_screen == 'league_screen':
-                    from alpha_football.ui.league_screen import render as league_render
-                    next_screen = league_render(screen, estado)
-                elif current_screen == 'match_screen':
-                    from alpha_football.ui.match_screen import render as match_render
-                    next_screen = match_render(screen, estado)
-                elif current_screen == 'market_screen':
-                    from alpha_football.ui.market_screen import render as market_render
-                    next_screen = market_render(screen, estado)
-                elif current_screen == 'copa_screen':
-                    from alpha_football.ui.copa_screen import render as copa_render
-                    next_screen = copa_render(screen, estado)
-                elif current_screen == 'career_screen':
-                    from alpha_football.ui.career_screen import render as career_render
-                    next_screen = career_render(screen, estado)
-                elif current_screen == 'team_screen':
-                    from alpha_football.ui.team_screen import render as team_render
-                    next_screen = team_render(screen, estado)
+                render_fn = PANTALLAS.get(current_screen)
+                if render_fn is not None:
+                    next_screen = render_fn(screen, estado)
                 else:
                     logger.error(f"Pantalla desconocida: {current_screen}. Redirigiendo al menú.")
                     estado['current_screen'] = 'menu'
@@ -442,12 +509,21 @@ def main():
                 except Exception:
                     pass
                     
-            # DIBUJAR WIDGET DE VOLUMEN GLOBAL
+            # Fase 7: el widget de volumen flotante se retiró de todas las pantallas;
+            # el control de volumen vive ahora en la pantalla de Opciones (atajos +/-/M siguen activos).
+
+            # Aviso de "sonando ahora": al cambiar de canción aparece abajo unos segundos y se oculta solo.
             try:
-                renderizar_widget_volumen(screen)
-            except Exception as e_vol_draw:
-                logger.error(f"Error al renderizar widget de volumen: {e_vol_draw}")
-                    
+                from alpha_football import audio as _audio_np
+                if _audio_np.hay_cancion_nueva():
+                    nombre_cancion = _audio_np.cancion_actual()
+                    if nombre_cancion:
+                        estado['now_playing_text'] = nombre_cancion
+                        estado['now_playing_until'] = pygame.time.get_ticks() + 6000  # visible 6 s
+                _dibujar_now_playing(screen, estado)
+            except Exception as e_now_playing:
+                logger.debug(f"No se pudo mostrar el aviso de canción: {e_now_playing}")
+
             pygame.display.flip()
             clock.tick(FPS)
             

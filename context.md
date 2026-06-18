@@ -1,6 +1,6 @@
 # ALPHA FOOTBALL — Contexto de Proyecto (v0.4)
-**Última actualización:** 2026-06-08
-**Sesión actual:** v0.4 — Refactor completo a UI de Escritorio (Pygame) e Integración de Copas y Mercado
+**Última actualización:** 2026-06-18
+**Sesión actual:** v0.5 — Se DESCARTA la migración a Tauri; se queda en Pygame y se optimiza la fluidez (Fase 0) + se arreglan Bug A y Bug B. Ver Bitácora.
 
 ---
 
@@ -118,3 +118,44 @@ Para iniciar el juego de forma unificada:
 python main.py
 ```
 *(Pygame debe estar instalado en el entorno. yt-dlp y FFmpeg son recomendados para la descarga de audio).*
+
+---
+
+## Bitácora — v0.5 (Pygame, optimización)
+
+* **2026-06-17 — Cambio de rumbo: NO se migra a Tauri.** La lentitud no era de Python sino del renderizado. El plan completo (optimización + todas las features + bugs) está en [`migration_and_features_plan.md`](migration_and_features_plan.md) reescrito para Pygame.
+* **2026-06-17 — Fase 0 (fluidez) aplicada y verificada (headless):**
+  * `ui/theme.py`: **gradiente de fondo cacheado** (antes dibujaba **720 `draw.line` por frame** en cada pantalla → ahora 1 blit de una `Surface` cacheada por tamaño); **`get_font` memoizado** (`_FONT_CACHE`, antes creaba una `Font` nueva por cada texto por frame); **`draw_text` con cache de superficies** (`_TEXT_CACHE`, acotado a 2000) para no re-renderizar el mismo texto cada frame.
+  * `main.py`: los **renderers de pantalla se importan una sola vez** (dispatch dict `PANTALLAS`) en vez de `from ... import` dentro del bucle en cada frame.
+  * Pendiente de Fase 0: cargar el PNG de fondo (6.6 MB) una vez + `.convert()` y revisar `.convert()` de imágenes por pantalla.
+* **2026-06-17 — Bug A arreglado:** `ui/copa_screen.py` ahora importa `from typing import Optional` (la anotación de `obtener_partido_copa_pendiente` crasheaba el import de la pantalla de Copa con `NameError`).
+* **2026-06-17 — Bug B arreglado:** las constantes `BLANCO`, `AMARILLO`, `GRIS_CLAR`, `VERDE_CAMPO`, `VERDE_CAMPO2` se definen ahora en `ui/theme.py` y se importan en `ui/team_screen.py` (con fallback local en el `except`).
+* **Verificación:** `py_compile` de los 4 archivos OK; import real de `copa_screen`/`team_screen`/`theme` OK (Bug A/B cerrados); test headless confirmó que fuente, gradiente y texto se cachean. **Falta validar en vivo el FPS** ejecutando `python main.py` con ventana real.
+* **2026-06-17 — Mecánicas de MOTOR hechas por Diego/Opus (verificadas headless):**
+  * **Fase 3 — Desarrollo de jugadores:** nuevo `alpha_football/desarrollo.py` (`desarrollar_plantilla_post_partido`): nota del partido 4.0–10.0, `promedio_nota`, reparto de goles/asistencias entre MED/DEL, `progreso_desarrollo` (POR/DEF: clean sheet +0.10, nota>7.5 +0.05; MED/DEL: gol +0.20, asist +0.10, nota>7.5 +0.10), al llegar a 1.0 → +1 OVR en 3 atributos al azar, y recálculo de `valor`. Campos nuevos en `models.Jugador`: `asistencias, partidos_jugados, promedio_nota, progreso_desarrollo, valor, edad` (con defaults; `from_dict` tolerante).
+  * **Fase 4 — Ofertas recibidas (IA compradora):** en `market.py`: `ventana_mercado_abierta` (jornadas 1–3 y últimas 3), `generar_ofertas_recibidas` (15%/jornada, monto = valor × Random(0.95,1.5), se guardan en `estado.mercado_ofertas`), `aceptar_oferta`/`rechazar_oferta`. (`calcular_valor` con OVR²×1000×factor_edad ya existía.)
+  * **Fase 2 — Persistencia robusta:** `save.py` ya tenía escritura atómica + `.bak`; se añadió **magic + checksum SHA-256** (detecta corrupción/manipulación → carga al `.bak`) y **multislot**: `ruta_slot`, `guardar_en_slot` (con cabecera: nombre_partida, fecha, equipo, temporada, jornada, presupuesto), `cargar_slot`, `leer_cabecera_slot`, `listar_slots`.
+  * **Fase 5 — Motor del partido:** ya existía en `engine.py` (`simular_partido` con `decision_mt` aplicando multiplicadores de la charla de medio tiempo a la 2ª mitad). Solo falta la pantalla en vivo (front).
+  * **Verificación:** `py_compile` de los 4 módulos OK; test headless OK (Fase3: 11 jugaron, 3 goles repartidos, valores y notas; Fase4: oferta generada + aceptar traspasa y cobra; Fase2: slot+cabecera+listado y el **checksum detectó una manipulación** de `temporada`).
+* **Reparto del trabajo (en el plan):** el motor queda hecho; **al orquestador van solo front-end/wiring** — UI de slots, wiring del desarrollo post-partido, buzón de ofertas, reloj en vivo + charla de medio tiempo (rellena `decision_mt`), Partido Amistoso, y Opciones + yt-dlp. Ver tabla "Estado de ejecución" en [`migration_and_features_plan.md`](migration_and_features_plan.md) con los puntos de integración exactos.
+* **Siguiente:** entregar las tareas de front/wiring al orquestador (Constela) con el plan actualizado; validar el FPS en vivo con `python main.py`.
+* **2026-06-17 — TODAS las features restantes implementadas por Diego/Opus (verificadas headless):**
+  * **Fase 5 (partido en vivo + charla de medio tiempo):** `engine.simular_rango(local,vis,min_ini,min_fin,mult)` simula por mitades; `ui/match_screen.py` reescrito: reloj **1 seg/min** (`MS_POR_MINUTO=1000`), simula la 1ª mitad al entrar, pausa al 45, la charla (4 opciones → `CHARLAS_MT`) rellena `decision_mt` y la **2ª mitad se simula con el motor** usando esos multiplicadores (verificado: atacar fuerte sube goles 0.70→5.13). Al finalizar aplica el **desarrollo (Fase 3)** y muestra resumen (subió OVR / figura).
+  * **Fase 4 (ofertas IA):** `market.crear_oferta_ui` (objetos runtime); al avanzar jornada en `match_screen` se genera (15% en ventana abierta) y se guarda en `estado['ofertas_recibidas']`; **buzón** con aceptar/rechazar en `ui/market_screen.py` (traspasa + cobra + reemplazo).
+  * **Fase 7 (Opciones + música):** nueva `ui/options_screen.py` (control de volumen + barra, importador de URL de YouTube con `audio.descargar_url_async` async/fail-soft, estado de descarga, persistencia de prefs). `audio.py`: `descargar_url_async`, `estado_descarga`, `cargar/guardar_preferencias` (`preferencias.json`). **Se retiró el widget de volumen flotante** de `main.py` (atajos +/-/M se conservan; se suprimen en Opciones para poder escribir la URL).
+  * **Fase 2 (multislot UI):** menú **Cargar Partida → selector de 5 slots** (`save.listar_slots` con cabecera; `save.cargar_slot`), y `main.py` autoguarda al **slot activo** al salir (primer slot libre si no hay uno asignado). Backend (atómico + magic + checksum) ya estaba.
+  * **Fase 6 (Partido Amistoso):** `ui/menu.py` con pasos `amistoso_league`/`amistoso_teams` (elegir liga y los 2 equipos) + modo `amistoso` en `match_screen` (vuelve al menú, **sin** tocar liga/copa/carrera ni aplicar desarrollo).
+  * **Fase 0:** las imágenes (logo, estrellas) ya se cargan una vez y se cachean en `estado`; el gradiente usa `convert()`. No hay loads por frame.
+  * **Verificación:** `py_compile` de todos los módulos + smokes headless (driver `dummy`) de opciones (captura texto), load_slots, amistoso (simula 15 eventos), buzón, y los caches. **Falta solo validar FPS/look en vivo con `python main.py`.**
+* **Estado: el juego v0.5 en Pygame queda COMPLETO según el plan** (optimización + bugs + multislot + desarrollo + ofertas + simulación calibrada + amistoso + opciones/yt-dlp). El plan `migration_and_features_plan.md` marca todas las fases ✅.
+
+## Bitácora — v0.6 (mejoras de UX pedidas por Diego)
+
+* **2026-06-18 — 6 mejoras (verificadas headless con `SDL_VIDEODRIVER=dummy`):**
+  * **Pegar URL de YouTube (Ctrl+V):** `ui/options_screen.py` ahora maneja `Ctrl+V` en el campo de URL con nuevo helper `_leer_portapapeles()` (Tkinter como opción principal — fiable en Windows y en la stdlib — y `pygame.scrap` como fallback). El placeholder indica "(Ctrl+V)".
+  * **Velocidad x2:** `ui/match_screen.py` usa `estado['sim_velocidad_factor']` (1 o 2, persistente) → `sim_speed = MS_POR_MINUTO // factor`. Botón `VEL x1/x2` dibujado en el marcador (`rect_velocidad`) que alterna al instante.
+  * **+5 jugadores por equipo (TODOS los equipos):** nuevo módulo `alpha_football/plantilla.py` (`expandir_plantilla` / `expandir_liga`, idempotente con flag `_plantilla_expandida`). Se engancha en `menu.load_league_teams` (cubre liga/carrera/amistoso) y al final de `data/internacional.py` (cubre Copa). Suplentes generados (1 POR + relevos por línea), nivel un poco por debajo del once base. Plantillas: 11 → 16. Las partidas guardadas conservan su plantilla (no se re-expanden).
+  * **Amistosos entre ligas diferentes:** `ui/menu.py` ahora usa `estado['amis_phase']` ('local'→'visitante'). Se elige liga+equipo del local y luego liga+equipo del visitante por separado (pueden ser ligas distintas). Botón "OTRA LIGA" para cambiar de liga sin perder el equipo ya elegido. Comparación por `equipo.id` para no permitir el mismo club contra sí mismo.
+  * **Aviso "Sonando ahora":** `audio.py` registra `_CURRENT_TRACK_NAME` + bandera `_TRACK_CHANGED` al cambiar de pista (`cancion_actual()`, `hay_cancion_nueva()`). `main.py` (`_dibujar_now_playing`) muestra un panel abajo con el nombre de la canción durante 6 s y se oculta solo.
+  * **Editar la UI de forma breve (Pygame):** `ui/theme.py` tiene un bloque "EDITA AQUÍ" con `FONT_SIZES` central (usado por `get_font`) junto a `COLORS`: cambiar colores/tamaños en un solo lugar afecta todas las pantallas. **Pendiente/decisión de Diego:** preguntó si la UI se puede hacer en HTML/CSS — eso es una migración completa a web (pywebview/Eel/Tauri), justo lo que se descartó en v0.5; queda como decisión futura, no implementada.
+  * **Verificación:** `py_compile` de los 8 archivos OK; smoke headless: las 5 ligas con 16 jug/equipo (idempotente), pools de Copa a 16, API de audio presente, helper de pegado presente, `FONT_SIZES` central, e import de `match_screen`/`main` OK. **Falta validar en vivo con `python main.py` (ventana real):** look del botón VEL, toast de canción y el `Ctrl+V` real.

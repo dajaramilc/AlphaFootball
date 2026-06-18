@@ -8,6 +8,7 @@ de eliminación directa (Octavos, Cuartos, Semis, Final) con líneas conectoras 
 import sys
 import os
 import random
+from typing import Optional  # Bug A: usado en la anotación de obtener_partido_copa_pendiente
 
 # Intentar importar pygame de manera segura
 try:

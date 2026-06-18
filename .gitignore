@@ -27,6 +27,10 @@ alpha_football_save.json.bak
 alpha_football_save.json.tmp
 server.log
 
+# Datos locales por usuario (no son código fuente)
+saves/
+preferencias.json
+
 # IDEs y configuración local de Editores
 .vscode/
 .idea/

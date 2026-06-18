@@ -46,6 +46,18 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
+# Fase 5: reloj calibrado — 1 segundo real = 1 minuto de juego (partido de 90 seg).
+MS_POR_MINUTO = 1000
+
+# Multiplicadores de la 2ª mitad según la charla de medio tiempo (afectan al MOTOR).
+# Se aplican al lado del USUARIO; el rival queda en 1.0.
+CHARLAS_MT = {
+    1: {"atk": 1.05, "def": 1.05, "msg": "DT: Charla motivacional. ¡Salen enchufados!"},
+    2: {"atk": 1.20, "def": 0.90, "msg": "DT: Planteamiento ofensivo. ¡Al ataque!"},
+    3: {"atk": 0.85, "def": 1.25, "msg": "DT: Autobús atrás. Cerramos filas."},
+    4: {"atk": 1.00, "def": 1.00, "msg": "DT: Mantenemos el plan original."},
+}
+
 # --- Funciones Auxiliares de Dibujo y Resiliencia ═════════════════════════════
 
 def get_team_color(team_id: str) -> tuple[int, int, int]:
@@ -425,6 +437,11 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                     goles_visitante = 0
                     jugado = False
                 partido = StubPartido()
+        elif match_mode == 'amistoso':
+            # Fase 6: partido suelto, sin impacto en liga/copa/carrera.
+            local = estado.get('amis_local')
+            visitante = estado.get('amis_visitante')
+            partido = None
         else:
             partido = estado.get('partido_actual')
             if not liga or not mi_equipo or not partido:
@@ -435,13 +452,35 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
 
         if not local or not visitante:
             logger.error("No se encontraron los equipos del partido.")
-            return "league_screen" if match_mode != 'copa' else "copa_screen"
+            if match_mode == 'copa':
+                return "copa_screen"
+            if match_mode == 'amistoso':
+                return "menu"
+            return "league_screen"
             
-        # 1. Simulación atómica al entrar
+        # 1. Simulación de la PRIMERA MITAD al entrar. La 2ª mitad se simula DESPUÉS de la
+        #    charla de medio tiempo, para que la decisión táctica afecte de verdad al motor.
         if 'sim_resultado' not in estado:
-            from alpha_football.engine import simular_partido
-            res = simular_partido(local, visitante, con_eventos_caoticos=True)
-            estado['sim_resultado'] = res
+            from alpha_football.engine import simular_rango
+            _gl1, _gv1, ev1 = simular_rango(local, visitante, 1, 45)
+            # Sabor: evento caótico ocasional en la 1ª mitad
+            try:
+                if random.random() < 0.3:
+                    ev1.append({
+                        "minuto": random.randint(8, 44),
+                        "tipo": "caotico",
+                        "equipo_id": local.id if random.random() < 0.5 else visitante.id,
+                        "detalle": random.choice([
+                            "¡El DT le grita al árbitro con un megáfono!",
+                            "¡Una invasión de palomas interrumpe el juego!",
+                            "¡La afición hace la ola y motiva al equipo!",
+                        ]),
+                    })
+                    ev1.sort(key=lambda e: e['minuto'])
+            except Exception:
+                pass
+            estado['sim_resultado'] = True            # marca de inicialización
+            estado['sim_eventos'] = ev1               # eventos a revelar (crece con la 2ª mitad)
             estado['sim_minuto'] = 0
             estado['sim_goles_l'] = 0
             estado['sim_goles_v'] = 0
@@ -451,10 +490,12 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             estado['sim_flash_goles'] = 0 # contador de frames para animación de gol
             estado['sim_goleador_flash'] = ""
             estado['sim_ajuste_realizado'] = False
-            estado['sim_speed'] = 80 # ms por minuto simulado
+            # Velocidad de simulación: factor 1 = normal, 2 = el doble de rápido. Se conserva
+            # entre partidos (estado), por eso se lee con get en vez de fijarlo siempre a 1.
+            estado.setdefault('sim_velocidad_factor', 1)
+            estado['sim_speed'] = max(60, MS_POR_MINUTO // estado['sim_velocidad_factor'])
             estado['sim_last_tick'] = pygame.time.get_ticks()
-            
-        res = estado['sim_resultado']
+
         minuto = estado['sim_minuto']
         goles_l = estado['sim_goles_l']
         goles_v = estado['sim_goles_v']
@@ -469,7 +510,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 estado['sim_last_tick'] = now
                 
                 # Comprobar eventos de este minuto
-                eventos_este_min = [e for e in res.eventos if e['minuto'] == minuto]
+                eventos_este_min = [e for e in estado['sim_eventos'] if e['minuto'] == minuto]
                 for e in eventos_este_min:
                     if e not in estado['sim_eventos_procesados']:
                         estado['sim_eventos_procesados'].append(e)
@@ -572,6 +613,11 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         reloj_str = f"{minuto}'" if minuto < 90 else "FINAL"
         r_w = get_font('md').size(reloj_str)[0]
         draw_text(screen, reloj_str, (SCREEN_W // 2 - r_w // 2, 115), size='md', color='azul')
+
+        # Botón de velocidad: alterna x1 / x2 para duplicar la rapidez de la simulación.
+        factor_vel = estado.get('sim_velocidad_factor', 1)
+        rect_velocidad = pygame.Rect(1085, 112, 115, 42)
+        draw_button(screen, rect_velocidad, f"VEL x{factor_vel}", rect_velocidad.collidepoint(pygame.mouse.get_pos()))
         
         # Barra de progreso del partido interactiva con pelotita corriendo
         try:
@@ -649,7 +695,14 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 return "menu"
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 click_pos = event.pos
-                
+
+        # Clic en el botón de velocidad: alterna x1 <-> x2 y actualiza el ritmo del reloj al instante.
+        if click_pos and rect_velocidad.collidepoint(click_pos):
+            nuevo_factor = 1 if estado.get('sim_velocidad_factor', 1) >= 2 else 2
+            estado['sim_velocidad_factor'] = nuevo_factor
+            estado['sim_speed'] = max(60, MS_POR_MINUTO // nuevo_factor)
+            click_pos = None  # consumir el clic para que no active otra cosa debajo
+
         # A. Animación de Flash de Gol con Confeti y Balón Rebotando
         if estado['sim_flash_goles'] > 0:
             estado['sim_flash_goles'] -= 1
@@ -744,44 +797,74 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             draw_tactical_option_button(screen, b4, "4. MANTENER PLAN DE JUEGO ORIGINAL", hov4, border_color=(255, 255, 255))
             
             if click_pos:
-                # Aplicamos la estrategia elegida alterando sutilmente la simulación
-                if b1.collidepoint(click_pos):
-                    # Charla motivacional
-                    for j in mi_equipo.jugadores:
-                        j.moral = min(100, j.moral + 15)
-                    estado['sim_comentarios'].append("DT: Charla motivacional exitosa. ¡Los jugadores salen motivados!")
-                elif b2.collidepoint(click_pos):
-                    # Más agresividad (Añadimos gol al usuario con 65% probabilidad o forzamos el marcador)
-                    if random.random() < 0.65:
-                        if mi_equipo.id == local.id:
-                            estado['sim_goles_l'] += 1
-                        else:
-                            estado['sim_goles_v'] += 1
-                        estado['sim_comentarios'].append("DT: Planteamiento ofensivo de riesgo. ¡Marcamos de contra!")
+                eleccion = None
+                if b1.collidepoint(click_pos):   eleccion = 1
+                elif b2.collidepoint(click_pos): eleccion = 2
+                elif b3.collidepoint(click_pos): eleccion = 3
+                elif b4.collidepoint(click_pos): eleccion = 4
+
+                if eleccion:
+                    charla = CHARLAS_MT[eleccion]
+                    # La charla motivacional sube moral real (afecta el poder efectivo de los jugadores).
+                    if eleccion == 1 and mi_equipo:
+                        try:
+                            for j in mi_equipo.jugadores:
+                                j.moral = min(100, j.moral + 10)
+                        except Exception:
+                            pass
+                    estado['sim_comentarios'].append(charla["msg"])
+
+                    # Construir decision_mt para el lado del usuario y SIMULAR la 2ª mitad con el motor.
+                    user_is_local = bool(mi_equipo and local and mi_equipo.id == local.id)
+                    if user_is_local:
+                        decision_mt = {"atk_l": charla["atk"], "def_l": charla["def"]}
                     else:
-                        estado['sim_comentarios'].append("DT: Intentamos buscar el arco rival con todo, sin fortuna.")
-                elif b3.collidepoint(click_pos):
-                    # Autobús atrás (Si el rival iba a meter gol en el segundo tiempo, le bajamos un gol)
-                    # En la práctica, si el rival tiene goles > 0, quitamos uno para representar solidez defensiva
-                    if mi_equipo.id == local.id and estado['sim_goles_v'] > 0:
-                        estado['sim_goles_v'] -= 1
-                    elif mi_equipo.id == visitante.id and estado['sim_goles_l'] > 0:
-                        estado['sim_goles_l'] -= 1
-                    estado['sim_comentarios'].append("DT: Cerramos filas en defensa. Planteamiento de contención.")
-                elif b4.collidepoint(click_pos):
-                    estado['sim_comentarios'].append("DT: Seguimos con el plan de juego original.")
-                    
-                # Reanudar
-                estado['sim_estado'] = 'segundo_tiempo'
-                estado['sim_last_tick'] = pygame.time.get_ticks()
+                        decision_mt = {"atk_v": charla["atk"], "def_v": charla["def"]}
+                    try:
+                        from alpha_football.engine import simular_rango
+                        _gl2, _gv2, ev2 = simular_rango(local, visitante, 46, 90, mult=decision_mt)
+                        estado['sim_eventos'].extend(ev2)
+                    except Exception as e_2t:
+                        logger.error(f"Error al simular la segunda mitad: {e_2t}")
+
+                    # Reanudar la revelación minuto a minuto desde el 46
+                    estado['sim_estado'] = 'segundo_tiempo'
+                    estado['sim_last_tick'] = pygame.time.get_ticks()
                 
         # C. Pantalla Finalizada
         elif sim_state == 'finalizado':
+            # Fase 3: aplicar el desarrollo de los jugadores del usuario UNA sola vez al terminar.
+            if not estado.get('sim_desarrollo_done'):
+                estado['sim_desarrollo_done'] = True
+                try:
+                    if match_mode != 'amistoso' and mi_equipo and local and visitante and mi_equipo.id in (local.id, visitante.id):
+                        user_is_local = mi_equipo.id == local.id
+                        gf = goles_l if user_is_local else goles_v
+                        gc = goles_v if user_is_local else goles_l
+                        from alpha_football.desarrollo import desarrollar_plantilla_post_partido
+                        estado['sim_desarrollo'] = desarrollar_plantilla_post_partido(mi_equipo, gf, gc)
+                except Exception as e_dev:
+                    logger.error(f"Error al aplicar desarrollo post-partido: {e_dev}")
+
             # Panel inferior de navegación para volver con estilo Glassmorphism
             panel_vol = pygame.Rect(40, 570, 1200, 80)
             draw_glass_panel(screen, panel_vol, bg_color=(20, 30, 50), border_color=(255, 215, 0), alpha=210)
-            
+
             draw_text(screen, "¡PARTIDO FINALIZADO!", (60, 595), size='lg', color='dorado')
+
+            # Resumen de desarrollo (Fase 3): jugadores que subieron de OVR y mejor nota.
+            try:
+                rep = estado.get('sim_desarrollo') or []
+                if rep:
+                    subieron = [r['jugador'] for r in rep if r.get('subio_ovr')]
+                    mejor = max(rep, key=lambda r: r.get('nota', 0))
+                    if subieron:
+                        txt_sub = "Subio OVR: " + ", ".join(subieron[:2]) + ("..." if len(subieron) > 2 else "")
+                    else:
+                        txt_sub = f"Figura: {mejor['jugador']} ({mejor['nota']})"
+                    draw_text(screen, txt_sub[:70], (60, 625), size='sm', color='verde')
+            except Exception as e_repdev:
+                logger.error(f"Error al mostrar resumen de desarrollo: {e_repdev}")
             
             # Mostrar resumen del resultado para el usuario de forma vistosa
             try:
@@ -807,6 +890,14 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             draw_button(screen, btn_exit, "VOLVER A LA LIGA", hov_exit)
             
             if click_pos and btn_exit.collidepoint(click_pos):
+                if match_mode == 'amistoso':
+                    # Fase 6: amistoso sin consecuencias; limpiar y volver al menú.
+                    for k in ('sim_resultado', 'sim_eventos', 'sim_desarrollo', 'sim_desarrollo_done',
+                              'sim_minuto', 'sim_goles_l', 'sim_goles_v', 'sim_comentarios',
+                              'sim_eventos_procesados', 'sim_estado', 'match_mode',
+                              'amis_local', 'amis_visitante', 'amistoso_liga'):
+                        estado.pop(k, None)
+                    return "menu"
                 if match_mode == 'copa':
                     # Guardar resultado del partido de copa
                     partido_copa = estado.get('partido_copa_dict')
@@ -850,6 +941,9 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
 
                     # Limpiar variables de simulación de este partido
                     estado.pop('sim_resultado', None)
+                    estado.pop('sim_eventos', None)
+                    estado.pop('sim_desarrollo', None)
+                    estado.pop('sim_desarrollo_done', None)
                     estado.pop('sim_minuto', None)
                     estado.pop('sim_goles_l', None)
                     estado.pop('sim_goles_v', None)
@@ -861,7 +955,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                     estado.pop('partido_visitante_obj', None)
                     estado.pop('partido_copa_dict', None)
                     estado.pop('partido_copa_bracket_fase', None)
-                    
+
                     return "copa_screen"
                 else:
                     # Guardamos los goles oficiales de liga
@@ -880,16 +974,32 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                         liga.jornada_actual += 1
                     else:
                         logger.info("Fin de temporada alcanzado.")
-                        
+
+                    # Fase 4: posible oferta de la IA por un jugador nuestro (si el mercado está abierto)
+                    try:
+                        from alpha_football import market
+                        if mi_equipo:
+                            rivales = [e for e in liga.equipos if e.id != mi_equipo.id]
+                            oferta_ia = market.crear_oferta_ui(
+                                mi_equipo, rivales, liga.jornada_actual, liga.num_jornadas
+                            )
+                            if oferta_ia:
+                                estado.setdefault('ofertas_recibidas', []).append(oferta_ia)
+                    except Exception as e_of:
+                        logger.error(f"Error al generar oferta de la IA tras la jornada: {e_of}")
+
                     # Limpiar variables de simulación de este partido
                     estado.pop('sim_resultado', None)
+                    estado.pop('sim_eventos', None)
+                    estado.pop('sim_desarrollo', None)
+                    estado.pop('sim_desarrollo_done', None)
                     estado.pop('sim_minuto', None)
                     estado.pop('sim_goles_l', None)
                     estado.pop('sim_goles_v', None)
                     estado.pop('sim_comentarios', None)
                     estado.pop('sim_eventos_procesados', None)
                     estado.pop('sim_estado', None)
-                    
+
                     return "league_screen"
                 
         return None

@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import random
 from typing import Any, Optional
-from alpha_football.models import Liga, Equipo, Jugador
+from alpha_football.models import Liga, Equipo, Jugador, OfertaMercado
 
 logger = logging.getLogger(__name__)
 
@@ -346,3 +346,145 @@ def simular_mercado_rivales(liga: Liga, jornada: int) -> list[str]:
 def mercado_de_pases(mi_equipo: Equipo, liga: Liga) -> None:
     """Ventana de transferencias. En Pygame la UI se maneja por separado."""
     pass
+
+
+# --- Fase 4: Ofertas recibidas por jugadores del usuario (IA compradora) -------
+
+PROB_OFERTA_POR_JORNADA = 0.15  # 15% por jornada con mercado abierto
+
+
+def ventana_mercado_abierta(jornada: int, num_jornadas: int) -> bool:
+    """El mercado está abierto en las jornadas 1-3 y en las últimas 3 de la liga."""
+    try:
+        return jornada <= 3 or jornada > (num_jornadas - 3)
+    except Exception:
+        return False
+
+
+def generar_ofertas_recibidas(
+    estado: Any,
+    jornada: int,
+    num_jornadas: int,
+    rng: Optional[random.Random] = None,
+    prob: float = PROB_OFERTA_POR_JORNADA,
+) -> list:
+    """
+    Con mercado abierto, 'prob' (15% por defecto) de que la IA oferte por un jugador
+    nuestro. monto = valor_jugador * Random(0.95, 1.5). La oferta se anexa a
+    estado.mercado_ofertas (lista de OfertaMercado) y también se devuelve.
+    """
+    azar = rng or random.Random()
+    nuevas: list = []
+    try:
+        if not ventana_mercado_abierta(jornada, num_jornadas):
+            return []
+        if azar.random() > prob:
+            return []
+
+        mi_equipo_id = _campo(estado, "equipo_usuario_id", _campo(estado, "equipo_usuario", None))
+        mi_equipo = buscar_equipo(estado, mi_equipo_id) if mi_equipo_id else None
+        if mi_equipo is None:
+            return []
+
+        plantilla = _campo(mi_equipo, "jugadores", [])
+        if len(plantilla) <= PLANTILLA_MINIMA:
+            return []  # no ofertan si nos dejarían bajo la plantilla mínima
+
+        objetivo = azar.choice(plantilla)
+        valor = _campo(objetivo, "valor", 0) or calcular_valor(objetivo)
+        monto = int(valor * azar.uniform(0.95, 1.5))
+
+        # Oferente: un rival (IA) al azar con balance suficiente; si ninguno, el de más balance.
+        rivales = [
+            e for e in iterar_equipos(estado)
+            if _campo(e, "id", "") != mi_equipo_id
+        ]
+        if not rivales:
+            return []
+        candidatos = [e for e in rivales if _campo(e, "presupuesto", 0) >= monto]
+        oferente = azar.choice(candidatos) if candidatos else max(rivales, key=lambda e: _campo(e, "presupuesto", 0))
+
+        oferta = OfertaMercado(
+            jugador_id=int(_campo(objetivo, "id", 0)),
+            equipo_origen_id=str(_campo(mi_equipo, "id", mi_equipo_id)),
+            equipo_destino_id=str(_campo(oferente, "id", "")),
+            monto=monto,
+        )
+        ofertas = _campo(estado, "mercado_ofertas", [])
+        ofertas.append(oferta)
+        _escribir_campo(estado, "mercado_ofertas", ofertas)
+        nuevas.append(oferta)
+        logger.info(f"Oferta recibida: {_campo(oferente,'nombre','IA')} ofrece ${monto:,} por {_campo(objetivo,'nombre_completo','?')}")
+    except Exception as e:
+        logger.error(f"Error al generar ofertas recibidas: {e}")
+    return nuevas
+
+
+def crear_oferta_ui(mi_equipo: Any, rivales: list, jornada: int, num_jornadas: int,
+                    rng: Optional[random.Random] = None, prob: float = PROB_OFERTA_POR_JORNADA) -> Optional[dict]:
+    """
+    Variante para la UI en runtime (trabaja con OBJETOS directos, no con el modelo persistido).
+    Con mercado abierto, 'prob' de que un rival oferte por un jugador nuestro.
+    Devuelve un dict {jugador, comprador, monto} o None. La UI lo guarda en
+    estado['ofertas_recibidas'] y lo procesa con los mismos objetos.
+    """
+    azar = rng or random.Random()
+    try:
+        if not ventana_mercado_abierta(jornada, num_jornadas):
+            return None
+        if azar.random() > prob:
+            return None
+        if not mi_equipo or len(getattr(mi_equipo, "jugadores", [])) <= PLANTILLA_MINIMA:
+            return None
+        objetivo = azar.choice(mi_equipo.jugadores)
+        valor = getattr(objetivo, "valor", 0) or calcular_valor(objetivo)
+        monto = int(valor * azar.uniform(0.95, 1.5))
+        rivales_ok = [r for r in rivales if getattr(r, "balance", 0) >= monto] or list(rivales)
+        if not rivales_ok:
+            return None
+        comprador = azar.choice(rivales_ok)
+        return {"jugador": objetivo, "comprador": comprador, "monto": monto}
+    except Exception as e:
+        logger.error(f"Error al crear oferta de la IA (UI): {e}")
+        return None
+
+
+def aceptar_oferta(estado: Any, oferta: OfertaMercado) -> int:
+    """Acepta una oferta recibida: traspasa el jugador al oferente y suma el monto a nuestro balance."""
+    mi_equipo = buscar_equipo(estado, oferta.equipo_origen_id)
+    comprador = buscar_equipo(estado, oferta.equipo_destino_id)
+    if mi_equipo is None or comprador is None:
+        raise ErrorMercado("Equipos de la oferta inexistentes")
+
+    jugador = _quitar_jugador_de_equipo(mi_equipo, oferta.jugador_id)
+    if jugador is None:
+        raise ErrorMercado(f"El jugador {oferta.jugador_id} ya no está en la plantilla")
+
+    _escribir_campo(mi_equipo, "presupuesto", _campo(mi_equipo, "presupuesto", 0) + oferta.monto)
+    saldo_comprador = _campo(comprador, "presupuesto", 0)
+    _escribir_campo(comprador, "presupuesto", max(0, saldo_comprador - oferta.monto))
+    plantilla_comprador = _campo(comprador, "jugadores", [])
+    plantilla_comprador.append(jugador)
+    _escribir_campo(comprador, "jugadores", plantilla_comprador)
+
+    oferta.aceptada = True
+    _retirar_oferta(estado, oferta)
+    logger.info(f"Oferta aceptada: {_campo(jugador,'nombre_completo','?')} -> {_campo(comprador,'nombre','?')} por ${oferta.monto:,}")
+    return oferta.monto
+
+
+def rechazar_oferta(estado: Any, oferta: OfertaMercado) -> None:
+    """Rechaza (descarta) una oferta recibida."""
+    oferta.aceptada = False
+    _retirar_oferta(estado, oferta)
+
+
+def _retirar_oferta(estado: Any, oferta: OfertaMercado) -> None:
+    """Quita una oferta de la bandeja estado.mercado_ofertas."""
+    ofertas = _campo(estado, "mercado_ofertas", [])
+    restantes = [
+        o for o in ofertas
+        if not (getattr(o, "jugador_id", None) == oferta.jugador_id
+                and getattr(o, "equipo_destino_id", None) == oferta.equipo_destino_id)
+    ]
+    _escribir_campo(estado, "mercado_ofertas", restantes)

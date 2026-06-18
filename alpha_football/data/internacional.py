@@ -134,3 +134,12 @@ POOL_CHAMPIONS = [
         jugadores=_generar_jugadores_equipo(80, 940)
     )
 ]
+
+# Cada club internacional también recibe 5 suplentes (plantillas más profundas, igual
+# que las ligas locales). Se hace una sola vez al importar el módulo y es idempotente.
+try:
+    from alpha_football.plantilla import expandir_plantilla
+    for _equipo_internacional in POOL_LIBERTADORES + POOL_CHAMPIONS:
+        expandir_plantilla(_equipo_internacional, 5)
+except Exception as _error_suplentes_copa:
+    logger.warning(f"No se pudieron agregar suplentes a los pools internacionales: {_error_suplentes_copa}")

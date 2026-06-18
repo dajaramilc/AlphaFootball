@@ -247,6 +247,9 @@ def render(screen, estado: dict) -> str | None:
         estado.setdefault('oferta_inicio_estrella', None)
         estado.setdefault('oferta_inicio_monto', 0)
         estado.setdefault('oferta_inicio_comprador', None)
+
+        # Fase 4: buzón de ofertas recurrentes de la IA por jugadores propios (15%/jornada)
+        estado.setdefault('ofertas_recibidas', [])
         
         # Inicializar oferta de inicio de temporada si es el primer fichaje disponible
         if not estado['oferta_inicio_creada'] and estado['fichajes_realizados'] == 0 and mi_equipo and len(mi_equipo.jugadores) > 0:
@@ -506,6 +509,31 @@ def render(screen, estado: dict) -> str | None:
             draw_button(screen, btn_acc_rect, "ACEPTAR OFERTA", acc_hover)
             draw_button(screen, btn_rej_rect, "RECHAZAR OFERTA", rej_hover)
 
+        # 10b. Buzón de ofertas recurrentes de la IA (Fase 4) — una oferta a la vez
+        elif estado['ofertas_recibidas']:
+            of = estado['ofertas_recibidas'][0]
+            jug = of.get('jugador'); comp = of.get('comprador'); monto = of.get('monto', 0)
+
+            overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
+            overlay.fill((10, 14, 26, 220))
+            screen.blit(overlay, (0, 0))
+
+            modal_rect = pygame.Rect(SCREEN_W // 2 - 250, SCREEN_H // 2 - 170, 500, 340)
+            draw_panel(screen, modal_rect)
+
+            draw_text(screen, "BUZON DE OFERTAS", (SCREEN_W // 2 - 210, SCREEN_H // 2 - 145), size='lg', color='dorado')
+            draw_text(screen, f"Pendientes: {len(estado['ofertas_recibidas'])}", (SCREEN_W // 2 + 70, SCREEN_H // 2 - 140), size='sm', color='azul')
+            if jug and comp:
+                draw_text(screen, f"{comp.nombre[:24]} ofrece:", (SCREEN_W // 2 - 210, SCREEN_H // 2 - 90), size='sm', color='blanco')
+                draw_text(screen, f"${monto:,}", (SCREEN_W // 2 - 210, SCREEN_H // 2 - 60), size='lg', color='verde')
+                draw_text(screen, f"por {jug.nombre_completo}", (SCREEN_W // 2 - 210, SCREEN_H // 2 - 20), size='md', color='blanco')
+                draw_text(screen, f"Pos: {jug.posicion}  |  OVR: {jug.overall}  |  Valor: ${getattr(jug,'valor',0):,}", (SCREEN_W // 2 - 210, SCREEN_H // 2 + 5), size='sm', color='azul')
+
+            btn_acc_rect = pygame.Rect(SCREEN_W // 2 - 210, SCREEN_H // 2 + 70, 190, 45)
+            btn_rej_rect = pygame.Rect(SCREEN_W // 2 + 20, SCREEN_H // 2 + 70, 190, 45)
+            draw_button(screen, btn_acc_rect, "ACEPTAR", btn_acc_rect.collidepoint(mouse_pos))
+            draw_button(screen, btn_rej_rect, "RECHAZAR", btn_rej_rect.collidepoint(mouse_pos))
+
         # 11. Dibujar Modal de Confirmación de Compra (si está activa)
         elif estado['show_confirm_modal']:
             j_buy = estado['selected_player_to_buy']
@@ -580,6 +608,37 @@ def render(screen, estado: dict) -> str | None:
                         estado['transfer_log'].append(f"Rechazado: Oferta por {estrella.nombre_completo} declinada.")
                         estado['oferta_inicio_pendiente'] = False
                     continue # Salir del frame para evitar clics duplicados bajo el modal
+
+                # A2. Buzón de ofertas recurrentes de la IA (Fase 4)
+                elif estado['ofertas_recibidas']:
+                    btn_acc_rect = pygame.Rect(SCREEN_W // 2 - 210, SCREEN_H // 2 + 70, 190, 45)
+                    btn_rej_rect = pygame.Rect(SCREEN_W // 2 + 20, SCREEN_H // 2 + 70, 190, 45)
+                    if btn_acc_rect.collidepoint(event.pos):
+                        of = estado['ofertas_recibidas'].pop(0)
+                        jug = of.get('jugador'); comp = of.get('comprador'); monto = of.get('monto', 0)
+                        try:
+                            mi_equipo.balance += monto
+                            if jug in mi_equipo.jugadores:
+                                mi_equipo.jugadores.remove(jug)
+                            comp.jugadores.append(jug)
+                            try:
+                                comp.balance = max(0, comp.balance - monto)
+                            except Exception:
+                                pass
+                            suplente = generar_reemplazo_resiliente(jug.posicion, mi_equipo.estrellas)
+                            mi_equipo.jugadores.append(suplente)
+                            estado['transfer_log'].append(f"Venta: {jug.nombre_completo} -> {comp.nombre} por ${monto:,}")
+                            estado['success_message'] = f"Vendiste a {jug.nombre_completo} por ${monto:,}. Llega {suplente.nombre_completo}."
+                            estado['success_timer'] = 200
+                        except Exception as e_acc:
+                            print(f"Error al aceptar oferta del buzon: {e_acc}", file=sys.stderr)
+                    elif btn_rej_rect.collidepoint(event.pos):
+                        of = estado['ofertas_recibidas'].pop(0)
+                        try:
+                            estado['transfer_log'].append(f"Rechazada: oferta por {of['jugador'].nombre_completo}.")
+                        except Exception:
+                            pass
+                    continue
 
                 # B. Manejar interacciones del Modal de Confirmación de Compra
                 elif estado['show_confirm_modal']:

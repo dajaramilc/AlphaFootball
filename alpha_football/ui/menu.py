@@ -54,6 +54,12 @@ def load_league_teams(league_id: str):
             
         liga_obj = get_liga()
         if liga_obj is not None:
+            # +5 suplentes por equipo (aplica a liga, carrera y amistoso, que pasan por aquí).
+            try:
+                from alpha_football.plantilla import expandir_liga
+                expandir_liga(liga_obj, 5)
+            except Exception as e_suplentes:
+                logger.warning(f"No se pudieron agregar suplentes a la liga '{league_id}': {e_suplentes}")
             return liga_obj
         else:
             raise ValueError("El cargador de liga retornó un objeto nulo.")
@@ -582,6 +588,45 @@ def _dibujar_estrellas_prestigio(screen: pygame.Surface, x: int, y: int, estrell
         logger.error(f"Error al dibujar estrellas de prestigio: {e}")
 
 
+def _aplicar_estado_cargado(estado: dict, loaded) -> bool:
+    """Vuelca un EstadoJuego cargado en el estado runtime del juego. True si OK."""
+    if not loaded:
+        return False
+    try:
+        liga = loaded.ligas[0] if loaded.ligas else None
+        mi_equipo = None
+        if liga and loaded.equipo_usuario_id:
+            for eq in liga.equipos:
+                if eq.id == loaded.equipo_usuario_id:
+                    mi_equipo = eq
+                    break
+        slot = estado.get('slot_activo')  # preservar si ya venía marcado
+        estado.clear()
+        estado['liga'] = liga
+        estado['mi_equipo'] = mi_equipo
+        estado['equipos'] = liga.equipos if liga else []
+        estado['temporada'] = loaded.temporada
+        estado['jornada'] = liga.jornada_actual if liga else 1
+        estado['copas'] = loaded.copas
+        estado['transfer_log'] = loaded.historial
+        if slot:
+            estado['slot_activo'] = slot
+        if loaded.alineacion_activa:
+            estado['alineacion_activa'] = loaded.alineacion_activa
+            if mi_equipo:
+                mi_equipo.alineacion_activa = loaded.alineacion_activa
+        elif mi_equipo:
+            from alpha_football.models import alineacion_por_defecto
+            da = alineacion_por_defecto(mi_equipo)
+            estado['alineacion_activa'] = da
+            mi_equipo.alineacion_activa = da
+        estado['current_screen'] = 'league_screen'
+        return True
+    except Exception as e:
+        logger.error(f"Error al aplicar estado cargado: {e}")
+        return False
+
+
 def render(screen: pygame.Surface, estado: dict) -> str | None:
     """
     Dibuja la pantalla del menú y gestiona los clics e interacciones del usuario.
@@ -634,19 +679,18 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         draw_text(screen, "La revolución táctica pixelada", (100, 215), size='sm', color='azul')
 
         # Rectángulos de los botones principales alineados a la izquierda
-        btn_nueva_rect = pygame.Rect(100, 280, 320, 55)
-        btn_cargar_rect = pygame.Rect(100, 355, 320, 55)
-        btn_salir_rect = pygame.Rect(100, 430, 320, 55)
-
-        # Hover states
-        hover_nueva = btn_nueva_rect.collidepoint(mouse_pos)
-        hover_cargar = btn_cargar_rect.collidepoint(mouse_pos)
-        hover_salir = btn_salir_rect.collidepoint(mouse_pos)
+        btn_nueva_rect = pygame.Rect(100, 270, 320, 52)
+        btn_cargar_rect = pygame.Rect(100, 332, 320, 52)
+        btn_amistoso_rect = pygame.Rect(100, 394, 320, 52)
+        btn_opciones_rect = pygame.Rect(100, 456, 320, 52)
+        btn_salir_rect = pygame.Rect(100, 518, 320, 52)
 
         # Dibujar botones premium
-        _dibujar_boton_premium(screen, btn_nueva_rect, "NUEVA PARTIDA", hover_nueva)
-        _dibujar_boton_premium(screen, btn_cargar_rect, "CARGAR PARTIDA", hover_cargar)
-        _dibujar_boton_premium(screen, btn_salir_rect, "SALIR", hover_salir)
+        _dibujar_boton_premium(screen, btn_nueva_rect, "NUEVA PARTIDA", btn_nueva_rect.collidepoint(mouse_pos))
+        _dibujar_boton_premium(screen, btn_cargar_rect, "CARGAR PARTIDA", btn_cargar_rect.collidepoint(mouse_pos))
+        _dibujar_boton_premium(screen, btn_amistoso_rect, "PARTIDO AMISTOSO", btn_amistoso_rect.collidepoint(mouse_pos))
+        _dibujar_boton_premium(screen, btn_opciones_rect, "OPCIONES", btn_opciones_rect.collidepoint(mouse_pos))
+        _dibujar_boton_premium(screen, btn_salir_rect, "SALIR", btn_salir_rect.collidepoint(mouse_pos))
 
         # Dibujar panel de ambientación a la derecha
         _dibujar_panel_derecho(screen, estado)
@@ -656,46 +700,18 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             if btn_nueva_rect.collidepoint(click_pos):
                 estado['menu_step'] = 'select_league'
             elif btn_cargar_rect.collidepoint(click_pos):
-                try:
-                    from alpha_football.save import cargar_partida
-                    loaded = cargar_partida()
-                    if loaded:
-                        liga = loaded.ligas[0] if loaded.ligas else None
-                        mi_equipo = None
-                        if liga and loaded.equipo_usuario_id:
-                            for eq in liga.equipos:
-                                if eq.id == loaded.equipo_usuario_id:
-                                    mi_equipo = eq
-                                    break
-                        estado.clear()
-                        estado['liga'] = liga
-                        estado['mi_equipo'] = mi_equipo
-                        estado['equipos'] = liga.equipos if liga else []
-                        estado['temporada'] = loaded.temporada
-                        estado['jornada'] = liga.jornada_actual if liga else 1
-                        estado['copas'] = loaded.copas
-                        estado['transfer_log'] = loaded.historial
-                        
-                        # Cargar alineación activa guardada o generar la por defecto
-                        if loaded.alineacion_activa:
-                            estado['alineacion_activa'] = loaded.alineacion_activa
-                            if mi_equipo:
-                                mi_equipo.alineacion_activa = loaded.alineacion_activa
-                        elif mi_equipo:
-                            from alpha_football.models import alineacion_por_defecto
-                            def_alin = alineacion_por_defecto(mi_equipo)
-                            estado['alineacion_activa'] = def_alin
-                            mi_equipo.alineacion_activa = def_alin
-
-                        estado['current_screen'] = "league_screen"
-                        return "league_screen"
-                    else:
-                        estado['menu_error'] = "No hay partida guardada."
-                        estado['menu_error_ticks'] = pygame.time.get_ticks()
-                except Exception as e_load:
-                    logger.error(f"Error al cargar partida desde el menú: {e_load}")
-                    estado['menu_error'] = "Error al leer archivo."
-                    estado['menu_error_ticks'] = pygame.time.get_ticks()
+                estado['menu_step'] = 'load_slots'   # Fase 2: selector de slots
+            elif btn_amistoso_rect.collidepoint(click_pos):
+                # Fase 6: arrancamos eligiendo la liga del equipo LOCAL. La del visitante
+                # se elige aparte, así se pueden cruzar equipos de ligas diferentes.
+                estado['amis_local'] = None
+                estado['amis_visitante'] = None
+                estado['amis_phase'] = 'local'
+                estado['menu_step'] = 'amistoso_league'
+            elif btn_opciones_rect.collidepoint(click_pos):
+                estado['options_return'] = 'menu'
+                estado['current_screen'] = 'options_screen'
+                return 'options_screen'
             elif btn_salir_rect.collidepoint(click_pos):
                 pygame.event.post(pygame.event.Event(pygame.QUIT))
 
@@ -851,5 +867,113 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         _dibujar_boton_premium(screen, volver_rect, "VOLVER", hover_vol)
         if click_pos and volver_rect.collidepoint(click_pos):
             estado['menu_step'] = 'select_league'
+
+    # --- CARGAR PARTIDA: SELECTOR DE SLOTS (Fase 2) ---
+    elif estado['menu_step'] == 'load_slots':
+        _dibujar_logo_principal(screen, 100, 70, estado)
+        draw_text(screen, "CARGAR PARTIDA — ELIGE UN SLOT", (100, 185), size='lg', color='verde')
+        try:
+            from alpha_football import save
+            cabeceras = save.listar_slots()
+        except Exception as e_ls:
+            logger.error(f"No se pudieron listar los slots: {e_ls}")
+            cabeceras = [None] * 5
+
+        for i in range(5):
+            r = pygame.Rect(100, 245 + i * 64, 560, 54)
+            hdr = cabeceras[i] if i < len(cabeceras) else None
+            etiqueta = f"Slot {i+1}: {hdr.get('nombre_partida','Partida')}" if hdr else f"Slot {i+1}: [Slot Libre]"
+            _dibujar_boton_premium(screen, r, etiqueta, r.collidepoint(mouse_pos))
+            if hdr:
+                draw_text(screen, f"{hdr.get('equipo_nombre','—')}  ·  Temp {hdr.get('temporada',1)}  ·  Jor {hdr.get('jornada',1)}",
+                          (680, 245 + i * 64 + 16), size='sm', color='azul')
+            if click_pos and r.collidepoint(click_pos) and hdr:
+                try:
+                    from alpha_football import save
+                    loaded = save.cargar_slot(i + 1)
+                    estado['slot_activo'] = i + 1
+                    if _aplicar_estado_cargado(estado, loaded):
+                        return 'league_screen'
+                except Exception as e_ld:
+                    logger.error(f"Error al cargar slot {i+1}: {e_ld}")
+                    estado['menu_error'] = "No se pudo cargar ese slot."
+                    estado['menu_error_ticks'] = pygame.time.get_ticks()
+
+        volver_rect = pygame.Rect(100, 600, 200, 50)
+        _dibujar_boton_premium(screen, volver_rect, "VOLVER", volver_rect.collidepoint(mouse_pos))
+        if click_pos and volver_rect.collidepoint(click_pos):
+            estado['menu_step'] = 'main'
+        if 'menu_error' in estado:
+            if pygame.time.get_ticks() - estado.get('menu_error_ticks', 0) > 3000:
+                estado.pop('menu_error', None)
+            else:
+                draw_text(screen, estado['menu_error'], (100, 560), size='sm', color='rojo')
+
+    # --- PARTIDO AMISTOSO: ELEGIR LIGA (Fase 6) ---
+    # Se elige una liga por equipo: primero la del local y luego la del visitante,
+    # que puede ser DISTINTA, habilitando amistosos entre ligas diferentes.
+    elif estado['menu_step'] == 'amistoso_league':
+        _dibujar_logo_principal(screen, 100, 70, estado)
+        fase = estado.get('amis_phase', 'local')
+        equipo_paso = "LOCAL" if fase == 'local' else "VISITANTE"
+        draw_text(screen, f"AMISTOSO — LIGA DEL EQUIPO {equipo_paso}", (100, 185), size='lg', color='verde')
+        if fase == 'visitante' and estado.get('amis_local'):
+            draw_text(screen, f"Local: {estado['amis_local'].nombre}", (100, 225), size='sm', color='dorado')
+        for i, liga_data in enumerate(LIGAS_DISPONIBLES):
+            btn_rect = pygame.Rect(100, 260 + i * 62, 400, 52)
+            _dibujar_boton_premium(screen, btn_rect, liga_data['name'], btn_rect.collidepoint(mouse_pos))
+            if click_pos and btn_rect.collidepoint(click_pos):
+                liga_obj = load_league_teams(liga_data['id'])
+                if liga_obj:
+                    # No se reinicia amis_local: si vamos por el visitante, el local se conserva.
+                    estado['amistoso_liga'] = liga_obj
+                    estado['menu_step'] = 'amistoso_teams'
+        volver_rect = pygame.Rect(100, 600, 200, 50)
+        _dibujar_boton_premium(screen, volver_rect, "VOLVER", volver_rect.collidepoint(mouse_pos))
+        if click_pos and volver_rect.collidepoint(click_pos):
+            estado['menu_step'] = 'main'
+        _dibujar_panel_derecho(screen, estado)
+
+    # --- PARTIDO AMISTOSO: ELEGIR LOS DOS EQUIPOS (Fase 6) ---
+    elif estado['menu_step'] == 'amistoso_teams':
+        _dibujar_logo_principal(screen, 100, 40, estado)
+        fase = estado.get('amis_phase', 'local')
+        local = estado.get('amis_local')
+        paso = "LOCAL" if fase == 'local' else "VISITANTE"
+        draw_text(screen, f"AMISTOSO — ELIGE EL EQUIPO {paso}", (100, 150), size='lg', color='verde')
+        if fase == 'visitante' and local:
+            draw_text(screen, f"Local: {local.nombre}", (100, 195), size='sm', color='dorado')
+        liga_obj = estado.get('amistoso_liga')
+        equipos = liga_obj.equipos if liga_obj else []
+        for i, equipo in enumerate(equipos):
+            col = i % 2
+            row = i // 2
+            bx = 100 + col * 330
+            by = 230 + row * 65
+            btn_rect = pygame.Rect(bx, by, 300, 50)
+            _dibujar_boton_premium(screen, btn_rect, equipo.nombre, btn_rect.collidepoint(mouse_pos))
+            if click_pos and btn_rect.collidepoint(click_pos):
+                if fase == 'local':
+                    # Elegido el local: ahora vamos a elegir la liga del VISITANTE (puede ser otra).
+                    estado['amis_local'] = equipo
+                    estado['amis_phase'] = 'visitante'
+                    estado['menu_step'] = 'amistoso_league'
+                elif local is not None and equipo.id != local.id:
+                    # Visitante elegido: lanzar el amistoso (sin impacto en liga/copa/carrera).
+                    estado['amis_visitante'] = equipo
+                    estado['match_mode'] = 'amistoso'
+                    estado.pop('sim_resultado', None)  # forzar simulación nueva
+                    estado['current_screen'] = 'match_screen'
+                    estado['menu_step'] = 'main'  # al volver del amistoso, menú principal
+                    return 'match_screen'
+        # Botón para cambiar de liga sin perder el equipo ya elegido.
+        otra_liga_rect = pygame.Rect(340, 600, 230, 50)
+        _dibujar_boton_premium(screen, otra_liga_rect, "OTRA LIGA", otra_liga_rect.collidepoint(mouse_pos))
+        if click_pos and otra_liga_rect.collidepoint(click_pos):
+            estado['menu_step'] = 'amistoso_league'
+        volver_rect = pygame.Rect(100, 600, 200, 50)
+        _dibujar_boton_premium(screen, volver_rect, "VOLVER", volver_rect.collidepoint(mouse_pos))
+        if click_pos and volver_rect.collidepoint(click_pos):
+            estado['menu_step'] = 'amistoso_league'
 
     return None
