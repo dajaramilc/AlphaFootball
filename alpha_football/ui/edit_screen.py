@@ -300,7 +300,21 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             nombre_comp = f"{j.get('nombre', 'Jugador')} {j.get('apellido', '')}".strip()
             pos_label = f"[{j.get('posicion', 'DEF')}] "
             draw_text(screen, f"{pos_label}{nombre_comp[:24]}", (65, squad_y + 6), size='sm', color='verde' if is_sel else 'blanco')
-            draw_text(screen, f"OVR: {j.get('overall', 70)}", (360, squad_y + 6), size='sm', color='dorado')
+            # v0.8.1: mostrar OVR real. Si el dict viene sin 'overall' (edited_db viejo),
+            # calcularlo desde los 5 atributos. Si tampoco están, caer al default 70.
+            ovr_val = j.get('overall')
+            if ovr_val is None:
+                try:
+                    ovr_val = (
+                        int(j.get('ataque', 0))
+                        + int(j.get('defensa', 0))
+                        + int(j.get('fisico', 0))
+                        + int(j.get('tecnica', 0))
+                        + int(j.get('mental', 0))
+                    ) // 5
+                except Exception:
+                    ovr_val = 70
+            draw_text(screen, f"OVR: {ovr_val}", (360, squad_y + 6), size='sm', color='dorado')
             
             if click_pos and j_rect.collidepoint(click_pos):
                 estado['edit_jugador_idx'] = idx

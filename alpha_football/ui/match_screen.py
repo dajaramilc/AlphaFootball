@@ -481,6 +481,12 @@ def _menu_tactico(screen: pygame.Surface, estado: dict, equipo: Any, alin: Any,
     draw_glass_panel(screen, panel, bg_color=(12, 28, 20), border_color=(255, 215, 0), alpha=240)
     draw_text(screen, titulo, (panel.x + 25, panel.y + 14), size='lg', color='dorado')
 
+    # v0.8.1: contador de cambios realizados (máx 5 por partido).
+    subs_realizadas = int(estado.get('sim_subs_realizadas', 0) or 0)
+    subs_max = 5
+    draw_text(screen, f"Cambios: {subs_realizadas} / {subs_max}",
+              (panel.right - 150, panel.y + 18), size='sm', color='dorado' if subs_realizadas < subs_max else 'rojo')
+
     if not getattr(alin, 'formacion', None) or not F.existe(alin.formacion):
         alin.formacion = F.FORMACION_DEFECTO
     form_lista = F.lista_formaciones()
@@ -527,6 +533,8 @@ def _menu_tactico(screen: pygame.Surface, estado: dict, equipo: Any, alin: Any,
     banco_idx = [i for i, j in enumerate(jugadores) if i not in alin.titulares and getattr(j, 'lesion_partidos', 0) == 0]
 
     y0 = panel.y + 200
+    minutos = estado.get('sim_minuto_por_jugador', {}) or {}
+    notas_map = estado.get('sim_nota_por_jugador', {}) or {}
     for n, idx in enumerate(titulares_idx[:11]):
         r = pygame.Rect(panel.x + 25, y0 + n * 20, 310, 18)
         j = jugadores[idx]
@@ -537,8 +545,38 @@ def _menu_tactico(screen: pygame.Surface, estado: dict, equipo: Any, alin: Any,
                 pygame.draw.rect(screen, (0, 255, 136), r, width=1, border_radius=3)
         except Exception:
             pass
-        draw_text(screen, f"[{j.posicion}] {j.apellido[:16]}  {j.overall}", (r.x + 6, r.y + 1), size='sm',
+        # v0.8.1: nombre + OVR a la izquierda; barra de cansancio y nota a la derecha.
+        draw_text(screen, f"[{j.posicion}] {j.apellido[:14]}  {j.overall}", (r.x + 6, r.y + 1), size='sm',
                   color='verde' if sel else 'blanco')
+        # Cansancio: minutos en cancha / 90 → porcentaje 0..100
+        jid = getattr(j, 'id', None)
+        mins_j = minutos.get(jid, 0) if jid is not None else 0
+        cans_pct = max(0, min(100, int((mins_j / 90.0) * 100)))
+        # Color de la barra: verde <50%, amarillo <80%, rojo >=80%
+        if cans_pct < 50:
+            bar_color = (0, 200, 100)
+        elif cans_pct < 80:
+            bar_color = (220, 180, 30)
+        else:
+            bar_color = (220, 60, 60)
+        # Dibujar barra de progreso horizontal
+        try:
+            bar_x = r.x + 178
+            bar_y = r.y + 6
+            bar_w = 70
+            bar_h = 6
+            pygame.draw.rect(screen, (40, 40, 50), (bar_x, bar_y, bar_w, bar_h), border_radius=2)
+            fill_w = int(bar_w * (cans_pct / 100.0))
+            if fill_w > 0:
+                pygame.draw.rect(screen, bar_color, (bar_x, bar_y, fill_w, bar_h), border_radius=2)
+        except Exception:
+            pass
+        # Nota actual del jugador (base 6.0 si no ha pasado nada)
+        nota = notas_map.get(jid, 6.0) if jid is not None else 6.0
+        nota_txt = f"{nota:.1f}"
+        nota_color = 'dorado' if nota >= 7.5 else ('verde' if nota >= 6.5 else 'blanco')
+        draw_text(screen, nota_txt, (r.x + 253, r.y + 1), size='sm', color=nota_color)
+        draw_text(screen, f"{cans_pct}%", (r.x + 283, r.y + 1), size='sm', color=bar_color)
         fila_rects.append((r, idx, False))
     for n, idx in enumerate(banco_idx[:11]):
         r = pygame.Rect(panel.x + 360, y0 + n * 20, 295, 18)
@@ -557,17 +595,43 @@ def _menu_tactico(screen: pygame.Surface, estado: dict, equipo: Any, alin: Any,
 
     if click_pos:
         if rf_prev.collidepoint(click_pos) or rf_next.collidepoint(click_pos):
+            # v0.8.6 (Tarea 2): cambio de formación cuenta sustituciones reales
             paso = -1 if rf_prev.collidepoint(click_pos) else 1
             i = form_lista.index(alin.formacion) if alin.formacion in form_lista else 0
             alin.formacion = form_lista[(i + paso) % len(form_lista)]
-            alin.titulares = F.mejor_once(equipo.jugadores, alin.formacion)
+            viejos_formacion = set(alin.titulares)
+            nuevos_formacion = F.mejor_once(equipo.jugadores, alin.formacion)
+            entrantes_formacion = len(set(nuevos_formacion) - viejos_formacion)
+            if subs_realizadas + entrantes_formacion > subs_max:
+                # Bloquear: excedería el máximo de cambios permitidos
+                estado.setdefault('sim_comentarios', []).append(
+                    f"DT: Cambio de formación haría {entrantes_formacion} cambios; quedan {subs_max - subs_realizadas}.")
+            else:
+                alin.titulares = nuevos_formacion
+                estado['sim_subs_realizadas'] = subs_realizadas + entrantes_formacion
+                if entrantes_formacion > 0:
+                    estado.setdefault('sim_comentarios', []).append(
+                        f"CAMBIOS ({subs_realizadas + entrantes_formacion}/5): Formación → {alin.formacion}")
             estado['sim_sub_out'] = None
         elif rt_prev.collidepoint(click_pos) or rt_next.collidepoint(click_pos):
             paso = -1 if rt_prev.collidepoint(click_pos) else 1
             i = _TACTICAS_MENU.index(equipo.estilo_dt) if equipo.estilo_dt in _TACTICAS_MENU else 0
             equipo.estilo_dt = _TACTICAS_MENU[(i + paso) % len(_TACTICAS_MENU)]
         elif btn_auto.collidepoint(click_pos):
-            alin.titulares = F.mejor_once(equipo.jugadores, alin.formacion)
+            # v0.8.6 (Tarea 2): AUTO ONCE cuenta sustituciones reales
+            viejos_auto = set(alin.titulares)
+            nuevos_auto = F.mejor_once(equipo.jugadores, alin.formacion)
+            entrantes_auto = len(set(nuevos_auto) - viejos_auto)
+            if subs_realizadas + entrantes_auto > subs_max:
+                # Bloquear: excedería el máximo de cambios permitidos
+                estado.setdefault('sim_comentarios', []).append(
+                    f"DT: AUTO ONCE haría {entrantes_auto} cambios; quedan {subs_max - subs_realizadas}.")
+            else:
+                alin.titulares = nuevos_auto
+                estado['sim_subs_realizadas'] = subs_realizadas + entrantes_auto
+                if entrantes_auto > 0:
+                    estado.setdefault('sim_comentarios', []).append(
+                        f"CAMBIOS ({subs_realizadas + entrantes_auto}/5): AUTO ONCE aplicado.")
             estado['sim_sub_out'] = None
         elif btn_reanudar.collidepoint(click_pos):
             estado['sim_sub_out'] = None
@@ -582,13 +646,20 @@ def _menu_tactico(screen: pygame.Surface, estado: dict, equipo: Any, alin: Any,
                     # meter suplente: cambiar el titular marcado por este del banco
                     out_idx = estado.get('sim_sub_out')
                     if out_idx is not None and out_idx in alin.titulares:
+                        # v0.8.1: máximo 5 cambios por partido (como en el fútbol real).
+                        if subs_realizadas >= subs_max:
+                            estado['sim_sub_out'] = None
+                            estado.setdefault('sim_comentarios', []).append(
+                                "DT: Ya se realizaron los 5 cambios permitidos.")
+                            break
                         pos = alin.titulares.index(out_idx)
                         alin.titulares[pos] = idx
+                        estado['sim_subs_realizadas'] = subs_realizadas + 1
                         try:
                             sale = jugadores[out_idx].apellido
                             entra = jugadores[idx].apellido
                             estado.setdefault('sim_comentarios', []).append(
-                                f"CAMBIO: SALE {sale}, ENTRA {entra}")
+                                f"CAMBIO ({subs_realizadas + 1}/5): SALE {sale}, ENTRA {entra}")
                         except Exception:
                             pass
                         estado['sim_sub_out'] = None
@@ -669,7 +740,9 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
     try:
         liga = estado.get('liga')
         mi_equipo = estado.get('mi_equipo')
-        match_mode = estado.get('match_mode', 'liga')
+        # v0.8.4: `or 'liga'` (no el default de .get) porque una nueva carrera deja
+        # estado['match_mode'] = None y .get(..., 'liga') devolvería None, no el default.
+        match_mode = estado.get('match_mode') or 'liga'
 
         if match_mode == 'copa':
             local = estado.get('partido_local_obj')
@@ -752,9 +825,19 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             estado['sim_ajuste_realizado'] = False
             # Velocidad de simulación: factor 1 = normal, 2 = el doble de rápido. Se conserva
             # entre partidos (estado), por eso se lee con get en vez de fijarlo siempre a 1.
-            estado.setdefault('sim_velocidad_factor', 1)
-            estado['sim_speed'] = max(40, MS_POR_MINUTO // estado['sim_velocidad_factor'])
+            # v0.8.5: una carrera nueva deja sim_velocidad_factor=None (la clave EXISTE), por lo que
+            # setdefault no lo reemplaza y `MS_POR_MINUTO // None` reventaba el partido EN VIVO
+            # (devolvía al usuario al menú de carrera). Normalizamos con `or 1`.
+            factor_vel = estado.get('sim_velocidad_factor') or 1
+            estado['sim_velocidad_factor'] = factor_vel
+            estado['sim_speed'] = max(40, MS_POR_MINUTO // factor_vel)
             estado['sim_last_tick'] = pygame.time.get_ticks()
+            # v0.8.1: tracking de cambios realizados por el usuario (máx 5 por partido, como en el fútbol real).
+            estado['sim_subs_realizadas'] = 0
+            # v0.8.1: tracking per-jugador para F4 (cansancio y nota).
+            estado['sim_minuto_por_jugador'] = {}   # {id_jugador: minutos_en_cancha}
+            estado['sim_nota_por_jugador'] = {}     # {id_jugador: nota_actual}
+            estado['sim_titulares_iniciales'] = list(getattr(user_alin, 'titulares', []) or []) if user_alin else []
 
         minuto = estado['sim_minuto']
         goles_l = estado['sim_goles_l']
@@ -769,6 +852,19 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 estado['sim_minuto'] += 1
                 minuto = estado['sim_minuto']
                 estado['sim_last_tick'] = now
+                # v0.8.1: acumular minuto jugado por cada titular en cancha del USUARIO
+                # (alimenta el medidor de cansancio del menú táctico).
+                try:
+                    if user_eq is not None and user_alin is not None:
+                        mins = estado.setdefault('sim_minuto_por_jugador', {})
+                        js = list(getattr(user_eq, 'jugadores', []) or [])
+                        for idx in user_alin.titulares:
+                            if 0 <= idx < len(js):
+                                jid = getattr(js[idx], 'id', None)
+                                if jid is not None:
+                                    mins[jid] = mins.get(jid, 0) + 1
+                except Exception:
+                    pass
                 
                 # Comprobar eventos de este minuto
                 eventos_este_min = [e for e in estado['sim_eventos'] if e['minuto'] == minuto]
@@ -786,11 +882,54 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                             goleador = "Goleador estrella"
                             scoring_team = local if equipo_gol_id == local.id else visitante
                             if scoring_team and scoring_team.jugadores:
-                                possible_scorers = [j for j in scoring_team.jugadores if j.posicion in ('DEL', 'MED')]
-                                if not possible_scorers:
-                                    possible_scorers = scoring_team.jugadores
-                                j_score = random.choice(possible_scorers)
+                                # v0.8.1: priorizar el jugador_id del evento (asignado por el
+                                # motor). Si no está (saves viejos), cae a uno aleatorio entre
+                                # los titulares DEL/MED/DEF — ya no del banco.
+                                j_score = None
+                                jid = e.get('jugador_id')
+                                if jid is not None:
+                                    j_score = next((j for j in scoring_team.jugadores
+                                                    if getattr(j, 'id', None) == jid), None)
+                                if j_score is None:
+                                    # Fallback: titulares que pueden hacer gol (incluye DEF para
+                                    # honrar el 8% de gol de central del motor).
+                                    try:
+                                        from alpha_football.engine import _once_titular
+                                        titulares = _once_titular(scoring_team)
+                                    except Exception:
+                                        titulares = list(scoring_team.jugadores)
+                                    possible_scorers = [j for j in titulares
+                                                        if getattr(j, 'posicion', '') in ('DEL', 'MED', 'DEF')]
+                                    if possible_scorers:
+                                        j_score = random.choice(possible_scorers)
+                                    else:
+                                        j_score = random.choice(list(scoring_team.jugadores))
                                 goleador = j_score.nombre_completo
+                                # Tracking de nota: gol = +0.6 al anotador
+                                try:
+                                    notas = estado.setdefault('sim_nota_por_jugador', {})
+                                    jid_key = getattr(j_score, 'id', None)
+                                    if jid_key is not None:
+                                        notas[jid_key] = notas.get(jid_key, 6.0) + 0.6
+                                except Exception:
+                                    pass
+                                # v0.8.2: tracking de asistencia — elegir un compañero MED/DEL al azar
+                                # y subir +0.3 a su nota. Persistir también en
+                                # sim_asist_por_jugador para mostrarlo en la transmisión.
+                                try:
+                                    posibles_asist = [j for j in scoring_team.jugadores
+                                                        if getattr(j, 'id', None) is not None
+                                                        and j.id != getattr(j_score, 'id', None)
+                                                        and getattr(j, 'posicion', '') in ('MED', 'DEL')]
+                                    if posibles_asist:
+                                        j_asist = random.choice(posibles_asist)
+                                        notas[getattr(j_asist, 'id', None)] = notas.get(getattr(j_asist, 'id', None), 6.0) + 0.3
+                                        asist_acum = estado.setdefault('sim_asist_por_jugador', {})
+                                        asist_acum[getattr(j_asist, 'id', None)] = asist_acum.get(getattr(j_asist, 'id', None), 0) + 1
+                                        # Texto del detalle incluye el asistente
+                                        detalle = f"⚽ ¡GOOOL de {scoring_team.nombre}! {goleador} marca con clase (asist. {j_asist.apellido}). ({goles_l}-{goles_v})"
+                                except Exception:
+                                    pass
                                 
                             if equipo_gol_id == local.id:
                                 estado['sim_goles_l'] += 1
@@ -1107,11 +1246,21 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 estado['sim_desarrollo_done'] = True
                 try:
                     if match_mode != 'amistoso' and mi_equipo and local and visitante and mi_equipo.id in (local.id, visitante.id):
-                        user_is_local = mi_equipo.id == local.id
-                        gf = goles_l if user_is_local else goles_v
-                        gc = goles_v if user_is_local else goles_l
                         from alpha_football.desarrollo import desarrollar_plantilla_post_partido
-                        estado['sim_desarrollo'] = desarrollar_plantilla_post_partido(mi_equipo, gf, gc)
+                        # v0.8.6 (Tarea 4+5): desarrollar AMBOS equipos y registrar stats de copa
+                        rep_l = desarrollar_plantilla_post_partido(local, goles_l, goles_v)
+                        rep_v = desarrollar_plantilla_post_partido(visitante, goles_v, goles_l)
+                        # El reporte del usuario se usa para la UI de resumen
+                        user_is_local = mi_equipo.id == local.id
+                        estado['sim_desarrollo'] = rep_l if user_is_local else rep_v
+                        # Registrar estadísticas de copa si estamos en modo copa
+                        if match_mode == 'copa':
+                            try:
+                                from alpha_football.ui.copa_screen import registrar_stats_copa
+                                registrar_stats_copa(estado, getattr(local, 'nombre', ''), goles_v, rep_l)
+                                registrar_stats_copa(estado, getattr(visitante, 'nombre', ''), goles_l, rep_v)
+                            except Exception:
+                                pass
                 except Exception as e_dev:
                     logger.error(f"Error al aplicar desarrollo post-partido: {e_dev}")
 
@@ -1137,20 +1286,21 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             
             # Mostrar resumen del resultado para el usuario de forma vistosa
             try:
-                user_is_local = (mi_equipo.id == local.id)
-                user_goles = goles_l if user_is_local else goles_v
-                rival_goles = goles_v if user_is_local else goles_l
-                
-                if user_goles > rival_goles:
-                    resultado_str = "🏆 ¡VICTORIA DE ALTA CLASE!"
-                    res_color = 'verde'
-                elif user_goles < rival_goles:
-                    resultado_str = "💔 DERROTA... ¡A SEGUIR LUCHANDO!"
-                    res_color = 'rojo'
-                else:
-                    resultado_str = "🤝 EMPATE DISPUTADO Y VALIOSO"
-                    res_color = 'azul'
-                draw_text(screen, resultado_str, (320, 595), size='md', color=res_color)
+                if mi_equipo is not None and local is not None:
+                    user_is_local = (mi_equipo.id == local.id)
+                    user_goles = goles_l if user_is_local else goles_v
+                    rival_goles = goles_v if user_is_local else goles_l
+
+                    if user_goles > rival_goles:
+                        resultado_str = "🏆 ¡VICTORIA DE ALTA CLASE!"
+                        res_color = 'verde'
+                    elif user_goles < rival_goles:
+                        resultado_str = "💔 DERROTA... ¡A SEGUIR LUCHANDO!"
+                        res_color = 'rojo'
+                    else:
+                        resultado_str = "🤝 EMPATE DISPUTADO Y VALIOSO"
+                        res_color = 'azul'
+                    draw_text(screen, resultado_str, (320, 595), size='md', color=res_color)
             except Exception as e_res_summary:
                 logger.error(f"Error al resumir resultado en pantalla finalizada: {e_res_summary}")
             
@@ -1195,17 +1345,37 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                                 else:
                                     fase_data['avanza'] = 'rival'
                                     
-                            # Si el usuario avanza, mover la copa a la siguiente fase
+                            # v0.8.6 (Tarea 5): si el usuario avanza, llamar a avanzar_fase_bracket
+                            # para simular los OTROS partidos de esta fase y construir la siguiente llave.
                             if fase_data['avanza'] == 'user':
-                                fases = ['cuartos', 'semis', 'final']
-                                if fase_actual in fases:
-                                    curr_idx = fases.index(fase_actual)
-                                    if curr_idx < len(fases) - 1:
-                                        estado['copa_fase_actual'] = fases[curr_idx + 1]
-                                    else:
-                                        estado['copa_fase_actual'] = 'campeon'
+                                if fase_actual in ('cuartos', 'semis'):
+                                    # avanzar_fase_bracket simula los otros partidos de la fase,
+                                    # construye la siguiente llave y fija copa_fase_actual.
+                                    try:
+                                        from alpha_football.ui.copa_screen import avanzar_fase_bracket
+                                        avanzar_fase_bracket(estado)
+                                    except Exception as e_avz:
+                                        logger.error(f"Error al avanzar fase del bracket: {e_avz}")
+                                        # Fallback: bump manual como antes
+                                        fases = ['cuartos', 'semis', 'final']
+                                        curr_idx = fases.index(fase_actual)
+                                        if curr_idx < len(fases) - 1:
+                                            estado['copa_fase_actual'] = fases[curr_idx + 1]
+                                elif fase_actual == 'final':
+                                    estado['copa_fase_actual'] = 'campeon'
+                                    estado['copa_mejor_fase_temp'] = 'Campeón'
                             else:
                                 estado['copa_fase_actual'] = 'eliminado'
+                                # v0.8.1: el usuario cayó en esta fase — guardamos
+                                # la mejor fase alcanzada para el resumen de carrera.
+                                # v0.8.2: defensivo contra None/valores no-string para evitar
+                                # TypeError en `fase_actual not in ...` cuando copa_mejor_fase_temp
+                                # es None (al inicio de la temporada).
+                                fase_label = {'cuartos': 'Cuartos', 'semis': 'Semifinal',
+                                              'final': 'Finalista', 'grupos': 'Fase de grupos'}
+                                _mejor_fase_actual = estado.get('copa_mejor_fase_temp') or ''
+                                if not _mejor_fase_actual or _mejor_fase_actual in ('No clasificó', 'Fase de grupos') or fase_actual not in _mejor_fase_actual:
+                                    estado['copa_mejor_fase_temp'] = fase_label.get(fase_actual, 'Fase de grupos')
 
                     # Limpiar variables de simulación de este partido
                     estado.pop('sim_resultado', None)

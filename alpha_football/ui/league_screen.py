@@ -613,6 +613,10 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                     return "resumen_temporada_screen"
                 else:
                     estado['partido_actual'] = partido_usuario
+                    # v0.8.4: marcar explícitamente que es un partido de LIGA. Antes se confiaba
+                    # solo en el default de .get('match_mode', 'liga'); pero una nueva carrera deja
+                    # match_mode=None (clave existe) y prepartido/partido caían al menú.
+                    estado['match_mode'] = 'liga'
                     return "prepartido_screen"
             elif btn_mercado.collidepoint(click_pos):
                 return "market_screen"
@@ -625,6 +629,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             elif btn_career.collidepoint(click_pos):
                 return "career_screen"
             elif btn_equipo.collidepoint(click_pos):
+                estado['team_contexto'] = 'carrera'  # v0.8.5: dirección de carrera (no amistoso)
                 return "team_screen"
             elif btn_salir.collidepoint(click_pos):
                 estado['save_slots_return'] = 'league_screen'

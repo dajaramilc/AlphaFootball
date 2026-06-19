@@ -1053,14 +1053,54 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             elif btn_conf.collidepoint(click_pos) and listo:
                 try:
                     equipo = estado.get('pending_equipo')
-                    estado['liga'] = estado['selected_liga_obj']
+                    liga_obj = estado.get('selected_liga_obj')
+                    dt_nombre_final = estado.get('dt_nombre', '').strip() or "DT Parodia"
+                    if not equipo or not liga_obj:
+                        logger.error("Falta pending_equipo o selected_liga_obj al confirmar DT")
+                        return "menu"
+                    # v0.8.3: LIMPIEZA TOTAL del estado antes de empezar una carrera nueva.
+                    # Sin esto, ofertas/mercado/copa/audio/etc. de la partida anterior
+                    # se filtraban a la nueva (ej. ofertas de un BetPlay aparecian en
+                    # un Real Madrid). Ahora se garantiza aislamiento por partida.
+                    estado.clear()
+                    # Re-inicializar claves esenciales (defaults vacíos para evitar KeyError)
+                    estado['liga'] = liga_obj
                     estado['mi_equipo'] = equipo
-                    estado['equipos'] = estado['selected_liga_obj'].equipos
+                    estado['equipos'] = liga_obj.equipos
                     estado['temporada'] = 1
                     estado['jornada'] = 1
                     estado['historial'] = []
-                    estado['dt_nombre'] = estado.get('dt_nombre', '').strip() or "DT Parodia"
+                    estado['transfer_log'] = []
+                    estado['fichajes_realizados'] = 0
+                    estado['dt_nombre'] = dt_nombre_final
                     estado['dt_nacionalidad'] = nac_final
+                    estado['current_screen'] = "league_screen"
+                    # Defaults vacíos para evitar herencia de keys obsoletas
+                    for _k in ('ofertas_recibidas', 'mercado', 'mercado_ofertas',
+                               '_pool_internacional', 'free_agents_list',
+                               'recent_offers_player_ids', 'mercado_ofertas_temp',
+                               'copa_grupos', 'copa_grupos_standings', 'copa_grupo_standing',
+                               'copa_grupo_partidos', 'copa_bracket', 'copa_bracket_otros',
+                               'copa_tipo', 'ultima_ventana_mercado_id',
+                               'sim_comentarios', 'sim_eventos', 'sim_minuto_por_jugador',
+                               'sim_nota_por_jugador', 'sim_asist_por_jugador',
+                               'now_playing_text', 'oferta_toast_text', 'oferta_toast_until',
+                               '_ofertas_prev_count', 'prepartido_resultado'):
+                        estado[_k] = []
+                    for _k in ('copa_fase_actual', 'copa_tab', 'copa_jornada_grupo',
+                               'copa_mejor_fase_temp', 'match_mode',
+                               'partido_actual', 'partido_local_obj', 'partido_visitante_obj',
+                               'partido_copa_dict', 'partido_copa_bracket_fase',
+                               'sim_resultado', 'sim_estado', 'sim_velocidad_factor',
+                               'sim_minuto', 'sim_goles_l', 'sim_goles_v',
+                               'sim_desarrollo', 'sim_desarrollo_done',
+                               'sim_eventos_procesados', 'sim_flash_goles',
+                               'sim_goleador_flash', 'sim_confeti', 'sim_tactico_abierto',
+                               'sim_sub_out', 'sim_subs_realizadas',
+                               'sim_penales_resuelto', 'sim_penales_marcador',
+                               'sim_penales_gana_user', 'sim_penales_sel',
+                               'sim_last_tick'):
+                        estado[_k] = None
                     # Táctica por defecto al iniciar carrera: equilibrada (cambiable luego).
                     equipo.estilo_dt = "anchelottismo"
                     if not getattr(equipo, 'tactica_familiaridad', None):
@@ -1069,10 +1109,10 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     def_alin = alineacion_por_defecto(equipo)
                     estado['alineacion_activa'] = def_alin
                     equipo.alineacion_activa = def_alin
-                    estado['current_screen'] = "league_screen"
                     for k in ('menu_step', 'selected_league_id', 'selected_liga_obj', 'pending_equipo',
                               'dt_focus', 'dt_nac_sel', 'dt_nac_custom', 'dt_name_focus'):
                         estado.pop(k, None)
+                    logger.info(f"Nueva carrera iniciada: liga={estado['liga'].tipo} equipo={equipo.nombre}")
                     return "league_screen"
                 except Exception as e_dt:
                     logger.error(f"Error al finalizar alta del DT: {e_dt}")
@@ -1113,6 +1153,10 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             if not estado.get('confirmar_borrar_slot'):
                 if click_pos and hdr and del_rect.collidepoint(click_pos):
                     estado['confirmar_borrar_slot'] = i + 1
+                    # v0.8.5: consumir el clic que ABRE el modal. Si no, ese mismo click_pos llega
+                    # al handler del modal (el botón BORRAR está fuera de modal_rect, así que
+                    # `not modal_rect.collidepoint` lo cerraba al instante → el modal parpadeaba).
+                    click_pos = None
                 elif click_pos and r.collidepoint(click_pos) and hdr:
                     try:
                         from alpha_football import save

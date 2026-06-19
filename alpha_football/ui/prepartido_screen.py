@@ -31,10 +31,61 @@ except Exception:
 logger = logging.getLogger(__name__)
 
 
+def _ovr_dots_render(screen, ovr, x, y, side='left'):
+    """
+    v0.8.3: dibuja 5+5 esferitas para visualizar el OVR antes del partido.
+    - 5 esferas base en gris (representan OVR ~70).
+    - Cada esfera blanca añadida = +2 OVR sobre la base.
+    - Cada esfera roja faltante = -2 OVR bajo la base.
+    Lado 'left' = las esferas se alinean hacia la derecha desde x; lado 'right' = hacia la izquierda.
+    """
+    try:
+        DOT_R = 7
+        DOT_GAP = 4
+        # Base OVR ~70. Cada +2 OVR = una esfera blanca extra (hasta 10 esferas max).
+        base = 70
+        # Calcular número de esferas blancas y rojas
+        delta = ovr - base
+        blancas = max(0, min(5, int(delta // 2) + 5 // 2))  # centro en 5
+        rojas = max(0, min(5, 5 - (int(delta // 2) + 5 // 2)))
+        # Si OVR es muy bajo (< 65), puede haber menos de 5 grises
+        grises = 10 - blancas - rojas
+        # Construir la lista de colores: empezamos con [rojas] luego [5 grises] luego [blancas]
+        colores = ([(220, 60, 60)] * rojas
+                   + [(80, 80, 95)] * grises
+                   + [(255, 255, 255)] * blancas)
+        # Limitar a 10 esferas totales
+        colores = colores[:10]
+        if not colores:
+            return
+        total_w = len(colores) * (DOT_R * 2 + DOT_GAP) - DOT_GAP
+        if side == 'right':
+            start_x = x - total_w + DOT_R
+            for i, color in enumerate(colores):
+                cx = start_x + i * (DOT_R * 2 + DOT_GAP)
+                try:
+                    pygame.draw.circle(screen, color, (cx, y), DOT_R)
+                    pygame.draw.circle(screen, (10, 14, 26), (cx, y), DOT_R, width=1)
+                except Exception:
+                    pass
+        else:
+            start_x = x
+            for i, color in enumerate(colores):
+                cx = start_x + i * (DOT_R * 2 + DOT_GAP)
+                try:
+                    pygame.draw.circle(screen, color, (cx, y), DOT_R)
+                    pygame.draw.circle(screen, (10, 14, 26), (cx, y), DOT_R, width=1)
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.error(f"Error en _ovr_dots_render: {e}")
+
+
 def _simular_instantaneo(estado: dict, local: any, visitante: any) -> None:
     """Resuelve el partido al instante de forma segura y consistente según el match_mode."""
     try:
-        match_mode = estado.get('match_mode', 'liga')
+        # v0.8.4: `or 'liga'` — nueva carrera deja match_mode=None y el default de .get no aplica.
+        match_mode = estado.get('match_mode') or 'liga'
         mi_equipo = estado.get('mi_equipo')
         from alpha_football.engine import simular_partido
         
@@ -98,28 +149,46 @@ def _simular_instantaneo(estado: dict, local: any, visitante: any) -> None:
                     else:
                         fase_data['avanza'] = 'user' if gl > gv else 'rival'
                     
-                    # Avanzar de fase si el usuario ganó
+                    # v0.8.6 (Tarea 5): si el usuario avanza, llamar a avanzar_fase_bracket
+                    # para simular los OTROS partidos de esta fase y construir la siguiente llave.
                     if fase_data['avanza'] == 'user':
-                        fases = ['cuartos', 'semis', 'final']
-                        if fase_actual in fases:
-                            curr_idx = fases.index(fase_actual)
-                            if curr_idx < len(fases) - 1:
-                                estado['copa_fase_actual'] = fases[curr_idx + 1]
-                            else:
-                                estado['copa_fase_actual'] = 'campeon'
+                        if fase_actual in ('cuartos', 'semis'):
+                            try:
+                                from alpha_football.ui.copa_screen import avanzar_fase_bracket
+                                avanzar_fase_bracket(estado)
+                            except Exception as e_avz:
+                                logger.error(f"Error al avanzar fase del bracket (sim inst): {e_avz}")
+                                fases_fb = ['cuartos', 'semis', 'final']
+                                curr_idx = fases_fb.index(fase_actual)
+                                if curr_idx < len(fases_fb) - 1:
+                                    estado['copa_fase_actual'] = fases_fb[curr_idx + 1]
+                        elif fase_actual == 'final':
+                            estado['copa_fase_actual'] = 'campeon'
+                            estado['copa_mejor_fase_temp'] = 'Campeón'
                     else:
                         estado['copa_fase_actual'] = 'eliminado'
+                        # v0.8.1: tracking de la mejor fase alcanzada
+                        # v0.8.2: defensivo contra None/valores no-string
+                        fase_label = {'cuartos': 'Cuartos', 'semis': 'Semifinal',
+                                      'final': 'Finalista', 'grupos': 'Fase de grupos'}
+                        _mejor_fase_actual = estado.get('copa_mejor_fase_temp') or ''
+                        if not _mejor_fase_actual or _mejor_fase_actual in ('No clasificó', 'Fase de grupos') or fase_actual not in _mejor_fase_actual:
+                            estado['copa_mejor_fase_temp'] = fase_label.get(fase_actual, 'Fase de grupos')
             
-            # Desarrollo de la plantilla en Copa si el usuario es participante
-            if mi_equipo and (mi_equipo.id == local.id or mi_equipo.id == visitante.id):
+            # v0.8.6 (Tarea 4+5): desarrollo de AMBOS equipos en copa y registro de stats
+            try:
+                from alpha_football.desarrollo import desarrollar_plantilla_post_partido
+                rep_l = desarrollar_plantilla_post_partido(local, gl, gv)
+                rep_v = desarrollar_plantilla_post_partido(visitante, gv, gl)
+                # Registrar estadísticas de copa
                 try:
-                    from alpha_football.desarrollo import desarrollar_plantilla_post_partido
-                    user_is_local = (mi_equipo.id == local.id)
-                    gf = gl if user_is_local else gv
-                    gc = gv if user_is_local else gl
-                    desarrollar_plantilla_post_partido(mi_equipo, gf, gc)
-                except Exception as e_dev:
-                    logger.error(f"Error de desarrollo en sim instantánea copa: {e_dev}")
+                    from alpha_football.ui.copa_screen import registrar_stats_copa
+                    registrar_stats_copa(estado, getattr(local, 'nombre', ''), gv, rep_l)
+                    registrar_stats_copa(estado, getattr(visitante, 'nombre', ''), gl, rep_v)
+                except Exception:
+                    pass
+            except Exception as e_dev:
+                logger.error(f"Error de desarrollo en sim instantánea copa: {e_dev}")
             
             estado['prepartido_resultado'] = {
                 'titulo': f"{local.corto} {gl} - {gv} {visitante.corto}" + (f" ({penales_str} PEN)" if penales_str else ""),
@@ -183,7 +252,8 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         liga = estado.get('liga')
         mi_equipo = estado.get('mi_equipo')
         partido = estado.get('partido_actual')
-        match_mode = estado.get('match_mode', 'liga')
+        # v0.8.4: `or 'liga'` — nueva carrera deja match_mode=None y el default de .get no aplica.
+        match_mode = estado.get('match_mode') or 'liga'
 
         # Determinar equipos local y visitante según el ámbito del partido
         if match_mode == 'liga':
@@ -219,7 +289,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         draw_text(screen, "PREPARAR PARTIDO", (SCREEN_W // 2 - 180, 70), size='xl', color='dorado')
 
         # Cartel del enfrentamiento
-        panel = pygame.Rect(SCREEN_W // 2 - 320, 140, 640, 130)
+        panel = pygame.Rect(SCREEN_W // 2 - 320, 140, 640, 160)
         draw_panel(screen, panel)
         l_name = (getattr(local, 'corto', None) or (local.nombre if local else "Local"))
         v_name = (getattr(visitante, 'corto', None) or (visitante.nombre if visitante else "Visitante"))
@@ -228,26 +298,65 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         v_w = get_font('lg').size(v_name)[0]
         draw_text(screen, v_name, (panel.right - 30 - v_w, panel.y + 25), size='lg', color='rojo')
 
+        # v0.8.3: OVR del mejor 11 de cada equipo (usando nivel_club de market.py).
+        # Indicador visual con esferitas (5 negras = base ~70, cada blanca añadida = +2 OVR)
+        # para que el DT vea de un vistazo si el partido es favorable.
+        try:
+            from alpha_football.market import nivel_club
+            ovr_l = nivel_club(local) if local else 0
+            ovr_v = nivel_club(visitante) if visitante else 0
+        except Exception:
+            ovr_l = ovr_v = 0
+        # Esferitas a la izquierda (local) y derecha (visitante)
+        _ovr_dots_render(screen, ovr_l, panel.x + 30, panel.y + 60, side='left')
+        _ovr_dots_render(screen, ovr_v, panel.right - 30, panel.y + 60, side='right')
+        # OVR numérico centrado entre los dos equipos
+        if ovr_l or ovr_v:
+            color_ovr_l = 'verde' if ovr_l > ovr_v else ('blanco' if ovr_l == ovr_v else 'rojo')
+            color_ovr_v = 'verde' if ovr_v > ovr_l else ('blanco' if ovr_v == ovr_l else 'rojo')
+            draw_text(screen, f"OVR {ovr_l}", (panel.x + 30, panel.y + 90), size='md', color=color_ovr_l)
+            draw_text(screen, f"OVR {ovr_v}", (panel.right - 30 - get_font('md').size(f"OVR {ovr_v}")[0], panel.y + 90), size='md', color=color_ovr_v)
+            # Diferencia centrada
+            diff = ovr_l - ovr_v
+            if diff > 0:
+                msg = f"+{diff} a tu favor"
+                c = 'verde'
+            elif diff < 0:
+                msg = f"{diff} en contra"
+                c = 'rojo'
+            else:
+                msg = "Igualados"
+                c = 'dorado'
+            msg_w = get_font('sm').size(msg)[0]
+            draw_text(screen, msg, (SCREEN_W // 2 - msg_w // 2, panel.y + 65), size='sm', color=c)
+
         # Mostrar estilos tácticos del DT de cada equipo
         estilo_l = f"Estilo: {getattr(local, 'estilo_dt', 'Equilibrado').capitalize()}"
         estilo_v = f"Estilo: {getattr(visitante, 'estilo_dt', 'Equilibrado').capitalize()}"
         v_estilo_w = get_font('sm').size(estilo_v)[0]
-        draw_text(screen, estilo_l, (panel.x + 30, panel.y + 80), size='sm', color='blanco')
-        draw_text(screen, estilo_v, (panel.right - 30 - v_estilo_w, panel.y + 80), size='sm', color='blanco')
+        draw_text(screen, estilo_l, (panel.x + 30, panel.y + 120), size='sm', color='blanco')
+        draw_text(screen, estilo_v, (panel.right - 30 - v_estilo_w, panel.y + 120), size='sm', color='blanco')
 
         # Botones de opción
         btn_jugar = pygame.Rect(SCREEN_W // 2 - 260, 290, 520, 60)
         btn_sim = pygame.Rect(SCREEN_W // 2 - 260, 370, 520, 60)
         btn_dir = pygame.Rect(SCREEN_W // 2 - 260, 450, 520, 60)
-        btn_volver = pygame.Rect(SCREEN_W // 2 - 125, 550, 250, 48)
+        btn_ver_rival = pygame.Rect(SCREEN_W // 2 - 260, 510, 250, 48)
+        btn_volver = pygame.Rect(SCREEN_W // 2 + 10, 510, 250, 48)
 
         draw_button(screen, btn_jugar, "1. JUGAR PARTIDO (en vivo)", btn_jugar.collidepoint(mouse_pos))
         draw_button(screen, btn_sim, "2. SIMULAR INSTANTÁNEAMENTE", btn_sim.collidepoint(mouse_pos))
-        
-        # Deshabilitar dirección de equipo en amistoso si no hay carrera cargada
-        dir_hab = (mi_equipo is not None)
+
+        # v0.8.5: en AMISTOSO, dirección gestiona el equipo elegido para el amistoso (local),
+        # no la carrera; así se habilita aunque no haya carrera cargada.
+        dir_hab = (local is not None) if match_mode == 'amistoso' else (mi_equipo is not None)
         draw_button(screen, btn_dir, "3. DIRECCIÓN DE EQUIPO" if dir_hab else "3. DIRECCIÓN DE EQUIPO [Bloqueado]", btn_dir.collidepoint(mouse_pos) and dir_hab)
-        
+
+        # v0.8.3 (F1): botón extra para VER la alineación del RIVAL
+        rival_disponible = visitante is not None and visitante is not local
+        draw_button(screen, btn_ver_rival, "4. VER ALINEACIÓN RIVAL" if rival_disponible else "4. RIVAL NO DISPONIBLE",
+                    btn_ver_rival.collidepoint(mouse_pos) and rival_disponible)
+
         draw_button(screen, btn_volver, "VOLVER", btn_volver.collidepoint(mouse_pos))
 
         if click_pos:
@@ -258,6 +367,17 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             elif btn_sim.collidepoint(click_pos):
                 _simular_instantaneo(estado, local, visitante)
             elif btn_dir.collidepoint(click_pos) and dir_hab:
+                # Limpiar objetivo rival si está activo (vista de MI equipo)
+                estado['team_equipo_objetivo'] = None
+                # v0.8.5: marcar contexto para que team_screen gestione el equipo correcto
+                # (amis_local en amistoso, la carrera en liga/copa) — datos totalmente separados.
+                estado['team_contexto'] = 'amistoso' if match_mode == 'amistoso' else 'carrera'
+                # v0.8.6 (Tarea 1): modo prepartido — team_screen muestra panel compacto sin HUB
+                estado['team_modo_prepartido'] = True
+                return "team_screen"
+            elif btn_ver_rival.collidepoint(click_pos) and rival_disponible:
+                # v0.8.3 (F1): abrir team_screen en modo visor del rival
+                estado['team_equipo_objetivo'] = visitante
                 return "team_screen"
             elif btn_volver.collidepoint(click_pos):
                 if match_mode == 'copa':

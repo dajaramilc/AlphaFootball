@@ -45,6 +45,8 @@ def avanzar_nueva_temporada(estado: dict) -> None:
         estado['temporada'] = nueva_temp
 
         # 2. Guardar registro en el historial de campañas (Career Screen)
+        #    v0.8.1: claves correctas (pos/pts/gf/gc/campeon_liga/libertadores) +
+        #    bono de fin de temporada + reset de la mejor fase de copa.
         try:
             # Ordenar para ver la posición final del usuario
             def clave_tabla(eq):
@@ -52,19 +54,82 @@ def avanzar_nueva_temporada(estado: dict) -> None:
                 return (getattr(eq, 'puntos', 0), dg, getattr(eq, 'gf', 0))
             equipos_ord = sorted(liga.equipos, key=clave_tabla, reverse=True)
             posicion = next((idx + 1 for idx, s in enumerate(equipos_ord) if s.id == mi_equipo.id), 1)
-            
+            campeon = equipos_ord[0] if equipos_ord else None
+            campeon_nombre = getattr(campeon, 'nombre', 'Desconocido') if campeon else 'Desconocido'
+
+            # Mejor fase alcanzada en copa esta temporada
+            mejor_fase = estado.get('copa_mejor_fase_temp')
+            if not mejor_fase:
+                # Derivar del estado de la copa si no se trackeó explícitamente
+                fase_actual = estado.get('copa_fase_actual', 'grupos')
+                if fase_actual == 'campeon':
+                    mejor_fase = 'Campeón'
+                elif fase_actual == 'eliminado':
+                    mejor_fase = 'Fase de grupos'
+                else:
+                    mejor_fase = 'Fase de grupos'
+
+            # F6/F7 (v0.8.2): bono de fin de temporada VARIABLE por país del usuario
+            # (liga) y por continente (copa).
+            # Recompensas de LIGA (per-country, ya acordadas):
+            _BONO_LIGA_POR_PAIS = {
+                'premier':    [150_000_000, 90_000_000, 50_000_000, 50_000_000, 25_000_000, 25_000_000, 10_000_000, 10_000_000, 10_000_000, 10_000_000, 10_000_000, 10_000_000],
+                'laliga':     [100_000_000, 60_000_000, 30_000_000, 30_000_000, 15_000_000, 15_000_000,  5_000_000,  5_000_000,  5_000_000,  5_000_000,  5_000_000,  5_000_000],
+                'brasil':     [ 60_000_000, 35_000_000, 20_000_000, 20_000_000, 10_000_000, 10_000_000,  3_000_000,  3_000_000,  3_000_000,  3_000_000,  3_000_000,  3_000_000],
+                'argentina':  [ 30_000_000, 18_000_000, 10_000_000, 10_000_000,  5_000_000,  5_000_000,  2_000_000,  2_000_000,  2_000_000,  2_000_000,  2_000_000,  2_000_000],
+                'betplay':    [ 20_000_000, 12_000_000,  7_000_000,  7_000_000,  3_000_000,  3_000_000,  1_000_000,  1_000_000,  1_000_000,  1_000_000,  1_000_000,  1_000_000],
+            }
+            tipo_liga = getattr(liga, 'tipo', '') or ''
+            tabla_bonos = _BONO_LIGA_POR_PAIS.get(tipo_liga) or _BONO_LIGA_POR_PAIS['betplay']
+            # índice por posición (1..N) con cap a la longitud de la tabla
+            idx_liga = max(0, min(len(tabla_bonos) - 1, posicion - 1))
+            bono_liga = tabla_bonos[idx_liga]
+
+            # Recompensas de COPA (Europa vs América, agresiva):
+            _BONO_COPA_EUROPA = {'Campeón': 75_000_000, 'Finalista': 40_000_000, 'Semifinal': 15_000_000}
+            _BONO_COPA_AMERICA = {'Campeón': 25_000_000, 'Finalista': 12_000_000, 'Semifinal': 5_000_000}
+            _es_europa = tipo_liga in ('premier', 'laliga')
+            tabla_copa = _BONO_COPA_EUROPA if _es_europa else _BONO_COPA_AMERICA
+            bono_copa = tabla_copa.get(mejor_fase, 0)
+            bono_total = bono_liga + bono_copa
+
+            # Acreditar el bono al balance del usuario
+            try:
+                mi_equipo.balance = int(getattr(mi_equipo, 'balance', 0)) + bono_total
+            except Exception as e_bal:
+                logger.error(f"Error al acreditar bono de fin de temporada: {e_bal}")
+
             registro = {
                 "temporada": temp_anterior,
                 "equipo": mi_equipo.nombre,
+                # v0.8.1: claves que lee career_screen.py
+                "pos": posicion,
+                "pts": getattr(mi_equipo, 'puntos', 0),
+                "gf": getattr(mi_equipo, 'gf', 0),
+                "gc": getattr(mi_equipo, 'gc', 0),
+                "campeon_liga": campeon_nombre,
+                "libertadores": mejor_fase,
+                # Información del bono (se muestra en el resumen de la temporada)
+                "bono_liga": bono_liga,
+                "bono_copa": bono_copa,
+                "bono_total": bono_total,
+                # Compatibilidad con saves viejos que usaban 'posicion' y 'puntos'
                 "posicion": posicion,
-                "puntos": mi_equipo.puntos,
-                "pg": mi_equipo.pg,
-                "pe": mi_equipo.pe,
-                "pp": mi_equipo.pp
+                "puntos": getattr(mi_equipo, 'puntos', 0),
             }
             estado.setdefault('historial', []).append(registro)
+            logger.info(
+                f"Fin T{temp_anterior}: pos {posicion}, pts {mi_equipo.puntos}, "
+                f"copa {mejor_fase}, bono €{bono_total:,}"
+            )
         except Exception as e_hist:
             logger.error(f"Error al guardar historial de campaña: {e_hist}")
+
+        # 2b. Reset del tracking de copa para la nueva temporada
+        try:
+            estado['copa_mejor_fase_temp'] = None
+        except Exception:
+            pass
 
         # 3. Limpiar estadísticas de todos los equipos y jugadores de la liga
         for eq in liga.equipos:
@@ -188,6 +253,48 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             draw_text(screen, f"🏆 ¡EL CAMPEÓN ES {campeon.nombre.upper()}! 🏆", (300, 115), size='lg', color='dorado')
             pos_user = next((idx + 1 for idx, eq in enumerate(equipos_ordenados) if eq.id == mi_equipo.id), 1)
             draw_text(screen, f"Tu equipo ({mi_equipo.corto}) finalizó en la posición #{pos_user}. ¡A por la revancha la próxima temporada!", (250, 155), size='sm', color='blanco')
+
+        # v0.8.2: F6/F7 — banner de bono de fin de temporada (variables por país/continente)
+        try:
+            mejor_fase = estado.get('copa_mejor_fase_temp')
+            if not mejor_fase:
+                fase_actual = estado.get('copa_fase_actual', 'grupos')
+                if fase_actual == 'campeon':
+                    mejor_fase = 'Campeón'
+                elif fase_actual == 'eliminado':
+                    mejor_fase = 'Fase de grupos'
+                else:
+                    mejor_fase = 'Fase de grupos'
+            # Reutilizamos las mismas tablas (deben coincidir con las de avanzar_nueva_temporada)
+            _BONO_LIGA_POR_PAIS = {
+                'premier':    [150_000_000, 90_000_000, 50_000_000, 50_000_000, 25_000_000, 25_000_000, 10_000_000, 10_000_000, 10_000_000, 10_000_000, 10_000_000, 10_000_000],
+                'laliga':     [100_000_000, 60_000_000, 30_000_000, 30_000_000, 15_000_000, 15_000_000,  5_000_000,  5_000_000,  5_000_000,  5_000_000,  5_000_000,  5_000_000],
+                'brasil':     [ 60_000_000, 35_000_000, 20_000_000, 20_000_000, 10_000_000, 10_000_000,  3_000_000,  3_000_000,  3_000_000,  3_000_000,  3_000_000,  3_000_000],
+                'argentina':  [ 30_000_000, 18_000_000, 10_000_000, 10_000_000,  5_000_000,  5_000_000,  2_000_000,  2_000_000,  2_000_000,  2_000_000,  2_000_000,  2_000_000],
+                'betplay':    [ 20_000_000, 12_000_000,  7_000_000,  7_000_000,  3_000_000,  3_000_000,  1_000_000,  1_000_000,  1_000_000,  1_000_000,  1_000_000,  1_000_000],
+            }
+            _BONO_COPA_EUROPA = {'Campeón': 75_000_000, 'Finalista': 40_000_000, 'Semifinal': 15_000_000}
+            _BONO_COPA_AMERICA = {'Campeón': 25_000_000, 'Finalista': 12_000_000, 'Semifinal': 5_000_000}
+            tipo_liga_b = getattr(liga, 'tipo', '') or ''
+            tabla_bonos_b = _BONO_LIGA_POR_PAIS.get(tipo_liga_b) or _BONO_LIGA_POR_PAIS['betplay']
+            idx_b = max(0, min(len(tabla_bonos_b) - 1, pos_user - 1))
+            bono_liga = tabla_bonos_b[idx_b]
+            _es_europa_b = tipo_liga_b in ('premier', 'laliga')
+            tabla_copa_b = _BONO_COPA_EUROPA if _es_europa_b else _BONO_COPA_AMERICA
+            bono_copa = tabla_copa_b.get(mejor_fase, 0)
+            bono_total = bono_liga + bono_copa
+            if bono_total > 0:
+                bono_rect = pygame.Rect(100, 615, 1080, 50)
+                draw_panel(screen, bono_rect)
+                pygame.draw.rect(screen, COLORS['verde'], bono_rect, width=2, border_radius=8)
+                draw_text(
+                    screen,
+                    f"💰 BONO DE FIN DE TEMPORADA: +€{bono_total:,}  "
+                    f"(Liga: €{bono_liga:,}  ·  Copa: €{bono_copa:,})",
+                    (120, 628), size='md', color='verde'
+                )
+        except Exception as e_bono:
+            logger.error(f"Error al mostrar banner de bono: {e_bono}")
 
         # PANEL IZQUIERDO: Clasificación Final
         panel_izq = pygame.Rect(100, 220, 520, 360)

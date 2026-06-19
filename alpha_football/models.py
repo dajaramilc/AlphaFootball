@@ -120,7 +120,15 @@ class Jugador:
 
     def to_dict(self) -> dict[str, Any]:
         """Serializa a diccionario plano para JSON."""
-        return asdict(self)
+        # v0.8.1: 'overall' es @property (calculado de los 5 atributos), así que
+        # asdict() no lo incluye. Lo añadimos explícitamente para que el editor
+        # y otros consumidores lo lean bien sin tener que recalcular.
+        d = asdict(self)
+        try:
+            d["overall"] = self.overall
+        except Exception:
+            d["overall"] = 50
+        return d
 
     @classmethod
     def from_dict(cls, datos: dict[str, Any]) -> "Jugador":

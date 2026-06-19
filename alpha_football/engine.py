@@ -313,6 +313,49 @@ def resolver_choque(
     return "defensa"
 
 
+def _once_titular(equipo: Equipo) -> list:
+    """
+    Devuelve los 11 jugadores que están efectivamente en la cancha.
+    Prioriza la alineación activa (titulares) si está completa y sin lesionados;
+    si no, completa con los primeros 11 no lesionados disponibles.
+    Esto evita que los suplentes del banco marquen goles (v0.8.1).
+    """
+    try:
+        jugadores = list(getattr(equipo, "jugadores", []) or [])
+        alin = getattr(equipo, "alineacion_activa", None)
+        if alin and getattr(alin, "titulares", None):
+            disp = []
+            usados = set()
+            for idx in alin.titulares:
+                if 0 <= idx < len(jugadores) and idx not in usados:
+                    j = jugadores[idx]
+                    if getattr(j, "lesion_partidos", 0) == 0 and getattr(j, "partidos_sancion", 0) <= 0:
+                        disp.append(j)
+                        usados.add(idx)
+                        if len(disp) == 11:
+                            return disp
+            # Si faltan titulares por lesión, completar con los mejores no lesionados
+            if len(disp) < 11:
+                candidatos = [j for j in jugadores if j not in disp and getattr(j, "lesion_partidos", 0) == 0 and getattr(j, "partidos_sancion", 0) <= 0]
+                candidatos.sort(key=lambda x: getattr(x, "overall", 0), reverse=True)
+                for j in candidatos:
+                    if len(disp) >= 11:
+                        break
+                    disp.append(j)
+            if len(disp) == 11:
+                return disp
+        # Fallback: primeros 11 no lesionados (o todos si no alcanzan)
+        no_lesionados = [j for j in jugadores if getattr(j, "lesion_partidos", 0) == 0 and getattr(j, "partidos_sancion", 0) <= 0]
+        if len(no_lesionados) >= 11:
+            return no_lesionados[:11]
+        return no_lesionados or list(jugadores)[:11]
+    except Exception as e:
+        try:
+            return list(getattr(equipo, "jugadores", []))[:11]
+        except Exception:
+            return []
+
+
 def _probs_ataque(local: Equipo, visitante: Equipo) -> tuple[float, float]:
     """
     Probabilidades de ataque por minuto basadas en posesion (tecnica+mental).
@@ -428,7 +471,26 @@ def procesar_minuto(
         if random.random() > prob:
             continue
         silencio  = False
-        atacante  = random.choice(ja)
+        # v0.8.1: 8% de probabilidad de que un defensa (DEF) sea el atacante en un gol
+        # (cabezazo en un córner, jugada a balón parado). El 92% restante se fuerza
+        # a MED/DEL, ya que el XI tiene 4 defensas y la selección natural daba 36% de
+        # goles a defensas sin este control.
+        atacante = None
+        try:
+            if random.random() < 0.08:
+                # Probabilidad baja: que sea un defensa el que protagonice el ataque.
+                defs = [j for j in ja if getattr(j, 'posicion', '') == 'DEF']
+                if defs:
+                    atacante = random.choice(defs)
+        except Exception:
+            pass
+        if atacante is None:
+            # Selección normal: priorizar MED/DEL (excluye POR y DEF, que no atacan en juego).
+            try:
+                no_atk = [j for j in ja if getattr(j, 'posicion', '') not in ('DEF', 'POR')]
+                atacante = random.choice(no_atk) if no_atk else random.choice(ja)
+            except Exception:
+                atacante = random.choice(ja)
         defensor  = random.choice(jd)
         resultado = resolver_choque(
             atacante.poder_ataque_efectivo(ma),
@@ -456,7 +518,11 @@ def procesar_minuto(
                     "minuto": minuto,
                     "tipo": resultado,
                     "equipo_id": eq_a.id,
-                    "detalle": detalle_evento
+                    "detalle": detalle_evento,
+                    # v0.8.1: identificador del jugador que protagoniza el evento.
+                    # Permite luego trackear nota por jugador y mostrar goleador real.
+                    "jugador_id": getattr(atacante, "id", None),
+                    "defensor_id": getattr(defensor, "id", None),
                 })
         except Exception as e_ev:
             # Error recuperable al generar narrativa del evento
@@ -490,8 +556,14 @@ def simular_partido(
     como multiplicadores de la 2a mitad (decision de medio tiempo del jugador).
     """
     gl, gv = 0, 0
-    jl = local.once_disponible
-    jv = visitante.once_disponible
+    # v0.8.1: solo los 11 titulares pueden participar (evita goles del banco).
+    jl = _once_titular(local)
+    jv = _once_titular(visitante)
+    # v0.8.5: guard — si una plantilla queda vacía (datos corruptos / equipo sin jugadores),
+    # devolvemos un marcador por defecto en vez de reventar con "list index out of range".
+    # Tras el fix de copa los equipos siempre traen plantilla; esto es defensa en profundidad.
+    if not jl or not jv:
+        return Resultado(local.nombre, visitante.nombre, 0, 0, eventos=[])
     mt = decision_mt or {}
     eventos_partido = []
     # v0.7: sinergia formación/táctica/familiaridad sobre el ataque de cada equipo.
@@ -556,10 +628,14 @@ def simular_rango(
     dl = float(m.get("def_l", 1.0))
     av = float(m.get("atk_v", 1.0)) * synergy_equipo(visitante)
     dv = float(m.get("def_v", 1.0))
-    jl = local.once_disponible
-    jv = visitante.once_disponible
+    # v0.8.1: solo los 11 titulares.
+    jl = _once_titular(local)
+    jv = _once_titular(visitante)
     ev = eventos if eventos is not None else []
     gl, gv = 0, 0
+    # v0.8.5: guard de plantilla vacía (ver simular_partido) para no romper el motor.
+    if not jl or not jv:
+        return gl, gv, ev
     for minuto in range(int(min_inicio), int(min_fin) + 1):
         gl, gv = procesar_minuto(
             minuto, local, visitante, jl, jv, gl, gv, False, al, dl, av, dv,

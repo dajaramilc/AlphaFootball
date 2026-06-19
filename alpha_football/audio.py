@@ -445,9 +445,12 @@ def start_music() -> None:
         if not pygame.mixer.get_init():
             return
 
-        # Idempotente: si YA hay una pista sonando, no reiniciar (antes, al volver al menú
-        # o re-llamar start_music, se cortaba la canción en curso y empezaba otra).
-        if IS_PLAYING and pygame.mixer.music.get_busy():
+        # v0.8.5: idempotente DE VERDAD. Una vez que la música arrancó (IS_PLAYING=True), el avance
+        # de pista lo maneja EXCLUSIVAMENTE el end-event (USEREVENT+100) o next_track(). Antes el
+        # guard exigía también get_busy()==True; en el hueco entre pistas (get_busy momentáneamente
+        # False) una nueva llamada a start_music disparaba _reproducir_siguiente y chocaba con el
+        # end-event natural, cortando la pista recién iniciada.
+        if IS_PLAYING:
             return
 
         if not PLAYLIST:
@@ -463,6 +466,17 @@ def start_music() -> None:
         logger.error(f"Error al iniciar reproduccion de musica: {e}")
 
 _LAST_PLAYED_TRACK: str | None = None
+
+# v0.8.3 (F2): cola de canciones. Mantiene un set de las canciones ya reproducidas
+# en el ciclo actual; cuando se han reproducido TODAS, se resetea y empieza un
+# nuevo ciclo. Al cambiar manualmente (next_track / Mayús+S) también se resetea.
+_HISTORIAL_CICLO: set[str] = set()
+
+
+def reset_cola_musica() -> None:
+    """Limpia el historial del ciclo actual (v0.8.3). Llamar tras cambios manuales."""
+    global _HISTORIAL_CICLO
+    _HISTORIAL_CICLO = set()
 
 # "Sonando ahora": nombre legible de la pista actual y bandera de que cambió la canción,
 # para que la UI muestre un aviso breve abajo y luego lo oculte sola.
@@ -519,21 +533,34 @@ def hay_cancion_nueva() -> bool:
 
 
 def _reproducir_siguiente() -> None:
-    """Carga y reproduce la siguiente pista disponible en la playlist eligiéndola de forma aleatoria."""
+    """Carga y reproduce la siguiente pista disponible en la playlist.
+
+    v0.8.3 (F2): ya no es 100% aleatoria — mantiene un set _HISTORIAL_CICLO con las
+    canciones ya reproducidas en este ciclo. Cuando se han reproducido TODAS, resetea
+    el set y empieza un nuevo ciclo. Así garantiza que el oyente escuche todas las
+    canciones antes de que alguna se repita.
+    """
     global PLAYLIST, _LAST_PLAYED_TRACK, _CURRENT_TRACK_NAME, _TRACK_CHANGED
     try:
         if not IS_PLAYING or not PLAYLIST:
             return
 
-        # Elegimos una pista al azar para no tener patrón de repetición,
-        # evitando repetir la última pista reproducida si hay más de una.
-        if len(PLAYLIST) > 1:
-            candidatas = [p for p in PLAYLIST if p != _LAST_PLAYED_TRACK]
-            pista = random.choice(candidatas)
-        else:
-            pista = PLAYLIST[0]
+        # Resetear el ciclo si ya se han reproducido todas las canciones
+        if len(_HISTORIAL_CICLO) >= len(PLAYLIST):
+            _HISTORIAL_CICLO.clear()
 
+        # Candidatas = canciones NO reproducidas aún en este ciclo.
+        # Si solo queda 1 (la que se está reproduciendo ahora), la excluimos también
+        # para no repetir la misma consecutivamente.
+        candidatas = [p for p in PLAYLIST
+                       if p not in _HISTORIAL_CICLO and p != _LAST_PLAYED_TRACK]
+        if not candidatas:
+            # Caso degenerado: solo 1 canción o todas recién reproducidas.
+            candidatas = list(PLAYLIST)
+
+        pista = random.choice(candidatas)
         _LAST_PLAYED_TRACK = pista
+        _HISTORIAL_CICLO.add(pista)
 
         if os.path.exists(pista):
             pygame.mixer.music.load(pista)
@@ -550,6 +577,7 @@ def _reproducir_siguiente() -> None:
                 PLAYLIST.remove(pista)
             except ValueError:
                 pass
+            _HISTORIAL_CICLO.discard(pista)  # v0.8.3: no contar pistas inválidas
             _reproducir_siguiente()
     except Exception as e:
         logger.error(f"Error al cargar/reproducir pista: {e}. Intentando con la siguiente pista de forma resiliente.")
@@ -562,8 +590,15 @@ def check_music_event(event_type: int) -> None:
         _reproducir_siguiente()
 
 def next_track() -> None:
-    """Pasa manualmente a la siguiente pista de música."""
+    """Pasa manualmente a la siguiente pista de música.
+
+    v0.8.3 (F2): al hacer cambio manual, se resetea el ciclo para que el orden
+    sea fresco a partir de la elección del usuario (si el usuario salta a "track 3"
+    el ciclo empieza de nuevo desde ahí).
+    """
     try:
+        # v0.8.3: cambio manual = resetear ciclo
+        reset_cola_musica()
         if pygame.mixer.get_init():
             pygame.mixer.music.stop()
             _reproducir_siguiente()

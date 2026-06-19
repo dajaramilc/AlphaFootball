@@ -396,15 +396,19 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 draw_text(screen, h, (x_pos, 150), size='sm', color='dorado')
                 
             pygame.draw.line(screen, COLORS.get('azul', (0, 191, 255)), (720, 170), (1240, 170), 1)
-            
+
+            # v0.8.3.4: inicializar ANTES del if/else para que las refs de
+            # las líneas 452, 513, 518 no rompan cuando historial está vacío.
+            items_visibles = 11
+            scroll = estado.get('career_scroll_offset', 0)
+
             if not historial:
                 draw_text(screen, "Aún no has completado ninguna temporada.", (720, 200), size='md', color='blanco')
                 draw_text(screen, "¡El historial se llenará al completar una temporada!", (720, 230), size='sm', color='azul')
             else:
                 y_row = 185
                 row_height = 37
-                items_visibles = 11
-                scroll = estado['career_scroll_offset']
+                scroll = estado.get('career_scroll_offset', 0)
                 
                 # Control de límites de scroll seguro
                 if scroll < 0:
@@ -495,6 +499,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             # Ir a Dirección de Equipo
             elif btn_equipo.collidepoint(click_pos):
                 estado.pop('career_scroll_offset', None)
+                estado['team_contexto'] = 'carrera'  # v0.8.5: dirección de carrera (no amistoso)
                 return "team_screen"
                 
             # Ir a Opciones (música, volumen)

@@ -206,6 +206,74 @@ def obtener_ganador_match(m, name_user):
         # Fallback al local si no se ha determinado
         return m.get('local', '')
 
+def _fase_tiene_bracket_normalizado(estado: dict, fase: str) -> bool:
+    """
+    v0.8.2: comprueba si `copa_bracket[fase]` ya está en la forma plana
+    {'local': str, 'visitante': str, 'goles_l': ..., 'goles_v': ..., 'jugado': bool, 'avanza': str|None, 'rival': str}
+    (la que produce `avanzar_fase_bracket`). Devuelve True si es así.
+    Si está en la forma placeholder {'m1': ..., 'm2': ...} (la de `inicializar_copa_si_falta`),
+    devuelve False y el llamador debe invocar `avanzar_fase_bracket` para reconstruirla.
+    """
+    try:
+        bd = estado.get('copa_bracket') or {}
+        fdata = bd.get(fase)
+        if not isinstance(fdata, dict):
+            return False
+        # Forma normalizada: tiene 'local' como string en la raíz
+        if isinstance(fdata.get('local'), str):
+            return True
+        return False
+    except Exception:
+        return False
+
+
+def obtener_match_usuario_bracket(estado: dict, fase: str) -> dict:
+    """
+    v0.8.2: devuelve el match de la fase del bracket en el que participa el usuario.
+    Busca tanto en `copa_bracket[fase]` (forma normalizada) como en `copa_bracket_otros[fase]`
+    (lista de los otros matches). Garantiza fallback a un dict vacío si no encuentra.
+    """
+    try:
+        mi_equipo = estado.get('mi_equipo')
+        name_user = getattr(mi_equipo, 'nombre', '') if mi_equipo else ''
+        bd = estado.get('copa_bracket') or {}
+        bo = estado.get('copa_bracket_otros') or {}
+        # 1. Mirar primero en copa_bracket[fase]
+        fdata = bd.get(fase) or {}
+        if isinstance(fdata, dict) and isinstance(fdata.get('local'), str):
+            if fdata.get('local') == name_user or fdata.get('visitante') == name_user:
+                return fdata
+        # 2. Si no, buscar en la lista de copa_bracket_otros[fase]
+        for m in (bo.get(fase) or []):
+            if isinstance(m, dict) and (m.get('local') == name_user or m.get('visitante') == name_user):
+                return m
+        # 3. Si el usuario juega esta fase pero no se encontró (bug de estado), devolver el primero normalizado
+        if isinstance(fdata, dict) and isinstance(fdata.get('local'), str):
+            return fdata
+        for m in (bo.get(fase) or []):
+            if isinstance(m, dict):
+                return m
+    except Exception:
+        pass
+    return {}
+
+
+def _asegurar_bracket_normalizado(estado: dict) -> None:
+    """
+    v0.8.2: si el estado de la copa está en una fase de eliminatorias y
+    `copa_bracket[fase]` aún tiene la forma placeholder (m1/m2/m3/m4), invoca
+    `avanzar_fase_bracket` para reconstruirla. Silencioso si falla.
+    """
+    try:
+        fase = estado.get('copa_fase_actual', 'grupos')
+        if fase in ('cuartos', 'semis', 'final'):
+            if not _fase_tiene_bracket_normalizado(estado, fase):
+                logger.info(f"Reconstruyendo bracket para fase '{fase}' (estructura placeholder detectada).")
+                avanzar_fase_bracket(estado)
+    except Exception as e:
+        logger.error(f"Error al normalizar bracket de copa: {e}")
+
+
 def avanzar_fase_bracket(estado: dict) -> None:
     """
     Construye las llaves de la siguiente fase del torneo de forma dinámica.
@@ -418,9 +486,12 @@ def simular_partidos_ia_bracket(estado: dict, fase: str) -> None:
             m['goles_v'] = res.goles_visitante
             m['jugado'] = True
             
+            # v0.8.6 (Tarea 4): capturar reportes de desarrollo para acumular estadísticas de copa
             try:
-                desarrollar_plantilla_post_partido(loc_obj, res.goles_local, res.goles_visitante)
-                desarrollar_plantilla_post_partido(vis_obj, res.goles_visitante, res.goles_local)
+                rep_l = desarrollar_plantilla_post_partido(loc_obj, res.goles_local, res.goles_visitante)
+                rep_v = desarrollar_plantilla_post_partido(vis_obj, res.goles_visitante, res.goles_local)
+                registrar_stats_copa(estado, loc_name, res.goles_visitante, rep_l)
+                registrar_stats_copa(estado, vis_name, res.goles_local, rep_v)
             except Exception:
                 pass
                 
@@ -592,6 +663,7 @@ def inicializar_copa_si_falta(estado: dict) -> None:
             estado.get('copa_tipo') == copa_tipo_correcto
             and estado.get('copa_grupos')
             and estado.get('copa_grupos_standings')
+            and estado.get('copa_bracket')  # v0.8.5: si falta el bracket, reconstruir todo (evita KeyError 'cuartos')
         )
         if estructura_ok:
             return
@@ -643,13 +715,40 @@ def inicializar_copa_si_falta(estado: dict) -> None:
         # Relleno extra si faltan
         if len(teams) < 16:
             from alpha_football.models import Equipo
-            ficticios = ["Colo Colo Roto", "Penarol Roto", "Olimpia Abuelo", "Bolivar Sin Aire", "Universitario de la U"]
+            # v0.8.3: el relleno ficticio debe coincidir con el tipo de copa.
+            # Champions = equipos europeos; Libertadores = equipos sudamericanos.
+            if copa_tipo == 'Champions':
+                ficticios = ["Ajax Legendario", "Celtic Ancestral", "Shakhtar de Donetsk",
+                              "Salzburgo de la Montaña", "Brujas del Norte"]
+            else:
+                ficticios = ["Colo Colo Roto", "Penarol Roto", "Olimpia Abuelo",
+                              "Bolivar Sin Aire", "Universitario de la U"]
+            # v0.8.5: los rellenos DEBEN tener plantilla. Antes se creaban sin jugadores y la
+            # autosimulación de la copa reventaba con "list index out of range" en el motor.
+            try:
+                from alpha_football.data.internacional import _generar_jugadores_equipo
+            except Exception:
+                _generar_jugadores_equipo = None
+            _fill_id = 2000
             for f_name in ficticios:
                 if len(teams) >= 16:
                     break
                 if f_name not in nombres_vistos:
                     nombres_vistos.add(f_name)
-                    teams.append(Equipo(nombre=f_name, ciudad="Internacional", estrellas=3.5, estilo_dt="anchelottismo", balance=10000000))
+                    _jug_fill = []
+                    if _generar_jugadores_equipo is not None:
+                        try:
+                            _jug_fill = _generar_jugadores_equipo(72, _fill_id)
+                            _fill_id += 50
+                        except Exception:
+                            _jug_fill = []
+                    teams.append(Equipo(nombre=f_name, ciudad="Internacional", estrellas=3.5,
+                                        estilo_dt="anchelottismo", balance=10000000, jugadores=_jug_fill))
+
+        # v0.8.5: cachear los objetos Equipo participantes por nombre (tienen su plantilla real).
+        # encontrar_equipo_copa los consulta PRIMERO; antes los equipos de otras ligas y los
+        # rellenos no se encontraban y se devolvía un Equipo mock SIN jugadores -> IndexError.
+        estado['copa_equipos_obj'] = {getattr(t, 'nombre', ''): t for t in teams if getattr(t, 'nombre', '')}
 
         # Distribuir en 4 grupos (mi_equipo en Grupo A)
         grupo_a = [teams[0].nombre]
@@ -732,16 +831,19 @@ def obtener_partido_copa_pendiente(estado: dict) -> tuple[Optional[str], Optiona
         }
         
         if fase_actual == 'grupos':
+            # v0.8.1: usar .get() defensivo para no crashear si la copa aún no se inicializó
+            # (por ejemplo, en el primer render antes de que inicializar_copa_si_falta termine).
+            partidos_copa = estado.get('copa_grupo_partidos') or []
             if jornada_actual >= limites['g1']:
-                p1 = next((p for p in estado['copa_grupo_partidos'] if p['jornada'] == 1 and not p['jugado'] and (p['local'] == mi_equipo.nombre or p['visitante'] == mi_equipo.nombre)), None)
+                p1 = next((p for p in partidos_copa if p['jornada'] == 1 and not p['jugado'] and (p['local'] == mi_equipo.nombre or p['visitante'] == mi_equipo.nombre)), None)
                 if p1:
                     return "Copa Jornada 1", p1
             if jornada_actual >= limites['g2']:
-                p2 = next((p for p in estado['copa_grupo_partidos'] if p['jornada'] == 2 and not p['jugado'] and (p['local'] == mi_equipo.nombre or p['visitante'] == mi_equipo.nombre)), None)
+                p2 = next((p for p in partidos_copa if p['jornada'] == 2 and not p['jugado'] and (p['local'] == mi_equipo.nombre or p['visitante'] == mi_equipo.nombre)), None)
                 if p2:
                     return "Copa Jornada 2", p2
             if jornada_actual >= limites['g3']:
-                p3 = next((p for p in estado['copa_grupo_partidos'] if p['jornada'] == 3 and not p['jugado'] and (p['local'] == mi_equipo.nombre or p['visitante'] == mi_equipo.nombre)), None)
+                p3 = next((p for p in partidos_copa if p['jornada'] == 3 and not p['jugado'] and (p['local'] == mi_equipo.nombre or p['visitante'] == mi_equipo.nombre)), None)
                 if p3:
                     return "Copa Jornada 3", p3
                     
@@ -751,10 +853,11 @@ def obtener_partido_copa_pendiente(estado: dict) -> tuple[Optional[str], Optiona
                 fase_data = estado['copa_bracket'].get(fase_actual)
                 if fase_data and not fase_data.get('jugado'):
                     user_sigue_vivo = True
+                    _bracket = estado.get('copa_bracket') or {}
                     if fase_actual == 'semis':
-                        user_sigue_vivo = (estado['copa_bracket']['cuartos']['avanza'] == 'user')
+                        user_sigue_vivo = ((_bracket.get('cuartos') or {}).get('avanza') == 'user')
                     elif fase_actual == 'final':
-                        user_sigue_vivo = (estado['copa_bracket']['semis']['avanza'] == 'user')
+                        user_sigue_vivo = ((_bracket.get('semis') or {}).get('avanza') == 'user')
                     
                     if user_sigue_vivo:
                         return f"Copa {fase_actual.capitalize()}", fase_data
@@ -767,12 +870,23 @@ def obtener_partido_copa_pendiente(estado: dict) -> tuple[Optional[str], Optiona
 def encontrar_equipo_copa(nombre_equipo: str, estado: dict):
     """Busca y devuelve el objeto Equipo correspondiente a un nombre en el estado o en los pools."""
     try:
+        # v0.8.3: defensivo contra None o vacío
+        if not nombre_equipo or not isinstance(nombre_equipo, str):
+            return None
+
+        # v0.8.5: PRIMERO el cache de equipos de la copa. Tienen su plantilla real, así que
+        # evita devolver un mock vacío (equipos de otras ligas / rellenos) que rompía el motor.
+        cache_copa = estado.get('copa_equipos_obj') or {}
+        eq_cache = cache_copa.get(nombre_equipo)
+        if eq_cache is not None and getattr(eq_cache, 'jugadores', None):
+            return eq_cache
+
         # 1. Buscar en la liga actual del usuario
         if estado.get('liga'):
             for eq in estado['liga'].equipos:
                 if eq.nombre == nombre_equipo:
                     return eq
-                    
+
         # 2. Buscar en pools internacionales
         from alpha_football.data.internacional import POOL_LIBERTADORES, POOL_CHAMPIONS
         for eq in POOL_LIBERTADORES:
@@ -781,14 +895,14 @@ def encontrar_equipo_copa(nombre_equipo: str, estado: dict):
         for eq in POOL_CHAMPIONS:
             if eq.nombre == nombre_equipo:
                 return eq
-                
+
         # 3. Buscar en todas las ligas guardadas
         if 'ligas' in estado:
             for l in estado['ligas']:
                 for eq in l.get('equipos', []):
                     if eq.nombre == nombre_equipo:
                         return eq
-                        
+
         # 4. Fallback si no existe
         from alpha_football.models import Equipo
         return Equipo(nombre=nombre_equipo, ciudad="Internacional", estrellas=3.5, estilo_dt="flickismo", balance=10000000)
@@ -811,28 +925,79 @@ def _autosimular_rivales(estado: dict) -> None:
     v0.7: para que la tabla sea FIEL, autosimula el partido rival-vs-rival de cada
     jornada que el usuario YA jugó (antes ese partido quedaba sin jugar y la tabla
     no reflejaba todos los resultados).
+
+    v0.8.3: blindado contra None/equipos faltantes — si un partido referencia un
+    equipo que ya no existe en el estado (p.ej. por una limpieza de carrera), se
+    salta con un warning en vez de crashear con TypeError/IndexError.
     """
     try:
-        partidos = estado.get('copa_grupo_partidos', [])
+        partidos = estado.get('copa_grupo_partidos') or []
+        if not partidos:
+            return
         mi = estado.get('mi_equipo')
-        mi_nombre = mi.nombre if mi else None
+        mi_nombre = getattr(mi, 'nombre', None) if mi else None
         if not mi_nombre:
             return
-        jornadas_user = {
-            p['jornada'] for p in partidos
-            if p.get('jugado') and mi_nombre in (p.get('local'), p.get('visitante'))
-        }
+        jornadas_user = set()
+        for p in partidos:
+            if not isinstance(p, dict):
+                continue
+            if not p.get('jugado'):
+                continue
+            loc_p = p.get('local')
+            vis_p = p.get('visitante')
+            if not (loc_p and vis_p):
+                continue
+            if mi_nombre in (loc_p, vis_p):
+                try:
+                    jornadas_user.add(int(p.get('jornada', 0)))
+                except (TypeError, ValueError):
+                    continue
+        if not jornadas_user:
+            return
         from alpha_football.engine import simular_partido as eng_sim
         for p in partidos:
+            if not isinstance(p, dict):
+                continue
             if p.get('jugado'):
                 continue
-            if p['jornada'] in jornadas_user and mi_nombre not in (p.get('local'), p.get('visitante')):
-                loc = encontrar_equipo_copa(p['local'], estado)
-                vis = encontrar_equipo_copa(p['visitante'], estado)
+            try:
+                jn = int(p.get('jornada', 0))
+            except (TypeError, ValueError):
+                continue
+            if jn not in jornadas_user:
+                continue
+            loc_n = p.get('local')
+            vis_n = p.get('visitante')
+            if not (loc_n and vis_n):
+                continue
+            if mi_nombre in (loc_n, vis_n):
+                continue
+            loc = encontrar_equipo_copa(loc_n, estado)
+            vis = encontrar_equipo_copa(vis_n, estado)
+            if loc is None or vis is None:
+                # No se puede simular si no encontramos los equipos. Saltar.
+                continue
+            try:
                 res = eng_sim(loc, vis, con_eventos_caoticos=False)
-                p['goles_l'] = res.goles_local
-                p['goles_v'] = res.goles_visitante
+            except Exception as e_sim:
+                print(f"Error simulando partido {loc_n} vs {vis_n}: {e_sim}", file=sys.stderr)
+                continue
+            try:
+                p['goles_l'] = int(getattr(res, 'goles_local', 0))
+                p['goles_v'] = int(getattr(res, 'goles_visitante', 0))
                 p['jugado'] = True
+            except Exception:
+                continue
+            # v0.8.6 (Tarea 4): desarrollo + registro de estadísticas de copa para rivales autosimulados
+            try:
+                from alpha_football.desarrollo import desarrollar_plantilla_post_partido
+                rep_l = desarrollar_plantilla_post_partido(loc, res.goles_local, res.goles_visitante)
+                rep_v = desarrollar_plantilla_post_partido(vis, res.goles_visitante, res.goles_local)
+                registrar_stats_copa(estado, loc_n, res.goles_visitante, rep_l)
+                registrar_stats_copa(estado, vis_n, res.goles_local, rep_v)
+            except Exception:
+                pass
     except Exception as e:
         print(f"Error al autosimular rivales de copa: {e}", file=sys.stderr)
 
@@ -901,6 +1066,87 @@ def recalcular_standings_copa(estado: dict) -> None:
     except Exception as e:
         print(f"Error en recalcular_standings_copa: {e}", file=sys.stderr)
 
+def _autosimular_otros_grupo(estado: dict, jornada: Optional[int] = None) -> bool:
+    """
+    v0.8.5: simula AUTOMÁTICAMENTE los partidos de grupo pendientes en los que NO juega el
+    usuario (antes había que pulsar "SIMULAR OTROS PARTIDOS"). Si `jornada` es None abarca todas;
+    si se pasa, solo esa. Devuelve True si simuló algo. Resiliente: salta partidos no resolubles.
+    """
+    try:
+        from alpha_football.engine import simular_partido as engine_simular
+        from alpha_football.desarrollo import desarrollar_plantilla_post_partido
+        mi = estado.get('mi_equipo')
+        mi_nombre = getattr(mi, 'nombre', '') if mi else ''
+        pendientes = [
+            p for p in (estado.get('copa_grupo_partidos') or [])
+            if not p.get('jugado') and p.get('local') and p.get('visitante')
+            and mi_nombre not in (p.get('local'), p.get('visitante'))
+            and (jornada is None or p.get('jornada') == jornada)
+        ]
+        if not pendientes:
+            return False
+        for p in pendientes:
+            loc_obj = encontrar_equipo_copa(p['local'], estado)
+            vis_obj = encontrar_equipo_copa(p['visitante'], estado)
+            if loc_obj is None or vis_obj is None:
+                continue
+            try:
+                res = engine_simular(loc_obj, vis_obj, con_eventos_caoticos=False)
+                p['goles_l'] = int(getattr(res, 'goles_local', 0))
+                p['goles_v'] = int(getattr(res, 'goles_visitante', 0))
+                p['jugado'] = True
+            except Exception as e_sim:
+                print(f"Error simulando partido de copa {p.get('local')} vs {p.get('visitante')}: {e_sim}", file=sys.stderr)
+                continue
+            # v0.8.6 (Tarea 4): capturar reportes para acumular estadísticas de copa
+            try:
+                rep_l = desarrollar_plantilla_post_partido(loc_obj, res.goles_local, res.goles_visitante)
+                rep_v = desarrollar_plantilla_post_partido(vis_obj, res.goles_visitante, res.goles_local)
+                registrar_stats_copa(estado, p['local'], int(getattr(res, 'goles_visitante', 0)), rep_l)
+                registrar_stats_copa(estado, p['visitante'], int(getattr(res, 'goles_local', 0)), rep_v)
+            except Exception:
+                pass
+        recalcular_standings_copa(estado)
+        return True
+    except Exception as e:
+        print(f"Error en _autosimular_otros_grupo: {e}", file=sys.stderr)
+        return False
+
+
+def registrar_stats_copa(estado: dict, equipo_nombre: str, goles_contra: int, reporte: list) -> None:
+    """v0.8.6 (Tarea 4): acumula estadísticas de copa por jugador (goles, asist, porterías, notas)."""
+    try:
+        # Validar que el reporte sea iterable y no None
+        if not reporte or not isinstance(reporte, (list, tuple)):
+            return
+        stats = estado.setdefault('copa_stats', {})
+        for r in reporte:
+            # Cada entrada del reporte es un dict con datos del jugador
+            jid = str(r.get('id', ''))
+            if not jid:
+                continue
+            # Inicializar la ficha del jugador si es la primera vez
+            if jid not in stats:
+                stats[jid] = {
+                    'nombre': r.get('jugador', ''),
+                    'equipo': equipo_nombre,
+                    'pos': r.get('posicion', ''),
+                    'goles': 0, 'asist': 0, 'porterias': 0,
+                    'suma_notas': 0.0, 'pj': 0,
+                }
+            s = stats[jid]
+            # Acumular goles, asistencias, notas y partidos jugados
+            s['goles'] += r.get('goles', 0)
+            s['asist'] += r.get('asistencias', 0)
+            s['suma_notas'] += r.get('nota', 0.0)
+            s['pj'] += 1
+            # Portería a cero: si el equipo no recibió goles, los porteros suman
+            if goles_contra == 0 and r.get('posicion') == 'POR':
+                s['porterias'] += 1
+    except Exception as e:
+        logger.error(f"Error en registrar_stats_copa: {e}")
+
+
 def render(screen, estado: dict) -> str | None:
     """
     Renderiza la pantalla de la Copa (Libertadores o Champions) en Pygame.
@@ -912,6 +1158,10 @@ def render(screen, estado: dict) -> str | None:
         liga = estado.get('liga')
         
         inicializar_copa_si_falta(estado)
+        # v0.8.2: si el bracket aún no se reconstruyó para la fase actual (p. ej. el usuario
+        # avanza de fase a cuartos pero nunca se llamó avanzar_fase_bracket), lo arreglamos
+        # silenciosamente para que la UI no crashee.
+        _asegurar_bracket_normalizado(estado)
         copa_tipo = estado['copa_tipo']
         
         estado.setdefault('copa_tab', 'Grupo A')
@@ -921,7 +1171,42 @@ def render(screen, estado: dict) -> str | None:
         # recalcular la tabla SIEMPRE al entrar (no solo al completar todo el grupo).
         if estado.get('copa_fase_actual') == 'grupos':
             _autosimular_rivales(estado)
+
             recalcular_standings_copa(estado)
+
+            # v0.8.6 (Tarea 3): avance automático de la jornada de copa. Tras jugar la jornada
+            # del usuario en una jornada, al volver a la pantalla de Copa el selector
+            # debe apuntar a la siguiente jornada pendiente y desbloqueada, sin que el
+            # usuario tenga que pulsar Ant./Sig. a mano.
+            try:
+                mi = estado.get('mi_equipo')
+                mi_nombre = getattr(mi, 'nombre', '') if mi else ''
+                num_jornadas = getattr(liga, 'num_jornadas', 10) if liga else 10
+                _limites = {
+                    1: 2,
+                    2: max(3, int(num_jornadas * 0.3)),
+                    3: max(4, int(num_jornadas * 0.5)),
+                }
+                _jornada_actual = getattr(liga, 'jornada_actual', 1) if liga else 1
+                _partidos = estado.get('copa_grupo_partidos') or []
+                _objetivo = None
+                for _jn in (1, 2, 3):
+                    if _jornada_actual < _limites.get(_jn, 99):
+                        # Esta jornada aún no está desbloqueada
+                        continue
+                    _pend_user = [
+                        p for p in _partidos
+                        if isinstance(p, dict) and p.get('jornada') == _jn and not p.get('jugado')
+                        and p.get('local') and p.get('visitante')
+                        and mi_nombre in (p.get('local'), p.get('visitante'))
+                    ]
+                    if _pend_user:
+                        _objetivo = _jn
+                        break
+                if _objetivo is not None and estado.get('copa_jornada_grupo') != _objetivo:
+                    estado['copa_jornada_grupo'] = _objetivo
+            except Exception as _e_autoj:
+                logger.error(f"Error en autoposicionamiento de jornada de copa: {_e_autoj}")
 
         # Verificar avance automático de la fase de grupos a eliminatorias
         if estado.get('copa_fase_actual') == 'grupos':
@@ -932,11 +1217,24 @@ def render(screen, estado: dict) -> str | None:
 
         # Dibujar fondo base
         draw_gradient_bg(screen)
-        
-        titulo_copa = f"COPA {copa_tipo.upper()}"
+
+        # v0.8.3.4: hard guard contra None en copa_tipo / copa_fase_actual para
+        # cortar el spam de "'NoneType' object has no attribute 'upper'".
+        try:
+            _tipo = str(copa_tipo) if copa_tipo else "COPA"
+            titulo_copa = f"COPA {_tipo.upper()}"
+        except Exception:
+            titulo_copa = "COPA"
         draw_text(screen, titulo_copa, (40, 20), size='xl', color='dorado')
-        
-        sub_desc = "Fase de Grupos en progreso" if estado['copa_fase_actual'] == 'grupos' else f"Fase de Eliminación Directa — {estado['copa_fase_actual'].upper()}"
+
+        try:
+            _fase = estado.get('copa_fase_actual') or 'grupos'
+            if _fase == 'grupos':
+                sub_desc = "Fase de Grupos en progreso"
+            else:
+                sub_desc = f"Fase de Eliminación Directa — {str(_fase).upper()}"
+        except Exception:
+            sub_desc = "Copa Internacional"
         draw_text(screen, sub_desc, (40, 65), size='sm', color='azul')
         
         tab_names = ['Grupo A', 'Grupo B', 'Grupo C', 'Grupo D', 'Fase Final']
@@ -1084,8 +1382,10 @@ def render(screen, estado: dict) -> str | None:
             pygame.draw.line(screen, (0, 191, 255), (node_x['semis'] + box_w, y_s2 + box_h//2), (node_x['final'], y_final + box_h//2), 2)
             
             name_user = mi_equipo.nombre if mi_equipo else "Mi Club"
-            q_match = estado['copa_bracket']['cuartos']
-            q_otros = estado['copa_bracket_otros'].get('cuartos', [])
+            # v0.8.5: acceso defensivo. Si el bracket aún no tiene 'cuartos' (estado parcial / save
+            # incompleto), antes reventaba con KeyError 'cuartos' cada frame (143× en el log).
+            q_match = (estado.get('copa_bracket') or {}).get('cuartos') or {'local': '', 'visitante': '', 'goles_l': '-', 'goles_v': '-', 'jugado': False}
+            q_otros = (estado.get('copa_bracket_otros') or {}).get('cuartos', [])
             
             if q_match.get('local') == name_user:
                 partido_q1, partido_q2 = q_match, (q_otros[0] if len(q_otros) > 0 else {'local': '?', 'visitante': '?', 'goles_l': '-', 'goles_v': '-', 'jugado': False})
@@ -1123,6 +1423,95 @@ def render(screen, estado: dict) -> str | None:
             if partido_final.get('jugado'):
                 campeon_camino = obtener_ganador_match(partido_final, name_user)
                 draw_text(screen, f"¡CAMPEÓN: {campeon_camino.upper()}!", (node_x['final'] + 10, y_final + 95), size='sm', color='dorado')
+
+        # v0.8.6 (Tarea 4): botón de estadísticas de copa
+        stats_btn_rect = pygame.Rect(1040, 20, 200, 40)
+        stats_btn_hover = stats_btn_rect.collidepoint(mouse_pos)
+        draw_button(screen, stats_btn_rect, "📊 ESTADÍSTICAS", stats_btn_hover)
+
+        # v0.8.6 (Tarea 4): overlay de estadísticas de copa cuando está abierto
+        overlay_consumio_click = False
+        if estado.get('copa_stats_abierto'):
+            try:
+                # Dibujar fondo semi-transparente para el overlay
+                overlay_bg = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
+                overlay_bg.fill((0, 0, 0, 160))
+                screen.blit(overlay_bg, (0, 0))
+
+                # Panel principal del overlay de estadísticas
+                panel_x, panel_y, panel_w, panel_h = 80, 40, 1120, 620
+                panel_rect = pygame.Rect(panel_x, panel_y, panel_w, panel_h)
+                draw_panel(screen, panel_rect)
+                draw_text(screen, "ESTADÍSTICAS DE COPA", (panel_x + 20, panel_y + 10), size='lg', color='dorado')
+
+                # Botón CERRAR dentro del overlay
+                cerrar_rect = pygame.Rect(panel_x + panel_w - 120, panel_y + 10, 100, 30)
+                cerrar_hover = cerrar_rect.collidepoint(mouse_pos)
+                draw_button(screen, cerrar_rect, "CERRAR", cerrar_hover)
+
+                # Obtener datos de estadísticas acumuladas
+                copa_stats = estado.get('copa_stats', {})
+                lista_stats = list(copa_stats.values())
+
+                # Definir las 4 secciones de estadísticas
+                secciones = [
+                    ('⚽ GOLEADORES', 'goles', lambda s: s.get('goles', 0)),
+                    ('🅰️ ASISTENTES', 'asist', lambda s: s.get('asist', 0)),
+                    ('🧤 PORTERÍAS A CERO', 'porterias', lambda s: s.get('porterias', 0)),
+                    ('⭐ RENDIMIENTO', 'rendimiento', lambda s: (s.get('suma_notas', 0) / s.get('pj', 1)) if s.get('pj', 0) >= 1 else 0),
+                ]
+
+                # Calcular posiciones de las columnas (2 columnas × 2 filas)
+                col_w = (panel_w - 60) // 2
+                posiciones = [
+                    (panel_x + 20, panel_y + 55),
+                    (panel_x + 20 + col_w + 20, panel_y + 55),
+                    (panel_x + 20, panel_y + 340),
+                    (panel_x + 20 + col_w + 20, panel_y + 340),
+                ]
+
+                for idx_sec, (titulo_sec, clave_sec, fn_sort) in enumerate(secciones):
+                    sx, sy = posiciones[idx_sec]
+                    draw_text(screen, titulo_sec, (sx, sy), size='md', color='azul')
+
+                    # Ordenar jugadores por la métrica de esta sección (descendente)
+                    if clave_sec == 'rendimiento':
+                        # Solo jugadores con al menos 1 partido jugado
+                        candidatos = [s for s in lista_stats if s.get('pj', 0) >= 1]
+                    else:
+                        candidatos = [s for s in lista_stats if fn_sort(s) > 0]
+                    top_jugadores = sorted(candidatos, key=fn_sort, reverse=True)[:8]
+
+                    fila_y = sy + 28
+                    # Encabezados de la mini-tabla
+                    draw_text(screen, "Jugador", (sx, fila_y), size='sm', color='dorado')
+                    draw_text(screen, "Equipo", (sx + 220, fila_y), size='sm', color='dorado')
+                    valor_label = 'Nota' if clave_sec == 'rendimiento' else clave_sec.capitalize()
+                    draw_text(screen, valor_label, (sx + 420, fila_y), size='sm', color='dorado')
+                    fila_y += 22
+
+                    # Filas de datos
+                    for j_stat in top_jugadores:
+                        nombre_jug = str(j_stat.get('nombre', ''))[:22]
+                        equipo_jug = str(j_stat.get('equipo', ''))[:18]
+                        if clave_sec == 'rendimiento':
+                            pj_val = j_stat.get('pj', 1)
+                            promedio = j_stat.get('suma_notas', 0) / max(pj_val, 1)
+                            valor_str = f"{promedio:.1f}"
+                        else:
+                            valor_str = str(int(fn_sort(j_stat)))
+                        draw_text(screen, nombre_jug, (sx, fila_y), size='sm', color='blanco')
+                        draw_text(screen, equipo_jug, (sx + 220, fila_y), size='sm', color='blanco')
+                        draw_text(screen, valor_str, (sx + 420, fila_y), size='sm', color='verde')
+                        fila_y += 22
+
+                    # Si no hay datos aún, mostrar mensaje informativo
+                    if not top_jugadores:
+                        draw_text(screen, "Sin datos aún", (sx, fila_y), size='sm', color='rojo')
+
+                overlay_consumio_click = True
+            except Exception as e_stats_overlay:
+                logger.error(f"Error al dibujar overlay de estadísticas de copa: {e_stats_overlay}")
 
         back_rect = pygame.Rect(40, 610, 200, 50)
         back_hover = back_rect.collidepoint(mouse_pos)
@@ -1163,11 +1552,10 @@ def render(screen, estado: dict) -> str | None:
                     action_to_return = "jugar_partido_copa"
                     partido_a_jugar = partidos_pend_user[0]
                 else:
-                    partidos_otros_pend = [p for p in estado['copa_grupo_partidos'] if p['jornada'] == jornada_copa_sel and not p['jugado']]
-                    if partidos_otros_pend:
-                        tiene_partido_pendiente = True
-                        btn_text = "SIMULAR OTROS PARTIDOS"
-                        action_to_return = "simular_partidos_copa"
+                    # v0.8.5: sin botón "SIMULAR OTROS PARTIDOS". Los demás partidos de esta
+                    # jornada (ya desbloqueada y sin partido pendiente del usuario) se simulan
+                    # SOLOS y sus resultados aparecen automáticamente.
+                    _autosimular_otros_grupo(estado, jornada_copa_sel)
             else:
                 draw_text(screen, f"Bloqueado: Juega la Jornada {jornada_copa_limite} de Liga para desbloquear.", (710, 620), size='sm', color='rojo')
         elif fase_actual in ['cuartos', 'semis', 'final']:
@@ -1175,13 +1563,15 @@ def render(screen, estado: dict) -> str | None:
             if jornada_actual >= limite_fase:
                 fase_data = estado['copa_bracket'].get(fase_actual)
                 user_sigue_vivo = True
-                if fase_actual == 'semis': user_sigue_vivo = (estado['copa_bracket']['cuartos']['avanza'] == 'user')
-                elif fase_actual == 'final': user_sigue_vivo = (estado['copa_bracket']['semis']['avanza'] == 'user')
+                _bracket = estado.get('copa_bracket') or {}
+                if fase_actual == 'semis': user_sigue_vivo = ((_bracket.get('cuartos') or {}).get('avanza') == 'user')
+                elif fase_actual == 'final': user_sigue_vivo = ((_bracket.get('semis') or {}).get('avanza') == 'user')
                 
                 if user_sigue_vivo and fase_data and not fase_data.get('jugado'):
                     tiene_partido_pendiente = True
-                    btn_text = f"JUGAR {fase_actual.upper()}"
-                    action_to_return = f"jugar_copa_{fase_actual}"
+                    _fase = str(fase_actual) if fase_actual else ''
+                    btn_text = f"JUGAR {_fase.upper()}"
+                    action_to_return = f"jugar_copa_{_fase}"
                 elif not user_sigue_vivo:
                     tiene_partido_pendiente = True
                     btn_text = "SIMULAR RESTO DE COPA"
@@ -1196,6 +1586,15 @@ def render(screen, estado: dict) -> str | None:
             if event.type == pygame.QUIT:
                 return "quit"
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                # v0.8.6 (Tarea 4): manejar clic en botón de estadísticas
+                if stats_btn_rect.collidepoint(event.pos):
+                    estado['copa_stats_abierto'] = not estado.get('copa_stats_abierto', False)
+                    continue
+                # Si el overlay está abierto, consumir clics para que no atraviesen
+                if overlay_consumio_click:
+                    if cerrar_rect.collidepoint(event.pos):
+                        estado['copa_stats_abierto'] = False
+                    continue
                 for name, rect in tab_rects.items():
                     if rect.collidepoint(event.pos):
                         estado['copa_tab'] = name
@@ -1224,29 +1623,32 @@ def render(screen, estado: dict) -> str | None:
                         estado.pop('sim_resultado', None)
                         return "prepartido_screen"
                         
-                    elif action_to_return == "simular_partidos_copa":
-                        from alpha_football.engine import simular_partido as engine_simular
-                        from alpha_football.desarrollo import desarrollar_plantilla_post_partido
-                        partidos_a_simular = [p for p in estado['copa_grupo_partidos'] if p['jornada'] == estado['copa_jornada_grupo'] and not p['jugado']]
-                        for p in partidos_a_simular:
-                            loc_obj = encontrar_equipo_copa(p['local'], estado)
-                            vis_obj = encontrar_equipo_copa(p['visitante'], estado)
-                            res = engine_simular(loc_obj, vis_obj, con_eventos_caoticos=False)
-                            p['goles_l'], p['goles_v'], p['jugado'] = res.goles_local, res.goles_visitante, True
-                            try:
-                                desarrollar_plantilla_post_partido(loc_obj, res.goles_local, res.goles_visitante)
-                                desarrollar_plantilla_post_partido(vis_obj, res.goles_visitante, res.goles_local)
-                            except: pass
-                        recalcular_standings_copa(estado)
-                        
                     elif action_to_return.startswith("jugar_copa_"):
                         fase = action_to_return.split('_')[-1]
+                        # v0.8.2: usar el helper que encuentra el match del usuario en la
+                        # estructura del bracket (sea la forma normalizada de copa_bracket[fase]
+                        # o las llaves de copa_bracket_otros[fase]). Antes leía
+                        # 'copa_bracket[fase]['rival']' directo, que crasheaba cuando el
+                        # bracket aún tenía la forma placeholder {m1, m2, m3, m4}.
+                        match_user = obtener_match_usuario_bracket(estado, fase)
+                        rival_nombre = (match_user.get('visitante')
+                                          if getattr(match_user, 'get', None) and match_user.get('local') == mi_equipo.nombre
+                                          else match_user.get('local')) or match_user.get('rival') or ''
+                        if not rival_nombre:
+                            # Fallback extremo: usar el primer match que encontremos
+                            otros = (estado.get('copa_bracket_otros') or {}).get(fase) or []
+                            if otros and isinstance(otros[0], dict):
+                                rival_nombre = (otros[0].get('visitante') if otros[0].get('local') == mi_equipo.nombre else otros[0].get('local')) or ''
                         estado['match_mode'] = 'copa'
                         estado['partido_actual'] = None
                         estado['partido_local_obj'] = mi_equipo
-                        estado['partido_visitante_obj'] = encontrar_equipo_copa(estado['copa_bracket'][fase]['rival'], estado)
+                        estado['partido_visitante_obj'] = encontrar_equipo_copa(rival_nombre, estado) if rival_nombre else None
                         estado['partido_copa_bracket_fase'] = fase
                         estado.pop('sim_resultado', None)
+                        if estado['partido_visitante_obj'] is None:
+                            # Si no pudimos encontrar rival, evitamos enviar al prepartido
+                            # con datos rotos; el partido es inválido.
+                            return None
                         return "prepartido_screen"
                         
                     elif action_to_return == "simular_resto_copa":
@@ -1257,23 +1659,27 @@ def render(screen, estado: dict) -> str | None:
                         for idx in range(idx_start, len(fases)):
                             f = fases[idx]
                             simular_partidos_ia_bracket(estado, f)
+                            # v0.8.2: garantizar estructura normalizada antes de leer 'local'/'visitante'
+                            if not _fase_tiene_bracket_normalizado(estado, f):
+                                avanzar_fase_bracket(estado)
                             fd = estado['copa_bracket'].get(f)
-                            if fd and not fd.get('jugado'):
+                            if fd and isinstance(fd.get('local'), str) and not fd.get('jugado'):
                                 t_l_name, t_v_name = fd['local'], fd['visitante']
                                 t_l_obj, t_v_obj = encontrar_equipo_copa(t_l_name, estado), encontrar_equipo_copa(t_v_name, estado)
-                                res = engine_simular(t_l_obj, t_v_obj, con_eventos_caoticos=False)
-                                fd['goles_l'], fd['goles_v'], fd['jugado'] = res.goles_local, res.goles_visitante, True
-                                try:
-                                    desarrollar_plantilla_post_partido(t_l_obj, res.goles_local, res.goles_visitante)
-                                    desarrollar_plantilla_post_partido(t_v_obj, res.goles_visitante, res.goles_local)
-                                except: pass
-                                if res.goles_local == res.goles_visitante:
-                                    gana_l = random.random() < 0.5
-                                    fd['avanza'] = 'user' if ((gana_l and t_l_name == name_user) or (not gana_l and t_v_name == name_user)) else 'rival'
-                                    fd['penales'] = '5-4' if gana_l else '4-5'
-                                else:
-                                    gana_l = res.goles_local > res.goles_visitante
-                                    fd['avanza'] = 'user' if ((gana_l and t_l_name == name_user) or (not gana_l and t_v_name == name_user)) else 'rival'
+                                if t_l_obj is not None and t_v_obj is not None:
+                                    res = engine_simular(t_l_obj, t_v_obj, con_eventos_caoticos=False)
+                                    fd['goles_l'], fd['goles_v'], fd['jugado'] = res.goles_local, res.goles_visitante, True
+                                    try:
+                                        desarrollar_plantilla_post_partido(t_l_obj, res.goles_local, res.goles_visitante)
+                                        desarrollar_plantilla_post_partido(t_v_obj, res.goles_visitante, res.goles_local)
+                                    except: pass
+                                    if res.goles_local == res.goles_visitante:
+                                        gana_l = random.random() < 0.5
+                                        fd['avanza'] = 'user' if ((gana_l and t_l_name == name_user) or (not gana_l and t_v_name == name_user)) else 'rival'
+                                        fd['penales'] = '5-4' if gana_l else '4-5'
+                                    else:
+                                        gana_l = res.goles_local > res.goles_visitante
+                                        fd['avanza'] = 'user' if ((gana_l and t_l_name == name_user) or (not gana_l and t_v_name == name_user)) else 'rival'
                             if f != 'final':
                                 estado['copa_fase_actual'] = f
                                 avanzar_fase_bracket(estado)

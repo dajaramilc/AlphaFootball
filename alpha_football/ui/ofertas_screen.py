@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 def _aceptar(estado: dict, of: dict) -> None:
-    """Acepta una oferta: traspasa el jugador, cobra y trae un reemplazo."""
+    """Acepta una oferta: traspasa el jugador, cobra y trae un reemplazo SOLO si la plantilla cae por debajo de 15."""
     mi_equipo = estado.get('mi_equipo')
     jug = of.get('jugador'); comp = of.get('comprador'); monto = of.get('monto', 0)
     if not mi_equipo or not jug or not comp:
@@ -44,10 +44,14 @@ def _aceptar(estado: dict, of: dict) -> None:
             comp.balance = max(0, comp.balance - monto)
         except Exception:
             pass
+        # v0.8.2: solo generar suplente si la plantilla cae por debajo de 15.
+        # Antes siempre se rellenaba; ahora vender deja la plantilla con menos jugadores
+        # (es una decisión del manager).
         try:
-            from alpha_football.ui.market_screen import generar_reemplazo_resiliente
-            suplente = generar_reemplazo_resiliente(jug.posicion, getattr(mi_equipo, 'estrellas', 3.0))
-            mi_equipo.jugadores.append(suplente)
+            if len(mi_equipo.jugadores) < 15:
+                from alpha_football.ui.market_screen import generar_reemplazo_resiliente
+                suplente = generar_reemplazo_resiliente(jug.posicion, getattr(mi_equipo, 'estrellas', 3.0))
+                mi_equipo.jugadores.append(suplente)
             estado.setdefault('transfer_log', []).append(
                 f"Venta: {jug.nombre_completo} -> {comp.nombre} por ${monto:,}")
         except Exception as e_rep:

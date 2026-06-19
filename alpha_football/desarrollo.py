@@ -112,14 +112,27 @@ def desarrollar_plantilla_post_partido(
         j.promedio_nota = round(((j.promedio_nota * (pj - 1)) + nota) / pj, 2)
 
         # Progreso oculto de desarrollo según posición (v0.7: más peso a MED/DEL y a la nota)
+        # v0.8.3 (F3): los defensas y porteros progresan más fácil para que no se
+        # queden estancados toda la temporada. Se les da:
+        #   - base plana por partido (+0.04)
+        #   - portería a cero reforzada (+0.20 vs +0.10 anterior)
+        #   - bonus por encajar ≤1 gol (+0.08)
+        #   - nota >7.5 reforzado (+0.10 vs +0.06)
+        #   - bonus por asistencia (+0.20)
+        # MED/DEL mantienen su progresión rápida (goles/asistencias).
         inc = 0.0
         if j.posicion in ("POR", "DEF"):
+            inc += 0.04  # base plana: cualquier partido suma algo
             if clean_sheet:
-                inc += 0.10
+                inc += 0.20  # portería a cero: recompensa fuerte
                 if j.posicion == "POR":
                     j.porterias_cero += 1   # valla invicta para la tabla de porteros
+            if goles_contra <= 1:
+                inc += 0.08  # casi perfecto también suma
             if nota > 7.5:
-                inc += 0.06
+                inc += 0.10
+            if ap > 0:
+                inc += 0.20  # asistencia (rara en defensas/porteros pero gratificante)
         else:  # MED, DEL — crecen más rápido por goles/asistencias/nota
             inc += gp * 0.26
             inc += ap * 0.14
@@ -151,6 +164,10 @@ def desarrollar_plantilla_post_partido(
             "goles": gp,
             "asistencias": ap,
             "subio_ovr": subio,
+            # v0.8.6: posicion + id para acumular estadísticas de copa por jugador
+            # (goleadores, asistentes, porterías a cero, rendimiento) sin colisiones de nombre.
+            "posicion": getattr(j, "posicion", ""),
+            "id": getattr(j, "id", id(j)),
         })
 
     # v0.7: el equipo se "familiariza" con la táctica usada (más si ganó). Vale para el
