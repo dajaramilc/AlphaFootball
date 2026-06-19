@@ -332,6 +332,12 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             mi_equipo = estado.get('amis_local') or mi_equipo
 
         if not mi_equipo or (not es_amistoso and not liga):
+            # v0.8.7.4: si estamos en modo visor (viendo al rival), NUNCA devolver "menu".
+            # El usuario explícitamente pidió ver al rival, así que volver a prepartido
+            # (si match_mode está seteado) o a league_screen si no.
+            _tobj = estado.get('team_equipo_objetivo')
+            if _tobj and _tobj is not mi_equipo:
+                return "prepartido_screen" if estado.get('match_mode') else "league_screen"
             logger.error("Error: No hay equipo (o liga) en el estado de dirección de equipo.")
             return "prepartido_screen" if (modo_prepartido or es_amistoso) else "menu"
 

@@ -422,8 +422,14 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             color_ovr_v = 'verde' if ovr_v > ovr_l else ('blanco' if ovr_v == ovr_l else 'rojo')
             draw_text(screen, f"OVR {ovr_l}", (panel.x + 30, panel.y + 90), size='md', color=color_ovr_l)
             draw_text(screen, f"OVR {ovr_v}", (panel.right - 30 - get_font('md').size(f"OVR {ovr_v}")[0], panel.y + 90), size='md', color=color_ovr_v)
-            # Diferencia centrada
-            diff = ovr_l - ovr_v
+            # v0.8.7.4: diff desde la perspectiva del USUARIO (no siempre local - visitante).
+            # Cuando el user es visitante, ovr_v = user, ovr_l = rival → hay que invertir.
+            user_is_local = bool(
+                mi_equipo and local and getattr(mi_equipo, 'id', None) == getattr(local, 'id', None)
+            )
+            ovr_user = ovr_l if user_is_local else ovr_v
+            ovr_rival = ovr_v if user_is_local else ovr_l
+            diff = ovr_user - ovr_rival
             if diff > 0:
                 msg = f"+{diff} a tu favor"
                 c = 'verde'
@@ -484,6 +490,9 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             elif btn_ver_rival.collidepoint(click_pos) and rival_disponible:
                 # v0.8.3 (F1): abrir team_screen en modo visor del rival
                 estado['team_equipo_objetivo'] = visitante
+                # v0.8.7.4: marcar contexto igual que el botón DIRECCIÓN DE EQUIPO,
+                # para que team_screen no caiga al menú si liga/mi_equipo están stale.
+                estado['team_contexto'] = 'amistoso' if match_mode == 'amistoso' else 'carrera'
                 return "team_screen"
             elif btn_volver.collidepoint(click_pos):
                 if match_mode == 'copa':

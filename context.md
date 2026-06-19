@@ -1,4 +1,4 @@
-# ALPHA FOOTBALL — Contexto de Proyecto (v0.8.7.3)
+# ALPHA FOOTBALL — Contexto de Proyecto (v0.8.7.4)
 **Última actualización:** 2026-06-19
 **Sesión actual:** v0.8.7 — Tarea 1 (penales con secuencia ronda a ronda en resultado de simulación), Tarea 2 (formación y AUTO ONCE NO consumen cambios — solo el swap titular↔banco manual cuenta, tope 5), Tarea 3 (clasificación a copa: T1 = top 3 por OVR, T2+ = top 3 por puntos), Tarea 4 (modo espectador de copa cuando el user no clasifica: copa visible con overlay "SIMULAR COPA ENTERA" + toast de campeón), Tarea 5 (fix del bug vivo de `avanzar_fase_bracket` con bracket placeholder + backtrack inteligente + anti-bucle).
 
@@ -886,10 +886,97 @@ Smoke headless (`SDL_VIDEODRIVER=dummy`) — 11/11 OK:
 - v0.8.7.1: fix contador "Copas Internacionales" (acento ó ≠ o) en `career_screen` (claude, 2026-06-19).
 - **v0.8.7.2: copa en background (NO CLASIFICADO + VER), DT/presupuesto en slots, hook en finalizar_jornada_liga (claude, 2026-06-19).**
 - **v0.8.7.3: fix "Campeón" en historial cuando user no clasificó. `resumen_temporada_screen.py` chequea `copa_user_en_copa` antes de derivar `mejor_fase` de `copa_fase_actual` (la sim de background deja `copa_fase_actual='campeon'` aunque el user no jugó) (claude, 2026-06-19).**
+- **v0.8.7.4: 3 fixes consolidados — (A) VER ALINEACIÓN RIVAL en carrera ahora setea `team_contexto` + guard defensivo en `team_screen.py` para que NUNCA devuelva "menu" en view_mode; (B) ventaja OVR invertida cuando user es visitante (diff desde la perspectiva del user); (C) badge dorado "CHAMPIONS"/"LIBERTADORES" para top 3 en tabla de posiciones (claude, 2026-06-19).**
+
+---
+
+## Bitácora — v0.8.7.4 (sesión 2026-06-19, 3 fixes consolidados)
+
+Diego reportó 3 bugs en vivo:
+1. **VER ALINEACIÓN RIVAL** en prepartido de modo carrera llevaba al menú principal en vez de mostrar la alineación del rival.
+2. **Ventaja OVR invertida** en el cartel del prepartido cuando el user era visitante (ej: OVR 83 vs rival 80 mostraba "-3 en contra").
+3. Faltaban **labels de clasificados a copa** en la tabla de posiciones (verde en los que pasan a Champions/Libertadores).
+
+### Cambios
+
+**1) `alpha_football/ui/prepartido_screen.py` — VER ALINEACIÓN RIVAL + OVR visitante**
+
+- **Fix VER ALINEACIÓN RIVAL** (L484-487): el handler del botón ahora también setea `team_contexto = 'amistoso'/'carrera'` (igual que el botón DIRECCIÓN DE EQUIPO). Sin esto, team_screen recibía un estado ambiguo y la línea 334 podía devolver "menu" si `liga`/`mi_equipo` estaban stale.
+- **Fix OVR visitante** (L425-435): el cálculo de la diferencia ahora detecta si el user es local o visitante (`user_is_local = mi_equipo.id == local.id`) y calcula `diff = ovr_user - ovr_rival` desde la perspectiva del user. Antes siempre hacía `ovr_l - ovr_v` (rival - user cuando el user es visitante), mostrando el signo invertido.
+
+**2) `alpha_football/ui/team_screen.py` — Guard defensivo para view_mode**
+
+- **L334-336**: cuando `mi_equipo` o `liga` están stale y estamos en `view_mode` (viendo al rival), ahora se devuelve "prepartido_screen" o "league_screen" en vez de "menu". El usuario explícitamente pidió ver al rival, así que NUNCA debe rebotar al menú.
+
+**3) `alpha_football/ui/league_screen.py` — Badge de clasificados a copa en la tabla**
+
+- **L373**: nuevo `_badge_text` = `'CHAMPIONS'` si liga es europea (`premier`/`laliga`), `'LIBERTADORES'` si no.
+- **L378-380**: el color verde de "clasificado" se aplica ahora al **top 3** (antes era top 2, leftover de cuando clasificaban 2).
+- **L398+**: pill/badge dorado (255,215,0) con texto en color BG (oscuro) dibujado al lado del nombre del equipo para los top 3. Indica que ese equipo clasifica a la copa internacional.
+
+### Verificación
+
+Smoke headless (`SDL_VIDEODRIVER=dummy`) — 17/17 OK:
+- **Fix A** (4 tests): handler setea `team_contexto`, `team_equipo_objetivo` queda al rival, regresión de DIRECCIÓN sigue OK.
+- **Fix B** (5 tests): 4 combinaciones de local/visitante + iguales. Antes el caso (3) mostraba "-3 en contra" cuando debía ser "+3 a tu favor".
+- **Fix C** (7 tests): los 5 tipos de liga + fallback + colores top 3 verde / medio blanco / último rojo.
+- **E2E** (1 test): simulación del flow completo VER ALINEACIÓN RIVAL → no dispara early return.
+
+### Archivos modificados
+- `alpha_football/ui/prepartido_screen.py` — handler VER ALINEACIÓN RIVAL + OVR visitante
+- `alpha_football/ui/team_screen.py` — guard defensivo para view_mode
+- `alpha_football/ui/league_screen.py` — badge dorado top 3 + top 3 verde
+
+### Lo que queda (validación en vivo)
+1. Carrera → jugar partido → click "VER ALINEACIÓN RIVAL" → debe mostrar la alineación del rival (NO rebotar al menú).
+2. Partido como visitante (OVR user 83 vs rival 80) → cartel debe mostrar "+3 a tu favor" (antes mostraba "-3 en contra").
+3. Liga Premier o LaLiga → tabla de posiciones → top 3 debe mostrar badge dorado "CHAMPIONS".
+4. Liga BetPlay, Brasil o Argentina → tabla de posiciones → top 3 debe mostrar badge dorado "LIBERTADORES".
+5. Top 3 → nombre en VERDE; 4° en adelante → blanco; último → rojo.
+
+---
+
+## 🔴 ESTADO ACTUAL — Para que claude continue
+
+**Versión:** v0.8.7.4 (recién aplicado por claude, pendiente validación en vivo de Diego)
+
+**Última corrida:** Diego ejecutó `python main.py` 2026-06-19 02:42-02:48 (sobre v0.8.4, no v0.8.5 ni v0.8.6 ni v0.8.7). En este momento:
+- v0.8.5 cubre los bugs críticos (partido en vivo, copa reparada, amistoso aislado, modal borrar slot).
+- v0.8.6 completa el plan de prepartido (panel compacto), subs (AUTO ONCE), jornada auto de copa, stats de copa y fases finales.
+- v0.8.7 completa los 3 pedidos de Diego (penales con secuencia + subs solo manual + clasificación a copa con modo espectador) y arregla el bug vivo del bracket.
+- v0.8.7.1 cierra el bug del contador "Copas Internacionales" en `career_screen` (chequeaba `'campeon'` ASCII contra `'Campeón'` con acento).
+- v0.8.7.2 reemplaza MODO ESPECTADOR por NO CLASIFICADO + VER, agrega copa en background (`simular_copa_fondo`), y DT/presupuesto en slots de Cargar/Guardar.
+- v0.8.7.3 corrige el bug "Campeón" en historial cuando el user no clasificó: `resumen_temporada_screen` ahora chequea `copa_user_en_copa` antes de derivar `mejor_fase`.
+- **v0.8.7.4** consolida 3 fixes: VER ALINEACIÓN RIVAL en carrera, OVR visitante invertido, badge clasificados copa.
+- 17/17 tests del smoke headless pasan. Falta que Diego pruebe en vivo (5 puntos arriba).
+
+### Cómo está firmado cada cambio (autor)
+- v0.4–v0.5: base original (Diego/Opus).
+- v0.6: ajustes de UX (Diego/Opus).
+- v0.7: paquete grande UX+gameplay (Diego/Opus).
+- v0.7.1: ajustes post-test en vivo (Diego/Opus).
+- v0.8: correcciones críticas (Diego/Opus).
+- v0.8.1: bugs + features (Diego/Opus).
+- v0.8.2: pendiente de documentar.
+- v0.8.3: aislamiento + visor rival + primer par de hotfixes en vivo (claude).
+- v0.8.3.4: 3 fixes de log-spam post-segundo-test-en-vivo (claude).
+- v0.8.4: fixes de raíz post-2º-test (claude).
+- v0.8.5: paquete grande post-3er-test (claude).
+- v0.8.6: plan v0.8.6 (antigravity + claude).
+- v0.8.7: plan v0.8.7 — penales con secuencia, subs solo manual, clasificación a copa, modo espectador, fix bracket (claude, 2026-06-19 15:35-15:42).
+- v0.8.7.1: fix contador "Copas Internacionales" (acento ó ≠ o) en `career_screen` (claude, 2026-06-19).
+- v0.8.7.2: copa en background (NO CLASIFICADO + VER), DT/presupuesto en slots, hook en finalizar_jornada_liga (claude, 2026-06-19).
+- v0.8.7.3: fix "Campeón" en historial cuando user no clasificó (claude, 2026-06-19).
+- **v0.8.7.4: VER ALINEACIÓN RIVAL fix + OVR visitante fix + badge clasificados copa (claude, 2026-06-19).**
 
 ### Lo que falta (próximas sesiones)
 
-1. **Validar en vivo v0.8.7.3** (`python main.py`): ver lista de los 4 puntos al final de la bitácora v0.8.7.3 (NO CLASIFICADO en historial cuando T1 user no clasificó, contador de copas no se incrementa, bono copa=0).
+1. **Validar en vivo v0.8.7.4** (`python main.py`): ver lista de los 5 puntos al final de la bitácora v0.8.7.4 (VER ALINEACIÓN RIVAL, OVR visitante, badge clasificados).
+2. **PENDIENTE histórico de context.md** (sigue válido):
+   - Más atributos por jugador y editables uno por uno en modo editar (ampliar `Jugador` dataclass, `from_dict`/`to_dict` tolerante, `edit_screen.py` con un input por atributo, recalcular `overall`).
+3. **PENDIENTE menor:** revisar por qué `mi_equipo` puede ser None en `match_screen` post-clear.
+4. **PENDIENTE menor:** el editor `edit_screen.py` solo deja tocar el OVR (se copia a los 5 atributos). Decisión de diseño: ¿qué atributos quieres añadir?
+5. **Decisión:** sigue en pie la pregunta de la sesión v0.5 sobre si migrar la UI a HTML/CSS (pywebview/Eel/Tauri). Diego descartó Tauri, sigue como decisión futura no implementada.
 2. **PENDIENTE histórico de context.md** (sigue válido):
    - Más atributos por jugador y editables uno por uno en modo editar (ampliar `Jugador` dataclass, `from_dict`/`to_dict` tolerante, `edit_screen.py` con un input por atributo, recalcular `overall`).
 3. **PENDIENTE menor:** revisar por qué `mi_equipo` puede ser None en `match_screen` post-clear.

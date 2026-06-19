@@ -372,11 +372,16 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             # Render de las filas
             start_y = 185
             row_height = 37
+            # v0.8.7.4: badge dorado para los top 3 (clasificados a copa).
+            # Top 3 clasifica a Champions (europeas) o Libertadores (sudamericanas).
+            # En T1 la clasificación es por OVR (fija), en T2+ por puntos (provisional).
+            _es_europa = bool(getattr(liga, 'tipo', '') in ('premier', 'laliga'))
+            _badge_text = 'CHAMPIONS' if _es_europa else 'LIBERTADORES'
             for idx, eq in enumerate(equipos_ordenados, 1):
                 y_pos = start_y + (idx - 1) * row_height
                 
-                # Clasificación en colores
-                if idx <= 2:
+                # Clasificación en colores (v0.8.7.4: top 3 verde, antes era top 2)
+                if idx <= 3:
                     row_color = 'verde'
                 elif idx == len(equipos_ordenados):
                     row_color = 'rojo'
@@ -407,6 +412,25 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 dg_str = f"+{dg}" if dg > 0 else str(dg)
                 draw_text(screen, dg_str, (785, y_pos), size='sm', color=row_color)
                 draw_text(screen, str(eq.puntos), (825, y_pos), size='sm', color=row_color)
+
+                # v0.8.7.4: badge dorado "CHAMPIONS" / "LIBERTADORES" para top 3
+                if idx <= 3:
+                    try:
+                        _sm_font = get_font('sm')
+                        _badge_w = _sm_font.size(_badge_text)[0] + 12
+                        _badge_h = 18
+                        _badge_x = 355 + _sm_font.size(nombre_truncado)[0] + 8
+                        _badge_y = y_pos - 2
+                        _badge_rect = pygame.Rect(_badge_x, _badge_y, _badge_w, _badge_h)
+                        # Fondo dorado
+                        try:
+                            pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), _badge_rect, border_radius=9)
+                        except TypeError:
+                            pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), _badge_rect)
+                        # Texto en color BG (oscuro) para contraste alto
+                        draw_text(screen, _badge_text, (_badge_x + 6, _badge_y + 1), size='sm', color='bg')
+                    except Exception as e_badge:
+                        logger.error(f"Error al dibujar badge de clasificado: {e_badge}")
                 
         except Exception as e_table:
             logger.error(f"Error crítico al renderizar la tabla de posiciones: {str(e_table)}")
