@@ -1166,8 +1166,15 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             
             del_rect = pygame.Rect(1080, 245 + i * 64, 100, 54)
             if hdr:
-                draw_text(screen, f"{hdr.get('equipo_nombre','—')}  ·  Temp {hdr.get('temporada',1)}  ·  Jor {hdr.get('jornada',1)}",
-                          (680, 245 + i * 64 + 16), size='sm', color='azul')
+                # v0.8.7.2: dos líneas con DT + equipo y temp/jor/presupuesto
+                draw_text(screen,
+                          f"DT: {hdr.get('dt_nombre','—')}  ·  {hdr.get('equipo_nombre','—')}",
+                          (680, 245 + i * 64 + 8), size='sm', color='dorado')
+                pres = int(hdr.get('presupuesto', 0) or 0)
+                pres_m = pres / 1_000_000
+                draw_text(screen,
+                          f"Temp {hdr.get('temporada',1)}  ·  Jor {hdr.get('jornada',1)}  ·  ${pres_m:.1f}M",
+                          (680, 245 + i * 64 + 30), size='sm', color='azul')
                 
                 # Botón de borrar rojo al extremo derecho
                 hov_del = del_rect.collidepoint(mouse_pos)

@@ -439,6 +439,13 @@ def finalizar_jornada_liga(estado: dict, liga: Any, mi_equipo: Any, partido: Any
             liga.jornada_actual += 1
         else:
             logger.info("Fin de temporada alcanzado.")
+        # v0.8.7.2: si el user no clasificó a la copa, avanzar la copa en background
+        # (catch-up gradual: usa los mismos gates que la copa del user).
+        try:
+            from alpha_football.ui.copa_screen import simular_copa_fondo
+            simular_copa_fondo(estado)
+        except Exception as e_bg:
+            logger.error(f"Error al simular copa de fondo: {e_bg}")
         # Ofertas tras la jornada (IA local + posible oferta del exterior por buen rendimiento)
         try:
             from alpha_football import market

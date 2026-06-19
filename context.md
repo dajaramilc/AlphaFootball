@@ -1,4 +1,4 @@
-# ALPHA FOOTBALL — Contexto de Proyecto (v0.8.7)
+# ALPHA FOOTBALL — Contexto de Proyecto (v0.8.7.2)
 **Última actualización:** 2026-06-19
 **Sesión actual:** v0.8.7 — Tarea 1 (penales con secuencia ronda a ronda en resultado de simulación), Tarea 2 (formación y AUTO ONCE NO consumen cambios — solo el swap titular↔banco manual cuenta, tope 5), Tarea 3 (clasificación a copa: T1 = top 3 por OVR, T2+ = top 3 por puntos), Tarea 4 (modo espectador de copa cuando el user no clasifica: copa visible con overlay "SIMULAR COPA ENTERA" + toast de campeón), Tarea 5 (fix del bug vivo de `avanzar_fase_bracket` con bracket placeholder + backtrack inteligente + anti-bucle).
 
@@ -729,16 +729,97 @@ Smoke headless (`SDL_VIDEODRIVER=dummy`) — 7/7 OK:
 
 ---
 
+## Bitácora — v0.8.7.2 (sesión 2026-06-19, copa en background + info de slots)
+
+Diego pidió:
+1. Reemplazar MODO ESPECTADOR por un panel simple "NO CLASIFICADO" (sin "se simula en segundo plano mientras avanzás en tu liga").
+2. Botón "VER" en vez de "VER RESULTADOS (opcional)".
+3. Mostrar DT y presupuesto en los slots de Cargar/Guardar partida.
+
+### Cambios
+
+**1) `alpha_football/ui/copa_screen.py` — Copa en background + panel simplificado**
+
+- **Nueva función `simular_copa_fondo(estado)`**: catch-up gradual que usa los MISMOS gates que la copa del user (J2 de liga = J1 de copa, 30% = J2, 50% = J3, 70% = cuartos, 85% = semis, 100% = final). Solo activa si `copa_user_en_copa is False`. Idempotente. Avanza grupos → cuartos → semis → final, setea `copa_campeon` y dispara el toast de 6s al final.
+- **Nueva función `_get_cup_state_str(estado)`**: helper para mostrar la fase actual de la copa en el panel.
+- **Reemplazo del overlay MODO ESPECTADOR (L1830-1886) → panel NO CLASIFICADO**:
+  - Borde rojo (no dorado) + título "NO CLASIFICADO" en rojo
+  - Subtítulo: "Tu equipo no participa en esta edición de la copa."
+  - Motivo (de `copa_clasificado_motivo`)
+  - Estado actual: "Copa en curso: ..." (usando `_get_cup_state_str`)
+  - **Sin** el texto "se simula en segundo plano mientras avanzás en tu liga"
+  - Botón único "VER" (centrado) → setea `_spectator_dismissed = True`
+- **Click handler** (L1842-1860): solo maneja el botón "VER" (eliminados los handlers de SIMULAR COPA ENTERA y EXPLORAR COPA).
+
+**2) `alpha_football/ui/match_screen.py` — Hook en `finalizar_jornada_liga`**
+
+Después del `simular_otros_partidos` y de avanzar la jornada de liga:
+```python
+try:
+    from alpha_football.ui.copa_screen import simular_copa_fondo
+    simular_copa_fondo(estado)
+except Exception as e_bg:
+    logger.error(f"Error al simular copa de fondo: {e_bg}")
+```
+Esto se ejecuta **una vez por jornada de liga** → la copa avanza gradualmente y de forma natural.
+
+**3) `alpha_football/save.py` — DT en la cabecera del slot**
+
+`_construir_meta` ahora incluye `"dt_nombre"`: `str(getattr(estado, "dt_nombre", "") or "—")`. Fallback "—" para saves viejos sin el campo (backwards compatible).
+
+**4) `alpha_football/ui/menu.py` (L1169) — Slots de Cargar: DT + presupuesto**
+
+Antes: 1 línea con equipo + temp + jor.
+Ahora: 2 líneas:
+- Línea 1 (dorado): "DT: Carlito  ·  Millonarios"
+- Línea 2 (azul): "Temp 2  ·  Jor 7  ·  $50.0M"
+
+**5) `alpha_football/ui/save_slots_screen.py` (L113-117) — Slots de Guardar: mismo formato**
+
+Consistencia con Cargar: dos líneas con DT + temp/jor/presupuesto.
+
+### Verificación
+Smoke headless (`SDL_VIDEODRIVER=dummy`) — 12/12 OK:
+- (1) `simular_copa_fondo` no hace nada si user está en la copa
+- (2) No hace nada antes de J2 de liga
+- (3) J2 de liga → J1 de grupos jugada
+- (4) J5 de liga (30%) → J1+J2 de grupos jugadas
+- (5) J7 de liga (50%) → J1+J2+J3 + avanza a cuartos
+- (6) J10 (70%) → cuartos + avanza a semis
+- (7) J12 (85%) → semis + avanza a final
+- (8) J14 (100%) → final jugada, campeon=X, toast=7000 (6000ms de display)
+- (9) No simula si copa ya terminó
+- (10) Idempotente (2 llamadas misma jornada = mismo resultado)
+- (11) `_construir_meta` con `dt_nombre="Carlo Anchelotti"` lo incluye en el dict
+- (12) `_construir_meta` sin `dt_nombre` (saves viejos) devuelve "—"
+
+### Archivos modificados
+- `alpha_football/ui/copa_screen.py` — `simular_copa_fondo` + `_get_cup_state_str` + overlay NO CLASIFICADO + click handler
+- `alpha_football/ui/match_screen.py` — hook en `finalizar_jornada_liga`
+- `alpha_football/save.py` — `dt_nombre` en `_construir_meta`
+- `alpha_football/ui/menu.py` — slots de Cargar con DT + presupuesto
+- `alpha_football/ui/save_slots_screen.py` — slots de Guardar con DT + presupuesto
+
+### Lo que queda (validación en vivo)
+1. Carrera nueva con equipo OVR #5/6 → entrar a COPA → ver panel "NO CLASIFICADO" + estado "Copa en curso: Fase de grupos (J1 - 0 partidos jugados)".
+2. Jugar 2-3 jornadas de liga → volver a COPA → ver "Copa en curso: Fase de grupos (J2 - X partidos jugados)" → la copa avanza sola.
+3. Seguir jugando hasta J7 → ver la copa avanza a cuartos sola, sin tocar la pantalla de COPA.
+4. Al final de la temporada → ver el toast de "🏆 CAMPEÓN DE LA COPA" al volver a la liga.
+5. **Slots**: Cargar Partida → ver DT + presupuesto en cada slot ocupado. Guardar Partida → mismo formato.
+
+---
+
 ## 🔴 ESTADO ACTUAL — Para que claude continue
 
-**Versión:** v0.8.7.1 (recién aplicado por claude, pendiente validación en vivo de Diego)
+**Versión:** v0.8.7.2 (recién aplicado por claude, pendiente validación en vivo de Diego)
 
 **Última corrida:** Diego ejecutó `python main.py` 2026-06-19 02:42-02:48 (sobre v0.8.4, no v0.8.5 ni v0.8.6 ni v0.8.7). En este momento:
 - v0.8.5 cubre los bugs críticos (partido en vivo, copa reparada, amistoso aislado, modal borrar slot).
 - v0.8.6 completa el plan de prepartido (panel compacto), subs (AUTO ONCE), jornada auto de copa, stats de copa y fases finales.
 - v0.8.7 completa los 3 pedidos de Diego (penales con secuencia + subs solo manual + clasificación a copa con modo espectador) y arregla el bug vivo del bracket.
-- **v0.8.7.1** cierra el bug del contador "Copas Internacionales" en `career_screen` (chequeaba `'campeon'` ASCII contra `'Campeón'` con acento).
-- 7/7 tests del smoke headless pasan. Falta que Diego pruebe en vivo (6 puntos arriba + verificar el contador de Copas Internacionales muestra 1 cuando T2 fue campeón).
+- v0.8.7.1 cierra el bug del contador "Copas Internacionales" en `career_screen` (chequeaba `'campeon'` ASCII contra `'Campeón'` con acento).
+- **v0.8.7.2** reemplaza MODO ESPECTADOR por NO CLASIFICADO + VER, agrega copa en background (`simular_copa_fondo`), y DT/presupuesto en slots de Cargar/Guardar.
+- 12/12 tests del smoke headless pasan. Falta que Diego pruebe en vivo (5 puntos arriba).
 
 ### Cómo está firmado cada cambio (autor)
 - v0.4–v0.5: base original (Diego/Opus).
@@ -753,12 +834,13 @@ Smoke headless (`SDL_VIDEODRIVER=dummy`) — 7/7 OK:
 - v0.8.4: fixes de raíz post-2º-test (claude).
 - v0.8.5: paquete grande post-3er-test (claude).
 - v0.8.6: plan v0.8.6 (antigravity + claude).
-- **v0.8.7: plan v0.8.7 — penales con secuencia, subs solo manual, clasificación a copa (T1 OVR / T2+ pts), modo espectador con SIMULAR COPA ENTERA, fix bracket placeholder (claude, 2026-06-19 15:35-15:42).**
-- **v0.8.7.1: fix contador "Copas Internacionales" en `career_screen` (chequeaba `'campeon'` ASCII contra `'Campeón'` con acento → siempre 0). Helper `_norm_str` quita acentos antes de comparar (claude, 2026-06-19).**
+- v0.8.7: plan v0.8.7 — penales con secuencia, subs solo manual, clasificación a copa, modo espectador, fix bracket (claude, 2026-06-19 15:35-15:42).
+- v0.8.7.1: fix contador "Copas Internacionales" (acento ó ≠ o) en `career_screen` (claude, 2026-06-19).
+- **v0.8.7.2: copa en background (NO CLASIFICADO + VER), DT/presupuesto en slots, hook en finalizar_jornada_liga (claude, 2026-06-19).**
 
 ### Lo que falta (próximas sesiones)
 
-1. **Validar en vivo v0.8.7 + v0.8.7.1** (`python main.py`): ver lista de los 6 puntos al final de la bitácora v0.8.7 + confirmar que "Copas Internacionales: 1 🌎" cuando T2 fue Campeón (antes mostraba 0).
+1. **Validar en vivo v0.8.7.2** (`python main.py`): ver lista de los 5 puntos al final de la bitácora v0.8.7.2.
 2. **PENDIENTE histórico de context.md** (sigue válido):
    - Más atributos por jugador y editables uno por uno en modo editar (ampliar `Jugador` dataclass, `from_dict`/`to_dict` tolerante, `edit_screen.py` con un input por atributo, recalcular `overall`).
 3. **PENDIENTE menor:** revisar por qué `mi_equipo` puede ser None en `match_screen` post-clear.

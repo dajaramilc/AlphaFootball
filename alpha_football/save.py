@@ -227,6 +227,8 @@ def _construir_meta(estado: EstadoJuego, nombre_partida: str) -> dict:
         "temporada": int(getattr(estado, "temporada", 1)),
         "jornada": int(getattr(liga, "jornada_actual", 1)) if liga else 1,
         "presupuesto": int(getattr(equipo, "balance", 0)) if equipo else 0,
+        # v0.8.7.2: nombre del DT (con fallback "—" para saves viejos sin este campo)
+        "dt_nombre": str(getattr(estado, "dt_nombre", "") or "—"),
     }
 
 

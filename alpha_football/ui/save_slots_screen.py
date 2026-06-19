@@ -111,10 +111,15 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
 
             # Mostrar los detalles de la partida del slot en la columna derecha
             if hdr:
+                # v0.8.7.2: dos líneas con DT + equipo y temp/jor/presupuesto
+                nombre_dt = hdr.get('dt_nombre', '—')
                 nombre_club = hdr.get('equipo_nombre', '—')
-                info_linea = f"Temp {hdr.get('temporada', 1)}  ·  Jor {hdr.get('jornada', 1)}  ·  Presupuesto: ${hdr.get('presupuesto', 0):,}"
-                draw_text(screen, nombre_club, (690, 190 + i * 70 + 6), size='md', color='dorado')
-                draw_text(screen, info_linea, (690, 190 + i * 70 + 28), size='sm', color='azul')
+                draw_text(screen, f"DT: {nombre_dt}  ·  {nombre_club}",
+                          (690, 190 + i * 70 + 6), size='md', color='dorado')
+                pres = int(hdr.get('presupuesto', 0) or 0)
+                pres_m = pres / 1_000_000
+                info_linea = f"Temp {hdr.get('temporada', 1)}  ·  Jor {hdr.get('jornada', 1)}  ·  ${pres_m:.1f}M"
+                draw_text(screen, info_linea, (690, 190 + i * 70 + 30), size='sm', color='azul')
             else:
                 draw_text(screen, "Espacio vacío y disponible", (690, 190 + i * 70 + 15), size='md', color='blanco')
 
