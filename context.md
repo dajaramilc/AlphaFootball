@@ -701,15 +701,44 @@ Plan completo en `C:\Users\diego\.claude\plans\alpha-football-v0.8.7.md` (genera
 
 ---
 
+## Bitácora — v0.8.7.1 (sesión 2026-06-19, fix post-validación por Diego)
+
+Diego reportó: en **HISTORIAL CARRERA → ESTADÍSTICAS GLOBALES** el contador "Copas Internacionales" salía en 0 aunque en el panel **HISTORIAL POR TEMPORADA** la fila T2 mostrase "Campeón".
+
+### Causa raíz
+`resumen_temporada_screen.py:65` guarda `mejor_fase = 'Campeón'` (con acento). Pero `career_screen.py:282` chequeaba `if 'campeon' in str(lib).lower() and 'sub' not in str(lib).lower():` (ASCII plano). En Python, `'campeon' in 'campeón'` devuelve **False** porque `ó ≠ o` → el contador `copas_won += 1` jamás se disparaba.
+
+Misma comparación rota en L434 (`'campeon' in lib_txt.lower()` para colorear la fila). Como el chequeo fallaba, la fila mostraba el texto crudo (`"Campeón"`) — por eso parecía "funcionar" en lo visual.
+
+### Fix en `alpha_football/ui/career_screen.py`
+- Helper local `_norm_str(s)` al inicio de `render()` que reemplaza acentos (`á→a`, `é→e`, `í→i`, `ó→o`, `ú→u`, `ñ→n`) y aplica `.lower()`.
+- Lógica del contador y de la fila reescritas para normalizar antes de comparar.
+- Sin cambios en `SCHEMA_VERSION` (bug de UI/consumidor, no de datos).
+
+### Verificación
+Smoke headless (`SDL_VIDEODRIVER=dummy`) — 7/7 OK:
+- historial con `{'libertadores':'Campeón'}` → `copas_won=1` (antes era 0).
+- `{'libertadores':'Subcampeón'}` → `copas_won=0` y fila vira a `"Subcampeón 🥈"` dorado.
+- Mixto T1 grupos + T2 campeón + T3 semifinal → 1 copa.
+- Dos copas → 2.
+- Regresión check: la lógica VIEJA con `'Campeón'` confirmado devuelve 0 (reproduce el bug).
+- Fila: "Campeón" → "¡CAMPEÓN! 🌎" dorado, "Subcampeón" → "Subcampeón 🥈" dorado, "Fase de grupos" → blanco.
+
+### Archivo modificado
+- `alpha_football/ui/career_screen.py` — helper `_norm_str` + 2 sitios de comparación normalizados.
+
+---
+
 ## 🔴 ESTADO ACTUAL — Para que claude continue
 
-**Versión:** v0.8.7 (recién aplicado por claude, pendiente validación en vivo de Diego)
+**Versión:** v0.8.7.1 (recién aplicado por claude, pendiente validación en vivo de Diego)
 
 **Última corrida:** Diego ejecutó `python main.py` 2026-06-19 02:42-02:48 (sobre v0.8.4, no v0.8.5 ni v0.8.6 ni v0.8.7). En este momento:
 - v0.8.5 cubre los bugs críticos (partido en vivo, copa reparada, amistoso aislado, modal borrar slot).
 - v0.8.6 completa el plan de prepartido (panel compacto), subs (AUTO ONCE), jornada auto de copa, stats de copa y fases finales.
-- **v0.8.7** completa los 3 pedidos de Diego (penales con secuencia + subs solo manual + clasificación a copa con modo espectador) y arregla el bug vivo del bracket.
-- 6/6 tests del smoke headless pasan. Falta que Diego pruebe en vivo (6 puntos arriba).
+- v0.8.7 completa los 3 pedidos de Diego (penales con secuencia + subs solo manual + clasificación a copa con modo espectador) y arregla el bug vivo del bracket.
+- **v0.8.7.1** cierra el bug del contador "Copas Internacionales" en `career_screen` (chequeaba `'campeon'` ASCII contra `'Campeón'` con acento).
+- 7/7 tests del smoke headless pasan. Falta que Diego pruebe en vivo (6 puntos arriba + verificar el contador de Copas Internacionales muestra 1 cuando T2 fue campeón).
 
 ### Cómo está firmado cada cambio (autor)
 - v0.4–v0.5: base original (Diego/Opus).
@@ -725,10 +754,11 @@ Plan completo en `C:\Users\diego\.claude\plans\alpha-football-v0.8.7.md` (genera
 - v0.8.5: paquete grande post-3er-test (claude).
 - v0.8.6: plan v0.8.6 (antigravity + claude).
 - **v0.8.7: plan v0.8.7 — penales con secuencia, subs solo manual, clasificación a copa (T1 OVR / T2+ pts), modo espectador con SIMULAR COPA ENTERA, fix bracket placeholder (claude, 2026-06-19 15:35-15:42).**
+- **v0.8.7.1: fix contador "Copas Internacionales" en `career_screen` (chequeaba `'campeon'` ASCII contra `'Campeón'` con acento → siempre 0). Helper `_norm_str` quita acentos antes de comparar (claude, 2026-06-19).**
 
 ### Lo que falta (próximas sesiones)
 
-1. **Validar en vivo v0.8.7** (`python main.py`): ver lista de los 6 puntos al final de la bitácora v0.8.7.
+1. **Validar en vivo v0.8.7 + v0.8.7.1** (`python main.py`): ver lista de los 6 puntos al final de la bitácora v0.8.7 + confirmar que "Copas Internacionales: 1 🌎" cuando T2 fue Campeón (antes mostraba 0).
 2. **PENDIENTE histórico de context.md** (sigue válido):
    - Más atributos por jugador y editables uno por uno en modo editar (ampliar `Jugador` dataclass, `from_dict`/`to_dict` tolerante, `edit_screen.py` con un input por atributo, recalcular `overall`).
 3. **PENDIENTE menor:** revisar por qué `mi_equipo` puede ser None en `match_screen` post-clear.

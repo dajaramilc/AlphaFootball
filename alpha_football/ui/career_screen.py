@@ -259,6 +259,17 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         draw_text(screen, dt_desc, (300, 65), size='sm', color='azul')
         
         # --- CÁLCULO DE ESTADÍSTICAS AGREGADAS (Resiliente) ---
+        # v0.8.7.1: helper local para normalizar strings y quitar acentos.
+        # Los valores de mejor fase se guardan como "Campeón" (con acento);
+        # comparar contra 'campeon' (ASCII) fallaba siempre.
+        def _norm_str(s):
+            """Normaliza string removiendo acentos para comparaciones robustas."""
+            return (
+                str(s).lower()
+                .replace('á', 'a').replace('é', 'e').replace('í', 'i')
+                .replace('ó', 'o').replace('ú', 'u').replace('ñ', 'n')
+            )
+
         seasons_count = len(historial)
         leagues_won = 0
         copas_won = 0
@@ -279,7 +290,8 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 
                 if pos == 1:
                     leagues_won += 1
-                if 'campeon' in str(lib).lower() and 'sub' not in str(lib).lower():
+                _lib_norm = _norm_str(lib)
+                if 'campeon' in _lib_norm and 'sub' not in _lib_norm:
                     copas_won += 1
                     
                 total_pts += pts
@@ -431,10 +443,13 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                         
                         lib_txt = str(lib)
                         lib_color = 'blanco'
-                        if 'campeon' in lib_txt.lower() and 'sub' not in lib_txt.lower():
+                        # v0.8.7.1: normalizar acentos antes de comparar
+                        # (mejor_fase viene como "Campeón", no "Campeon").
+                        _lib_norm = _norm_str(lib)
+                        if 'campeon' in _lib_norm and 'sub' not in _lib_norm:
                             lib_txt = "¡CAMPEÓN! 🌎"
                             lib_color = 'dorado'
-                        elif 'subcampeon' in lib_txt.lower():
+                        elif 'subcampeon' in _lib_norm:
                             lib_txt = "Subcampeón 🥈"
                             lib_color = 'dorado'
                             
