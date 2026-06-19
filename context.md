@@ -1,4 +1,4 @@
-# ALPHA FOOTBALL — Contexto de Proyecto (v0.8.7.2)
+# ALPHA FOOTBALL — Contexto de Proyecto (v0.8.7.3)
 **Última actualización:** 2026-06-19
 **Sesión actual:** v0.8.7 — Tarea 1 (penales con secuencia ronda a ronda en resultado de simulación), Tarea 2 (formación y AUTO ONCE NO consumen cambios — solo el swap titular↔banco manual cuenta, tope 5), Tarea 3 (clasificación a copa: T1 = top 3 por OVR, T2+ = top 3 por puntos), Tarea 4 (modo espectador de copa cuando el user no clasifica: copa visible con overlay "SIMULAR COPA ENTERA" + toast de campeón), Tarea 5 (fix del bug vivo de `avanzar_fase_bracket` con bracket placeholder + backtrack inteligente + anti-bucle).
 
@@ -800,18 +800,65 @@ Smoke headless (`SDL_VIDEODRIVER=dummy`) — 12/12 OK:
 - `alpha_football/ui/menu.py` — slots de Cargar con DT + presupuesto
 - `alpha_football/ui/save_slots_screen.py` — slots de Guardar con DT + presupuesto
 
+---
+
+## Bitácora — v0.8.7.3 (sesión 2026-06-19, fix "Campeón" en historial)
+
+Diego reportó: en el **HISTORIAL POR TEMPORADA** aparecía "Campeón" en la columna "Copa Internac." de una temporada en la que NO clasificó a la copa.
+
+### Causa raíz
+v0.8.7.2 agregó `simular_copa_fondo` que avanza la copa en background cuando el user no clasificó. Al finalizar la temporada, `simular_copa_fondo` deja `copa_fase_actual='campeon'` y `copa_campeon=<otro equipo>`.
+
+Pero `resumen_temporada_screen.py:60-70` derivaba `mejor_fase` SOLO desde `copa_fase_actual`:
+```python
+fase_actual = estado.get('copa_fase_actual', 'grupos')
+if fase_actual == 'campeon':
+    mejor_fase = 'Campeón'   # <-- BUG: aunque el user no haya jugado
+```
+
+→ El historial de T2 se guardaba con `libertadores='Campeón'` aunque el user NO participó en esa copa.
+
+### Fix en `alpha_football/ui/resumen_temporada_screen.py`
+- **2 sitios** (L60-70 en `avanzar_nueva_temporada` y L292-300 en `render`) ahora chequean `copa_user_en_copa` ANTES de derivar `mejor_fase`:
+  ```python
+  if not estado.get('copa_user_en_copa', True):
+      mejor_fase = 'No clasificado'
+  else:
+      # ...existing fallback logic
+  ```
+- Sin cambios en `SCHEMA_VERSION` (es solo cambio de UI/datos del historial).
+- El bono de copa se mantiene en 0 automáticamente porque `tabla_copa_b.get('No clasificado', 0) == 0` (la clave no existe en el dict).
+- `career_screen.py` ya maneja "No clasificado" correctamente: el contador `copas_won` solo cuenta los que tengan "Campeón" en su texto normalizado.
+
+### Verificación
+Smoke headless (`SDL_VIDEODRIVER=dummy`) — 11/11 OK:
+- (1) User NO clasificado + `copa_fase_actual='campeon'` (background sim terminó) → `mejor_fase='No clasificado'` ✓ (era "Campeón" antes, ahora "No clasificado")
+- (2) User SÍ clasificado + ganó → "Campeón" ✓
+- (3) User SÍ clasificado + semis → "Semifinal" ✓
+- (4) User SÍ clasificado + eliminado → "Fase de grupos" ✓
+- (5) User SÍ clasificado + cup en mid-flight → "Fase de grupos" ✓
+- (6) User NO clasificado + cup en cuartos → "No clasificado" ✓
+- (7) Historial mixto T1 Campeón + T2 No clasificado → `copas_won=1` ✓
+- (8) Display de "No clasificado" en career_screen → texto blanco sin highlight ✓
+- (9) T1 No clasificado + T2 Campeón → `copas_won=1` ✓
+- (10) Ambas No clasificado → `copas_won=0` ✓
+- (11) Bono de copa para "No clasificado" → €0 ✓
+
+### Archivos modificados
+- `alpha_football/ui/resumen_temporada_screen.py` — 2 sitios con guard `copa_user_en_copa` antes de derivar `mejor_fase`
+- `context.md` — bitácora v0.8.7.3
+
 ### Lo que queda (validación en vivo)
-1. Carrera nueva con equipo OVR #5/6 → entrar a COPA → ver panel "NO CLASIFICADO" + estado "Copa en curso: Fase de grupos (J1 - 0 partidos jugados)".
-2. Jugar 2-3 jornadas de liga → volver a COPA → ver "Copa en curso: Fase de grupos (J2 - X partidos jugados)" → la copa avanza sola.
-3. Seguir jugando hasta J7 → ver la copa avanza a cuartos sola, sin tocar la pantalla de COPA.
-4. Al final de la temporada → ver el toast de "🏆 CAMPEÓN DE LA COPA" al volver a la liga.
-5. **Slots**: Cargar Partida → ver DT + presupuesto en cada slot ocupado. Guardar Partida → mismo formato.
+1. Carrera con equipo OVR #5/6 → jugar toda la T1 sin clasificar → al cerrar T1, HISTORIAL POR TEMPORADA debe mostrar **"No clasificado"** en T1.
+2. T2 avanzar a T2 → repetir → "No clasificado" en T2 también.
+3. Si T3 sí clasifica y gana → T3 muestra "Campeón" + contador "Copas Internacionales: 1".
+4. Verificar que el bono de fin de temporada NO incluye bono de copa cuando T1 fue "No clasificado".
 
 ---
 
 ## 🔴 ESTADO ACTUAL — Para que claude continue
 
-**Versión:** v0.8.7.2 (recién aplicado por claude, pendiente validación en vivo de Diego)
+**Versión:** v0.8.7.3 (recién aplicado por claude, pendiente validación en vivo de Diego)
 
 **Última corrida:** Diego ejecutó `python main.py` 2026-06-19 02:42-02:48 (sobre v0.8.4, no v0.8.5 ni v0.8.6 ni v0.8.7). En este momento:
 - v0.8.5 cubre los bugs críticos (partido en vivo, copa reparada, amistoso aislado, modal borrar slot).
@@ -819,7 +866,8 @@ Smoke headless (`SDL_VIDEODRIVER=dummy`) — 12/12 OK:
 - v0.8.7 completa los 3 pedidos de Diego (penales con secuencia + subs solo manual + clasificación a copa con modo espectador) y arregla el bug vivo del bracket.
 - v0.8.7.1 cierra el bug del contador "Copas Internacionales" en `career_screen` (chequeaba `'campeon'` ASCII contra `'Campeón'` con acento).
 - **v0.8.7.2** reemplaza MODO ESPECTADOR por NO CLASIFICADO + VER, agrega copa en background (`simular_copa_fondo`), y DT/presupuesto en slots de Cargar/Guardar.
-- 12/12 tests del smoke headless pasan. Falta que Diego pruebe en vivo (5 puntos arriba).
+- **v0.8.7.3** corrige el bug "Campeón" en historial cuando el user no clasificó: `resumen_temporada_screen` ahora chequea `copa_user_en_copa` antes de derivar `mejor_fase` (la sim de background dejaba `copa_fase_actual='campeon'` aunque el user no jugó).
+- 11/11 tests del smoke headless pasan. Falta que Diego pruebe en vivo (4 puntos arriba).
 
 ### Cómo está firmado cada cambio (autor)
 - v0.4–v0.5: base original (Diego/Opus).
@@ -837,10 +885,11 @@ Smoke headless (`SDL_VIDEODRIVER=dummy`) — 12/12 OK:
 - v0.8.7: plan v0.8.7 — penales con secuencia, subs solo manual, clasificación a copa, modo espectador, fix bracket (claude, 2026-06-19 15:35-15:42).
 - v0.8.7.1: fix contador "Copas Internacionales" (acento ó ≠ o) en `career_screen` (claude, 2026-06-19).
 - **v0.8.7.2: copa en background (NO CLASIFICADO + VER), DT/presupuesto en slots, hook en finalizar_jornada_liga (claude, 2026-06-19).**
+- **v0.8.7.3: fix "Campeón" en historial cuando user no clasificó. `resumen_temporada_screen.py` chequea `copa_user_en_copa` antes de derivar `mejor_fase` de `copa_fase_actual` (la sim de background deja `copa_fase_actual='campeon'` aunque el user no jugó) (claude, 2026-06-19).**
 
 ### Lo que falta (próximas sesiones)
 
-1. **Validar en vivo v0.8.7.2** (`python main.py`): ver lista de los 5 puntos al final de la bitácora v0.8.7.2.
+1. **Validar en vivo v0.8.7.3** (`python main.py`): ver lista de los 4 puntos al final de la bitácora v0.8.7.3 (NO CLASIFICADO en historial cuando T1 user no clasificó, contador de copas no se incrementa, bono copa=0).
 2. **PENDIENTE histórico de context.md** (sigue válido):
    - Más atributos por jugador y editables uno por uno en modo editar (ampliar `Jugador` dataclass, `from_dict`/`to_dict` tolerante, `edit_screen.py` con un input por atributo, recalcular `overall`).
 3. **PENDIENTE menor:** revisar por qué `mi_equipo` puede ser None en `match_screen` post-clear.

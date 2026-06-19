@@ -58,16 +58,22 @@ def avanzar_nueva_temporada(estado: dict) -> None:
             campeon_nombre = getattr(campeon, 'nombre', 'Desconocido') if campeon else 'Desconocido'
 
             # Mejor fase alcanzada en copa esta temporada
-            mejor_fase = estado.get('copa_mejor_fase_temp')
-            if not mejor_fase:
-                # Derivar del estado de la copa si no se trackeó explícitamente
-                fase_actual = estado.get('copa_fase_actual', 'grupos')
-                if fase_actual == 'campeon':
-                    mejor_fase = 'Campeón'
-                elif fase_actual == 'eliminado':
-                    mejor_fase = 'Fase de grupos'
-                else:
-                    mejor_fase = 'Fase de grupos'
+            # v0.8.7.3: si el user no clasificó, mostrar "No clasificado" en el
+            # historial. Sin este check, la simulación en background de la copa
+            # (v0.8.7.2) deja copa_fase_actual='campeon' aunque el user no jugó.
+            if not estado.get('copa_user_en_copa', True):
+                mejor_fase = 'No clasificado'
+            else:
+                mejor_fase = estado.get('copa_mejor_fase_temp')
+                if not mejor_fase:
+                    # Derivar del estado de la copa si no se trackeó explícitamente
+                    fase_actual = estado.get('copa_fase_actual', 'grupos')
+                    if fase_actual == 'campeon':
+                        mejor_fase = 'Campeón'
+                    elif fase_actual == 'eliminado':
+                        mejor_fase = 'Fase de grupos'
+                    else:
+                        mejor_fase = 'Fase de grupos'
 
             # F6/F7 (v0.8.2): bono de fin de temporada VARIABLE por país del usuario
             # (liga) y por continente (copa).
@@ -289,15 +295,19 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
 
         # v0.8.2: F6/F7 — banner de bono de fin de temporada (variables por país/continente)
         try:
-            mejor_fase = estado.get('copa_mejor_fase_temp')
-            if not mejor_fase:
-                fase_actual = estado.get('copa_fase_actual', 'grupos')
-                if fase_actual == 'campeon':
-                    mejor_fase = 'Campeón'
-                elif fase_actual == 'eliminado':
-                    mejor_fase = 'Fase de grupos'
-                else:
-                    mejor_fase = 'Fase de grupos'
+            # v0.8.7.3: si el user no clasificó, no hay bono de copa.
+            if not estado.get('copa_user_en_copa', True):
+                mejor_fase = 'No clasificado'
+            else:
+                mejor_fase = estado.get('copa_mejor_fase_temp')
+                if not mejor_fase:
+                    fase_actual = estado.get('copa_fase_actual', 'grupos')
+                    if fase_actual == 'campeon':
+                        mejor_fase = 'Campeón'
+                    elif fase_actual == 'eliminado':
+                        mejor_fase = 'Fase de grupos'
+                    else:
+                        mejor_fase = 'Fase de grupos'
             # Reutilizamos las mismas tablas (deben coincidir con las de avanzar_nueva_temporada)
             _BONO_LIGA_POR_PAIS = {
                 'premier':    [150_000_000, 90_000_000, 50_000_000, 50_000_000, 25_000_000, 25_000_000, 10_000_000, 10_000_000, 10_000_000, 10_000_000, 10_000_000, 10_000_000],
