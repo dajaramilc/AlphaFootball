@@ -131,6 +131,39 @@ def avanzar_nueva_temporada(estado: dict) -> None:
         except Exception:
             pass
 
+        # 2c. v0.8.7: clasificación a copa para la próxima temporada.
+        # El usuario clasifica si quedó en el TOP 3 por puntos de la liga
+        # (la T1 se clasifica por OVR top 3 al alta de carrera).
+        try:
+            equipos_orden_pts = sorted(
+                liga.equipos,
+                key=lambda e: (
+                    getattr(e, 'puntos', 0),
+                    getattr(e, 'gf', 0) - getattr(e, 'gc', 0),
+                    getattr(e, 'gf', 0),
+                ),
+                reverse=True,
+            )
+            _top3_pts = {e.nombre for e in equipos_orden_pts[:3]}
+            _pos_user = next(
+                (i + 1 for i, e in enumerate(equipos_orden_pts) if e.id == mi_equipo.id),
+                len(equipos_orden_pts),
+            )
+            estado['copa_clasificado'] = (mi_equipo.nombre in _top3_pts)
+            estado['copa_clasificado_motivo'] = (
+                f"Top 3 en liga (posición {_pos_user}, {getattr(mi_equipo, 'puntos', 0)} pts)"
+                if estado['copa_clasificado']
+                else f"Posición {_pos_user} de {len(equipos_orden_pts)} (fuera del top 3)"
+            )
+            estado['copa_user_en_copa'] = estado['copa_clasificado']
+            logger.info(
+                f"Clasificación T{nueva_temp}: pos={_pos_user}, clasificado={estado['copa_clasificado']}"
+            )
+        except Exception as e_clasif:
+            logger.error(f"Error al calcular clasificación para nueva temporada: {e_clasif}")
+            estado['copa_clasificado'] = True
+            estado['copa_user_en_copa'] = True
+
         # 3. Limpiar estadísticas de todos los equipos y jugadores de la liga
         for eq in liga.equipos:
             eq.puntos = 0

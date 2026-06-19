@@ -263,15 +263,42 @@ def _asegurar_bracket_normalizado(estado: dict) -> None:
     v0.8.2: si el estado de la copa está en una fase de eliminatorias y
     `copa_bracket[fase]` aún tiene la forma placeholder (m1/m2/m3/m4), invoca
     `avanzar_fase_bracket` para reconstruirla. Silencioso si falla.
+
+    v0.8.7: si la fase actual es semis/final pero su bracket está en placeholder
+    Y la fase previa (cuartos/semis) TAMBIÉN está en placeholder, hacemos
+    backtrack hasta encontrar una fase con datos utilizables (o hasta 'grupos').
+    Anti-bucle: si la bandera `_copa_bracket_normalizando` ya está puesta,
+    salimos silenciosamente para cortar el bucle de logs del mismo frame.
     """
     try:
-        fase = estado.get('copa_fase_actual', 'grupos')
-        if fase in ('cuartos', 'semis', 'final'):
-            if not _fase_tiene_bracket_normalizado(estado, fase):
-                logger.info(f"Reconstruyendo bracket para fase '{fase}' (estructura placeholder detectada).")
-                avanzar_fase_bracket(estado)
+        if estado.get('_copa_bracket_normalizando'):
+            return
+        estado['_copa_bracket_normalizando'] = True
+        try:
+            fase = estado.get('copa_fase_actual', 'grupos')
+            if fase not in ('cuartos', 'semis', 'final'):
+                return
+            if _fase_tiene_bracket_normalizado(estado, fase):
+                return
+            # Bracket de la fase actual está en placeholder. Hay que reconstruirlo
+            # desde la fase previa más antigua que tenga datos o desde grupos.
+            if fase == 'final':
+                if not _fase_tiene_bracket_normalizado(estado, 'semis'):
+                    estado['copa_fase_actual'] = 'cuartos'
+                    if not _fase_tiene_bracket_normalizado(estado, 'cuartos'):
+                        estado['copa_fase_actual'] = 'grupos'
+            elif fase == 'semis':
+                if not _fase_tiene_bracket_normalizado(estado, 'cuartos'):
+                    estado['copa_fase_actual'] = 'grupos'
+            elif fase == 'cuartos':
+                estado['copa_fase_actual'] = 'grupos'
+            logger.info(f"Reconstruyendo bracket para fase '{fase}' (estructura placeholder detectada).")
+            avanzar_fase_bracket(estado)
+        finally:
+            estado['_copa_bracket_normalizando'] = False
     except Exception as e:
         logger.error(f"Error al normalizar bracket de copa: {e}")
+        estado['_copa_bracket_normalizando'] = False
 
 
 def avanzar_fase_bracket(estado: dict) -> None:
@@ -342,8 +369,14 @@ def avanzar_fase_bracket(estado: dict) -> None:
                 ]
                 estado['copa_fase_actual'] = 'cuartos'
             else:
-                # Usuario eliminado de copa
-                estado['copa_fase_actual'] = 'eliminado'
+                # v0.8.7: distinguir entre "usuario eliminado en grupos" (estado
+                # histórico) y "modo espectador, el user nunca estuvo en la copa".
+                # En modo espectador NO marcamos 'eliminado' para que la copa
+                # pueda avanzar a cuartos normalmente con la simulación.
+                if estado.get('copa_user_en_copa', True):
+                    estado['copa_fase_actual'] = 'eliminado'
+                else:
+                    estado['copa_fase_actual'] = 'cuartos'
                 # Poblamos cuartos de todas formas para la simulación
                 estado['copa_bracket']['cuartos'] = {
                     'local': A1, 'visitante': B2, 'goles_l': '-', 'goles_v': '-', 'jugado': False, 'avanza': None, 'rival': B2
@@ -353,12 +386,19 @@ def avanzar_fase_bracket(estado: dict) -> None:
                     {'local': C1, 'visitante': D2, 'goles_l': '-', 'goles_v': '-', 'jugado': False, 'avanza': None},
                     {'local': D1, 'visitante': C2, 'goles_l': '-', 'goles_v': '-', 'jugado': False, 'avanza': None}
                 ]
-                
+
         # 2. De Cuartos a Semis
         elif fase_actual == 'cuartos':
             simular_partidos_ia_bracket(estado, 'cuartos')
-            
-            q1 = estado['copa_bracket']['cuartos']
+
+            q1 = estado['copa_bracket'].get('cuartos')
+            # v0.8.7: defensivo — si el bracket de cuartos sigue en placeholder,
+            # no podemos avanzar a semis. Salimos silenciosamente (la red de
+            # seguridad `_asegurar_bracket_normalizado` lo intentará otra vez
+            # desde una fase anterior).
+            if not isinstance(q1, dict) or not isinstance(q1.get('local'), str) or not q1.get('local'):
+                logger.warning("avanzar_fase_bracket(cuartos): bracket de cuartos inválido, saltando")
+                return
             q_otros = estado['copa_bracket_otros'].get('cuartos', [])
             grupos = estado.get('copa_grupos', {})
             
@@ -406,20 +446,29 @@ def avanzar_fase_bracket(estado: dict) -> None:
                 ]
                 estado['copa_fase_actual'] = 'semis'
             else:
-                # Usuario eliminado
+                # v0.8.7: si es modo espectador (user no en copa), avanzar a 'semis'
+                # para que la simulación pueda continuar. Si no, marcar eliminado.
+                if estado.get('copa_user_en_copa', True):
+                    estado['copa_fase_actual'] = 'eliminado'
+                else:
+                    estado['copa_fase_actual'] = 'semis'
                 estado['copa_bracket']['semis'] = {
                     'local': win_q1, 'visitante': win_q3, 'goles_l': '-', 'goles_v': '-', 'jugado': False, 'avanza': None, 'rival': win_q3
                 }
                 estado['copa_bracket_otros']['semis'] = [
                     {'local': win_q2, 'visitante': win_q4, 'goles_l': '-', 'goles_v': '-', 'jugado': False, 'avanza': None}
                 ]
-                estado['copa_fase_actual'] = 'eliminado'
 
         # 3. De Semis a Final
         elif fase_actual == 'semis':
             simular_partidos_ia_bracket(estado, 'semis')
-            
-            s1 = estado['copa_bracket']['semis']
+
+            s1 = estado['copa_bracket'].get('semis')
+            # v0.8.7: defensivo — si el bracket de semis sigue en placeholder,
+            # no podemos construir la final. Salimos silenciosamente.
+            if not isinstance(s1, dict) or not isinstance(s1.get('local'), str) or not s1.get('local'):
+                logger.warning("avanzar_fase_bracket(semis): bracket de semis inválido, saltando")
+                return
             s_otros = estado['copa_bracket_otros'].get('semis', [])
             s2 = s_otros[0] if len(s_otros) > 0 else {'local': '?', 'visitante': '?', 'goles_l': '-', 'goles_v': '-', 'jugado': False}
             
@@ -457,13 +506,118 @@ def avanzar_fase_bracket(estado: dict) -> None:
                 estado['copa_bracket_otros']['final'] = []
                 estado['copa_fase_actual'] = 'final'
             else:
+                # v0.8.7: en modo espectador, el "else" aquí NO marca eliminado
+                # (el user nunca estuvo en la copa). Avanza a 'final' para
+                # que `simular_copa_entera_ia` pueda simularla.
+                if estado.get('copa_user_en_copa', True):
+                    estado['copa_fase_actual'] = 'eliminado'
+                else:
+                    estado['copa_fase_actual'] = 'final'
                 estado['copa_bracket']['final'] = {
                     'local': win_s1, 'visitante': win_s2, 'goles_l': '-', 'goles_v': '-', 'jugado': False, 'avanza': None, 'rival': win_s2
                 }
                 estado['copa_bracket_otros']['final'] = []
-                estado['copa_fase_actual'] = 'eliminado'
     except Exception as e:
         logger.error(f"Error en avanzar_fase_bracket: {e}", exc_info=True)
+
+def _simular_featured_si_no_user(estado: dict, fase: str) -> None:
+    """
+    v0.8.7: simula el partido 'featured' de la fase (`copa_bracket[fase]`) si
+    el usuario NO participa en él. Por defecto `simular_partidos_ia_bracket`
+    solo itera `copa_bracket_otros[fase]`, lo que deja sin simular el match
+    que se quedó en el slot 'featured' cuando el user no clasificó (modo
+    espectador) o fue eliminado en grupos. Esto lo arregla.
+    """
+    try:
+        mi = estado.get('mi_equipo')
+        name_user = getattr(mi, 'nombre', '') if mi else ''
+        featured = estado.get('copa_bracket', {}).get(fase, {})
+        if not isinstance(featured, dict) or not featured.get('local') or not featured.get('visitante'):
+            return
+        if featured.get('local') == name_user or featured.get('visitante') == name_user:
+            return  # el user juega este; no tocar
+        if featured.get('jugado'):
+            return
+        from alpha_football.engine import simular_partido
+        from alpha_football.desarrollo import desarrollar_plantilla_post_partido
+        loc_obj = encontrar_equipo_copa(featured['local'], estado)
+        vis_obj = encontrar_equipo_copa(featured['visitante'], estado)
+        if loc_obj is None or vis_obj is None:
+            return
+        res = simular_partido(loc_obj, vis_obj, con_eventos_caoticos=False)
+        featured['goles_l'] = res.goles_local
+        featured['goles_v'] = res.goles_visitante
+        featured['jugado'] = True
+        if res.goles_local == res.goles_visitante:
+            gana_l = random.random() < 0.5
+            featured['avanza'] = featured['local'] if gana_l else featured['visitante']
+            featured['penales'] = '5-4' if gana_l else '4-5'
+        else:
+            featured['avanza'] = featured['local'] if res.goles_local > res.goles_visitante else featured['visitante']
+        # Acumular stats
+        try:
+            rep_l = desarrollar_plantilla_post_partido(loc_obj, res.goles_local, res.goles_visitante)
+            rep_v = desarrollar_plantilla_post_partido(vis_obj, res.goles_visitante, res.goles_local)
+            registrar_stats_copa(estado, featured['local'], res.goles_visitante, rep_l)
+            registrar_stats_copa(estado, featured['visitante'], res.goles_local, rep_v)
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error(f"Error en _simular_featured_si_no_user({fase}): {e}")
+
+
+def simular_copa_entera_ia(estado: dict) -> None:
+    """
+    v0.8.7: simula la copa completa de forma automática.
+    Pensado para el modo espectador (cuando el usuario no clasificó), pero
+    también sirve como utilidad general. Avanza por grupos → cuartos → semis
+    → final y deja `copa_fase_actual = 'campeon'` con `copa_campeon` poblado.
+    """
+    try:
+        # 1. Simular grupos
+        if estado.get('copa_fase_actual') == 'grupos':
+            for _jn in (1, 2, 3):
+                _autosimular_otros_grupo(estado, _jn)
+            # Forzar avance a cuartos (los grupos ya están todos jugados)
+            if all(p.get('jugado', False) for p in (estado.get('copa_grupo_partidos') or [])):
+                avanzar_fase_bracket(estado)
+
+        # 2. Simular cuartos
+        if estado.get('copa_fase_actual') == 'cuartos':
+            _simular_featured_si_no_user(estado, 'cuartos')
+            simular_partidos_ia_bracket(estado, 'cuartos')
+            avanzar_fase_bracket(estado)
+
+        # 3. Simular semis
+        if estado.get('copa_fase_actual') == 'semis':
+            _simular_featured_si_no_user(estado, 'semis')
+            simular_partidos_ia_bracket(estado, 'semis')
+            avanzar_fase_bracket(estado)
+
+        # 4. Simular final
+        if estado.get('copa_fase_actual') == 'final':
+            _simular_featured_si_no_user(estado, 'final')
+            simular_partidos_ia_bracket(estado, 'final')
+            # Determinar el campeón: ganador de la final
+            final = estado.get('copa_bracket', {}).get('final', {}) or {}
+            otros_final = estado.get('copa_bracket_otros', {}).get('final', []) or []
+            ganador = final.get('avanza')
+            if not ganador and otros_final:
+                ganador = otros_final[0].get('avanza')
+            if ganador:
+                estado['copa_campeon'] = ganador
+                estado['copa_fase_actual'] = 'campeon'
+                try:
+                    import pygame
+                    estado['copa_campeon_toast_until'] = pygame.time.get_ticks() + 6000
+                except Exception:
+                    estado['copa_campeon_toast_until'] = None
+                logger.info(f"🏆 Copa finalizada en modo espectador. Campeón: {ganador}")
+            else:
+                logger.warning("No se pudo determinar el campeón de la copa en modo espectador.")
+    except Exception as e:
+        logger.error(f"Error en simular_copa_entera_ia: {e}")
+
 
 def simular_partidos_ia_bracket(estado: dict, fase: str) -> None:
     """Simula de forma resiliente partidos del bracket en los que el usuario no participa."""
@@ -671,14 +825,24 @@ def inicializar_copa_si_falta(estado: dict) -> None:
         # Estado ausente, incompleto o de otra copa: purgar TODO lo de copa y reconstruir limpio.
         for _k in ('copa_grupos', 'copa_grupos_standings', 'copa_grupo_standing',
                    'copa_grupo_partidos', 'copa_bracket', 'copa_bracket_otros',
-                   'copa_fase_actual', 'copa_tab', 'copa_jornada_grupo'):
+                   'copa_fase_actual', 'copa_tab', 'copa_jornada_grupo',
+                   'copa_campeon', 'copa_campeon_toast_until'):
             estado.pop(_k, None)
         estado['copa_tipo'] = copa_tipo_correcto
         copa_tipo = copa_tipo_correcto
-            
+
+        # v0.8.7: si el usuario no clasificó a esta edición, la copa se construye
+        # SIN su equipo (modo espectador). El user podrá entrar a la pantalla de
+        # copa para ver la simulación correr, pero no tendrá partidos pendientes.
+        _user_clasificado = bool(estado.get('copa_clasificado', True))
+        estado['copa_user_en_copa'] = _user_clasificado
+
         # 1. Seleccionar 16 equipos según el tipo de copa
-        teams = [mi_equipo]
-        nombres_vistos = {mi_equipo.nombre}
+        teams = []
+        nombres_vistos = set()
+        if _user_clasificado:
+            teams.append(mi_equipo)
+            nombres_vistos.add(mi_equipo.nombre)
         
         def _clasificados(equipos, n=3):
             # "Clasificados" = los mejores por puntos y, en empate, por OVR del plantel.
@@ -808,13 +972,20 @@ def obtener_partido_copa_pendiente(estado: dict) -> tuple[Optional[str], Optiona
     """
     Determina si hay un partido de copa pendiente de jugar en la jornada de liga actual.
     Retorna (nombre_fase_o_jornada, partido_dict_o_bracket_dict) o (None, None).
+
+    v0.8.7: si el usuario no clasificó a la copa (`copa_user_en_copa == False`,
+    modo espectador), retorna (None, None) inmediatamente.
     """
     try:
         mi_equipo = estado.get('mi_equipo')
         liga = estado.get('liga')
         if not mi_equipo or not liga:
             return None, None
-            
+
+        # v0.8.7: en modo espectador el user no tiene partidos pendientes
+        if estado.get('copa_user_en_copa') is False:
+            return None, None
+
         inicializar_copa_si_falta(estado)
         
         jornada_actual = getattr(liga, "jornada_actual", 1)
@@ -1156,13 +1327,17 @@ def render(screen, estado: dict) -> str | None:
         # 1. Asegurar estado de la copa según la liga del usuario
         mi_equipo = estado.get('mi_equipo')
         liga = estado.get('liga')
-        
+
         inicializar_copa_si_falta(estado)
         # v0.8.2: si el bracket aún no se reconstruyó para la fase actual (p. ej. el usuario
         # avanza de fase a cuartos pero nunca se llamó avanzar_fase_bracket), lo arreglamos
         # silenciosamente para que la UI no crashee.
         _asegurar_bracket_normalizado(estado)
         copa_tipo = estado['copa_tipo']
+
+        # v0.8.7: si el modo espectador está activo, no autosimular nada todavía.
+        # Se autosimulará cuando el user pulse el botón del overlay.
+        # (Override del comportamiento por defecto que asume user en copa.)
         
         estado.setdefault('copa_tab', 'Grupo A')
         estado.setdefault('copa_jornada_grupo', 1)
@@ -1513,6 +1688,82 @@ def render(screen, estado: dict) -> str | None:
             except Exception as e_stats_overlay:
                 logger.error(f"Error al dibujar overlay de estadísticas de copa: {e_stats_overlay}")
 
+        # v0.8.7: overlay de MODO ESPECTADOR (cuando el user no clasificó a la copa).
+        # Aparece ENCIMA del fondo de copa, debajo de las stats. Solo se muestra si
+        # la copa todavía no terminó y el user aún no la ha descartado en esta sesión.
+        _spectator_open = False
+        if not estado.get('copa_user_en_copa', True) and not estado.get('_spectator_dismissed', False):
+            _fase_now = estado.get('copa_fase_actual', 'grupos')
+            if _fase_now in ('grupos', 'cuartos', 'semis', 'final'):
+                _spectator_open = True
+        if _spectator_open:
+            try:
+                # Fondo semi-transparente
+                overlay_bg = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
+                overlay_bg.fill((0, 0, 0, 150))
+                screen.blit(overlay_bg, (0, 0))
+                # Panel central
+                _sp_rect = pygame.Rect(SCREEN_W // 2 - 380, 180, 760, 380)
+                draw_panel(screen, _sp_rect)
+                pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), _sp_rect, width=3, border_radius=8)
+                # Título
+                draw_text(screen, "MODO ESPECTADOR", (_sp_rect.x + _sp_rect.w // 2 - 200, _sp_rect.y + 30),
+                          size='xl', color='dorado')
+                # Subtítulo
+                draw_text(screen, "Tu equipo no clasificó a esta edición de la copa.",
+                          (_sp_rect.x + 60, _sp_rect.y + 90), size='md', color='blanco')
+                # Motivo
+                _motivo = estado.get('copa_clasificado_motivo', '')
+                if _motivo:
+                    draw_text(screen, f"Motivo: {_motivo}",
+                              (_sp_rect.x + 60, _sp_rect.y + 125), size='sm', color='azul')
+                # Explicación
+                draw_text(screen, "Puedes simular la copa entera y ver quién la gana, o explorar los grupos manualmente.",
+                          (_sp_rect.x + 60, _sp_rect.y + 165), size='sm', color='blanco')
+                # Botón grande: SIMULAR COPA ENTERA
+                _btn_sim_rect = pygame.Rect(_sp_rect.x + 80, _sp_rect.y + 210, 280, 60)
+                _btn_sim_hover = _btn_sim_rect.collidepoint(mouse_pos)
+                try:
+                    pygame.draw.rect(screen, COLORS.get('verde', (0, 255, 136)), _btn_sim_rect, border_radius=8)
+                except Exception:
+                    pass
+                draw_text(screen, "SIMULAR COPA ENTERA",
+                          (_btn_sim_rect.x + 30, _btn_sim_rect.y + 18), size='md', color='bg')
+                # Botón secundario: VER COPA MANUALMENTE
+                _btn_dismiss_rect = pygame.Rect(_sp_rect.x + 400, _sp_rect.y + 210, 280, 60)
+                _btn_dismiss_hover = _btn_dismiss_rect.collidepoint(mouse_pos)
+                try:
+                    pygame.draw.rect(screen, (40, 50, 80), _btn_dismiss_rect, border_radius=8)
+                except Exception:
+                    pass
+                draw_text(screen, "EXPLORAR COPA (sin simular)",
+                          (_btn_dismiss_rect.x + 25, _btn_dismiss_rect.y + 18), size='sm', color='blanco')
+                # Texto pequeño: si ya simularon, el botón se desactiva
+                _ya_simulada = (_fase_now in ('campeon', 'eliminado'))
+                if _ya_simulada:
+                    draw_text(screen, "(La copa ya fue simulada; usa 'EXPLORAR COPA' para ver el resultado)",
+                              (_sp_rect.x + 80, _sp_rect.y + 290), size='sm', color='azul')
+            except Exception as e_spec:
+                logger.error(f"Error al dibujar overlay de espectador: {e_spec}")
+
+        # v0.8.7: toast de CAMPEÓN (cuando termina la copa en modo espectador).
+        # Se muestra arriba a la derecha durante 6 segundos.
+        try:
+            _toast_until = estado.get('copa_campeon_toast_until')
+            _now = pygame.time.get_ticks()
+            if _toast_until and _now < _toast_until:
+                _camp = estado.get('copa_campeon', '')
+                if _camp:
+                    _toast_rect = pygame.Rect(SCREEN_W - 470, 12, 450, 60)
+                    draw_panel(screen, _toast_rect)
+                    pygame.draw.rect(screen, COLORS.get('verde', (0, 255, 136)), _toast_rect, width=2, border_radius=8)
+                    draw_text(screen, "🏆 CAMPEÓN DE LA COPA", (_toast_rect.x + 16, _toast_rect.y + 8),
+                              size='sm', color='dorado')
+                    draw_text(screen, str(_camp)[:34], (_toast_rect.x + 16, _toast_rect.y + 30),
+                              size='lg', color='verde')
+        except Exception as e_toast:
+            logger.error(f"Error al dibujar toast de campeón: {e_toast}")
+
         back_rect = pygame.Rect(40, 610, 200, 50)
         back_hover = back_rect.collidepoint(mouse_pos)
         draw_button(screen, back_rect, "VOLVER A LIGA", back_hover)
@@ -1586,6 +1837,27 @@ def render(screen, estado: dict) -> str | None:
             if event.type == pygame.QUIT:
                 return "quit"
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                # v0.8.7: si el overlay de espectador está abierto, consumir el clic
+                # y manejar los botones del overlay antes que cualquier otro.
+                if _spectator_open:
+                    if _btn_sim_rect.collidepoint(event.pos):
+                        # SIMULAR COPA ENTERA
+                        simular_copa_entera_ia(estado)
+                        # Forzar el estado para que el overlay desaparezca
+                        estado['copa_user_en_copa'] = False
+                        # Cambiar a la pestaña de fase final para ver el bracket
+                        estado['copa_tab'] = 'Fase Final'
+                        continue
+                    elif _btn_dismiss_rect.collidepoint(event.pos):
+                        # EXPLORAR COPA (no simular). Por ahora el overlay se cierra
+                        # al cambiar a una fase "finalizada" o si el user navega a una
+                        # pestaña; lo más simple: marcar el modo espectador como
+                        # "dismissed" para esta sesión.
+                        estado['_spectator_dismissed'] = True
+                        continue
+                    # Cualquier clic dentro del panel del overlay: consumir
+                    if _sp_rect.collidepoint(event.pos):
+                        continue
                 # v0.8.6 (Tarea 4): manejar clic en botón de estadísticas
                 if stats_btn_rect.collidepoint(event.pos):
                     estado['copa_stats_abierto'] = not estado.get('copa_stats_abierto', False)

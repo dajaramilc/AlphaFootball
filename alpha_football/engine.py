@@ -260,10 +260,13 @@ def _prob_penal(jugador) -> float:
 
 
 def tanda_penales_jugadores(cobradores_local: list, cobradores_vis: list,
-                            rng: Optional[object] = None) -> tuple[bool, str]:
+                            rng: Optional[object] = None) -> tuple[bool, str, list]:
     """
     Resuelve una tanda de penales usando el atributo `penales` de los cobradores elegidos.
-    5 rondas + muerte súbita. Devuelve (gana_local, "X-Y").
+    5 rondas + muerte súbita. Devuelve (gana_local, "X-Y", secuencia).
+    `secuencia` es una lista de dicts con la info de cada disparo:
+        {'ronda': int, 'local_mete': bool, 'visitante_mete': bool,
+         'cobrador_local': str|None, 'cobrador_visitante': str|None}
     """
     azar = rng or random
     cl = list(cobradores_local) or [None]
@@ -272,26 +275,59 @@ def tanda_penales_jugadores(cobradores_local: list, cobradores_vis: list,
     def _mete(j) -> bool:
         return azar.random() < (_prob_penal(j) if j is not None else 0.55)
 
+    def _nombre(j) -> Optional[str]:
+        if j is None:
+            return None
+        try:
+            return getattr(j, 'apellido', None) or getattr(j, 'nombre_completo', None) or str(j)
+        except Exception:
+            return str(j)
+
     gl = gv = 0
+    secuencia: list = []
     for i in range(5):
-        if _mete(cl[i % len(cl)]):
+        idx_l = i % len(cl)
+        idx_v = i % len(cv)
+        c_l = cl[idx_l]
+        c_v = cv[idx_v]
+        mete_l = _mete(c_l)
+        mete_v = _mete(c_v)
+        if mete_l:
             gl += 1
-        if _mete(cv[i % len(cv)]):
+        if mete_v:
             gv += 1
+        secuencia.append({
+            'ronda': i + 1,
+            'local_mete': mete_l,
+            'visitante_mete': mete_v,
+            'cobrador_local': _nombre(c_l),
+            'cobrador_visitante': _nombre(c_v),
+        })
 
     ronda = 5
     while gl == gv and ronda < 30:
-        a = _mete(cl[ronda % len(cl)])
-        b = _mete(cv[ronda % len(cv)])
+        idx_l = ronda % len(cl)
+        idx_v = ronda % len(cv)
+        c_l = cl[idx_l]
+        c_v = cv[idx_v]
+        a = _mete(c_l)
+        b = _mete(c_v)
         if a and not b:
             gl += 1
         elif b and not a:
             gv += 1
         ronda += 1
+        secuencia.append({
+            'ronda': ronda,
+            'local_mete': a,
+            'visitante_mete': b,
+            'cobrador_local': _nombre(c_l),
+            'cobrador_visitante': _nombre(c_v),
+        })
     if gl == gv:  # tope de seguridad para no colgar
         gl += 1 if azar.random() < 0.5 else 0
         gv += 1 if gl == gv else 0
-    return (gl > gv), f"{gl}-{gv}"
+    return (gl > gv), f"{gl}-{gv}", secuencia
 
 
 # ── Nucleo de simulacion ──────────────────────────────────────────────────────

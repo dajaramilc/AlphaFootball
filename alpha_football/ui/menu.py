@@ -1105,6 +1105,30 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     equipo.estilo_dt = "anchelottismo"
                     if not getattr(equipo, 'tactica_familiaridad', None):
                         equipo.tactica_familiaridad = {}
+                    # v0.8.7: en T1 el usuario solo clasifica a la copa si su equipo
+                    # está en el top 3 por OVR de la liga. Si no, verá la copa en modo
+                    # espectador (la simulación corre sola, sin partidos del user).
+                    # En T2+ esto se recalcula en el resumen de temporada por puntos.
+                    try:
+                        liga_ovr = sorted(
+                            liga_obj.equipos,
+                            key=lambda e: getattr(e, 'ovr_promedio', 0),
+                            reverse=True
+                        )
+                        _top3_ovr = {e.nombre for e in liga_ovr[:3]}
+                        _ovr_user = getattr(equipo, 'ovr_promedio', 0)
+                        estado['copa_clasificado'] = (equipo.nombre in _top3_ovr)
+                        estado['copa_clasificado_motivo'] = (
+                            f"OVR {_ovr_user} (top 3 de la liga)"
+                            if estado['copa_clasificado']
+                            else f"OVR {_ovr_user} (fuera del top 3)"
+                        )
+                        estado['copa_user_en_copa'] = estado['copa_clasificado']
+                    except Exception as e_clasif:
+                        logger.error(f"Error al calcular clasificación T1 a copa: {e_clasif}")
+                        estado['copa_clasificado'] = True
+                        estado['copa_user_en_copa'] = True
+                        estado['copa_clasificado_motivo'] = "Default (cálculo falló)"
                     from alpha_football.models import alineacion_por_defecto
                     def_alin = alineacion_por_defecto(equipo)
                     estado['alineacion_activa'] = def_alin

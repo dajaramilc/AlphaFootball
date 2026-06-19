@@ -1,6 +1,6 @@
-# ALPHA FOOTBALL — Contexto de Proyecto (v0.8.6)
+# ALPHA FOOTBALL — Contexto de Proyecto (v0.8.7)
 **Última actualización:** 2026-06-19
-**Sesión actual:** v0.8.6 — Tarea 1 (dirección de equipo en prepartido, panel compacto sin HUB de carrera, cicladores FORMACIÓN/TÁCTICA bien visibles), Tarea 2 (AUTO ONCE y cambio de formación cuentan como cambios y respetan el tope de 5), Tarea 3 (avance automático de jornada de copa al volver a la pantalla), Tarea 4 (panel de estadísticas de copa con goleadores/asistentes/porterías a cero/rendimiento, con captura del reporte en los 6 puntos de simulación de copa), Tarea 5 (ganar cuartos/semis llama a `avanzar_fase_bracket` para simular los otros partidos y armar la siguiente llave; final→campeón).
+**Sesión actual:** v0.8.7 — Tarea 1 (penales con secuencia ronda a ronda en resultado de simulación), Tarea 2 (formación y AUTO ONCE NO consumen cambios — solo el swap titular↔banco manual cuenta, tope 5), Tarea 3 (clasificación a copa: T1 = top 3 por OVR, T2+ = top 3 por puntos), Tarea 4 (modo espectador de copa cuando el user no clasifica: copa visible con overlay "SIMULAR COPA ENTERA" + toast de campeón), Tarea 5 (fix del bug vivo de `avanzar_fase_bracket` con bracket placeholder + backtrack inteligente + anti-bucle).
 
 ---
 
@@ -626,3 +626,111 @@ cd "C:\Users\diego\Downloads\AlphaFootball"
 python -m compileall -q alpha_football main.py
 python main.py
 ```
+
+
+## Bitácora — v0.8.7 (sesión 2026-06-19, plan v0.8.7)
+
+Plan completo en `C:\Users\diego\.claude\plans\alpha-football-v0.8.7.md` (generado en vivo). 5 tareas, todas verificadas con smoke headless 6/6.
+
+### Tarea 1 — Penales con secuencia ronda a ronda en `_render_resultado`
+- **Causa:** `tanda_penales_jugadores` solo devolvía `(gana, "X-Y")`; el panel de resultado del prepartido solo mostraba goles del tiempo regular. La tanda quedaba enterrada en el título.
+- **Fix en `engine.py`:** la firma ahora devuelve `(gana_local, marcador, secuencia)` donde `secuencia` es una lista de dicts con `ronda`, `local_mete`, `visitante_mete`, `cobrador_local`, `cobrador_visitante`. 5 rondas + muerte súbita + tope de seguridad a 30 rondas.
+- **Fix en `prepartido_screen.py`:** `_simular_instantaneo` (rama copa bracket 0-0) desempaqueta los 3 valores, guarda `fase_data['penales_secuencia']` y `fase_data['penales_cobradores_l/v']`. `_render_resultado` agrega un panel lateral DERECHO (590px) con: lista de cobradores local+visitante, línea separadora azul, y SECUENCIA ronda a ronda con emojis (⚽/❌), nombres de cobradores y acumulado al final. Si hubo muerte súbita, se muestra el aviso. El botón CONTINUAR baja a y=670 para dejar sitio a los paneles.
+- **Call-site `match_screen.py`:** actualizado para desempaquetar 3 valores y guardar `sim_penales_secuencia/cobradores_l/cobradores_v` (consumidos por la UI de finalizado).
+- **Call-site `prepartido_screen._render_resultado`:** limpia los `sim_penales_*` al pulsar CONTINUAR.
+
+### Tarea 2 — Formación y AUTO ONCE NO consumen cambios
+- **Causa:** v0.8.6 (Tarea 2) hacía que el cycler de formación y AUTO ONCE cobraran subs reales (set-diff vs titulares), lo cual era demasiado restrictivo. Diego pidió: "solo cambiar un suplente por un titular debe consumir un cambio".
+- **Fix en `match_screen._menu_tactico`:** cycler de formación (L597-614) y AUTO ONCE (L620-633) eliminan el set-diff y la lógica de cobro. Ahora:
+  - Cycler formación: solo cambia `alin.formacion` y registra un comentario "sin consumir cambios".
+  - AUTO ONCE: aplica `F.mejor_once(equipo.jugadores, alin.formacion)` y registra "sin consumir cambios".
+  - Swap manual (titular→banco): SIGUE siendo la única vía que gasta 1 sub (tope 5).
+- Header del overlay táctico: añade el recordatorio "(solo el swap manual titular↔banco cuenta)" al lado del contador "Cambios: X/5".
+
+### Tarea 3 — Clasificación a copa (T1 = OVR top 3, T2+ = top 3 por puntos)
+- **Causa:** la copa siempre incluía al user (`inicializar_copa_si_falta` agregaba `mi_equipo` a los 16). No había modo de fallar la clasificación.
+- **Fix en `menu.py` (alta T1, L1104-1124):** se calcula `liga_ovr = sorted(liga_obj.equipos, key=ovr_promedio, reverse=True)[:3]`. Si `equipo.nombre in top3` → `copa_clasificado = True`; si no, `False`. Se guarda también `copa_clasificado_motivo` (texto legible: "OVR 70 (fuera del top 3)" etc.) y `copa_user_en_copa` (default True para saves viejos).
+- **Fix en `resumen_temporada_screen.py` (entre 2b y 3, L134-160):** al cerrar la temporada se recalcula `copa_clasificado` por **puntos** de la liga (top 3). Se guarda la posición del user y el motivo, y se setea `copa_user_en_copa`. Esto se ejecuta ANTES de incrementar temporada, así la T2 ya arranca con el flag correcto.
+
+### Tarea 4 — Modo espectador de copa + SIMULAR COPA ENTERA + toast de campeón
+- **Causa:** cuando el user no clasifica, la copa quedaba inutilizable (botón visible pero sin partidos del user, o caía en estados raros).
+- **Fix en `inicializar_copa_si_falta`:** si `copa_clasificado is False` o `copa_user_en_copa is False`, los 16 equipos se arman **sin** `mi_equipo`. Se setea `estado['copa_user_en_copa'] = False`.
+- **Fix en `obtener_partido_copa_pendiente`:** si `copa_user_en_copa is False`, retorna `(None, None)` inmediatamente → no hay alerta de copa pendiente en `league_screen`.
+- **Fix en `avanzar_fase_bracket` (3 ramas):** cuando el user no está en la copa, los branches de grupos→cuartos, cuartos→semis y semis→final ya NO marcan `copa_fase_actual = 'eliminado'` (porque el user no fue eliminado, simplemente no estaba). En su lugar avanzan a la siguiente fase para que la simulación automática pueda continuar.
+- **Nuevo helper `_simular_featured_si_no_user(estado, fase)`:** simula el partido "featured" (`copa_bracket[fase]`) si el user no participa en él. Necesario porque `simular_partidos_ia_bracket` solo itera `copa_bracket_otros[fase]`, dejando sin simular el match del slot featured que se queda con un encuentro IA-vs-IA cuando no hay user.
+- **Nuevo helper `simular_copa_entera_ia(estado)`:** orquesta la simulación completa: grupos (3 jornadas con `_autosimular_otros_grupo`) → cuartos (`_simular_featured_si_no_user` + `simular_partidos_ia_bracket`) → semis (idem) → final (idem). Al final, `copa_fase_actual = 'campeon'` y `copa_campeon = <ganador>`. Programa un toast de 6s con `copa_campeon_toast_until = pygame.time.get_ticks() + 6000`.
+- **Overlay "MODO ESPECTADOR" en `copa_screen.render`:** cuando `copa_user_en_copa is False` y la copa no terminó, se dibuja un modal central (760×380) con título "MODO ESPECTADOR", motivo, explicación, y dos botones: "SIMULAR COPA ENTERA" (verde, grande) y "EXPLORAR COPA (sin simular)" (azul, más pequeño). El segundo setea `_spectator_dismissed = True` para esta sesión.
+- **Toast de campeón:** se dibuja arriba a la derecha (450×60) durante 6s con "🏆 CAMPEÓN DE LA COPA" + nombre. Auto-hide vía `copa_campeon_toast_until`.
+- **Click handling:** los clics en el overlay se consumen antes de pasar al resto de la UI. El botón SIMULAR dispara `simular_copa_entera_ia` y cambia a la pestaña "Fase Final". El botón EXPLORAR setea el flag dismissed.
+
+### Tarea 5 — Fix del bug vivo: `avanzar_fase_bracket` con bracket placeholder
+- **Causa:** cuando el estado de la copa estaba en una fase de eliminatorias y `copa_bracket[fase]` aún tenía la forma placeholder `{'m1':..., 'm2':...}`, `_asegurar_bracket_normalizado` llamaba a `avanzar_fase_bracket(estado)` que intentaba `s1['local']` sobre el placeholder → **KeyError: 'local'**. Cada frame, el bracket seguía siendo placeholder, así que se llamaba otra vez → bucle infinito de logs (el run de Diego generó 1M+ chars de spam).
+- **Fix en `_asegurar_bracket_normalizado`:** ahora hace backtrack inteligente:
+  - Si fase es `final` y `semis` es placeholder, retrocede a `cuartos` (o a `grupos` si `cuartos` también es placeholder).
+  - Si fase es `semis` y `cuartos` es placeholder, retrocede a `grupos`.
+  - Si fase es `cuartos`, retrocede a `grupos`.
+  - Luego llama a `avanzar_fase_bracket` desde la fase correcta.
+- **Anti-bloop:** `_asegurar_bracket_normalizado` ahora setea `_copa_bracket_normalizando = True` al inicio y lo limpia en `finally`. Si al inicio detecta la bandera, retorna inmediatamente (corta el bucle en el mismo frame).
+- **Defensivo en `avanzar_fase_bracket` (ramas cuartos y semis):** si el bracket de la fase actual está en placeholder (sin clave 'local' a nivel raíz), log warning y return silencioso. Esto evita el KeyError incluso si `_asegurar_bracket_normalizado` no lo detectó.
+
+### Verificación hecha
+- `python -m compileall -q alpha_football main.py` → 0 errores.
+- **Smoke headless (`SDL_VIDEODRIVER=dummy`)** — 6/6 OK:
+  - **T1:** `tanda_penales_jugadores` con 5+5 jugadores devuelve `(gana, marcador, secuencia)` con 5+ rondas, cada una con `ronda/local_mete/visitante_mete/cobrador_local/cobrador_visitante`.
+  - **T2:** formación cambia sin tocar `sim_subs_realizadas`; AUTO ONCE tampoco; swap manual sí lo incrementa.
+  - **T3 (T1 OVR top 3):** liga con 6 equipos, mi_equipo con OVR 85 está en top 3, equipo con OVR 70 no.
+  - **T3 (T2+ pts top 3):** liga con 6 equipos, user con 50pts está en top 3, equipo con 30pts no.
+  - **T4:** copa con `copa_user_en_copa=False` se inicializa con 16 equipos SIN user; `obtener_partido_copa_pendiente` retorna `(None, None)`; `simular_copa_entera_ia` deja `copa_fase_actual='campeon'` y `copa_campeon='Real Madriz'`.
+  - **T5:** inyectar `copa_bracket['semis']` en placeholder + `copa_fase_actual='semis'` y llamar `_asegurar_bracket_normalizado` 5 veces seguidas NO crashea y NO se queda en bucle.
+
+### Lo que falta validar en vivo (Diego, `python main.py`)
+1. Carrera nueva con equipo OVR top 3 → jugar la copa normal (las 5 features de v0.8.6 siguen funcionando).
+2. Carrera nueva con equipo OVR #5/6 → entrar a COPA → ver overlay "MODO ESPECTADOR" → pulsar "SIMULAR COPA ENTERA" → ver cómo se llena el bracket y aparece el toast de campeón por 6s.
+3. Simular instantáneamente un partido de copa bracket que quede 0-0 → ver el panel de PENALES con la secuencia ronda a ronda y los cobradores.
+4. Partido en vivo: abrir menú TÁCTICA, cambiar formación 2 veces → ver contador "Cambios: 0/5". Pulsar AUTO ONCE → sigue 0/5. Swap manual → 1/5. Hasta 5/5, el 6º swap sigue bloqueado.
+5. Tras llegar a la final y perder/ganar, avanzar de temporada → si quedé top 3 por puntos, `copa_clasificado=True` para T2; si no, modo espectador otra vez.
+6. **Validar que el bug del bracket está cerrado:** en una carrera nueva, jugar hasta semis/final; la UI ya no debe hacer log spam ni quedarse pegada.
+
+### Archivos modificados en v0.8.7
+- `alpha_football/engine.py` — `tanda_penales_jugadores` devuelve secuencia
+- `alpha_football/ui/copa_screen.py` — fix bracket placeholder + backtrack + anti-bucle + `_simular_featured_si_no_user` + `simular_copa_entera_ia` + overlay espectador + toast campeón + `inicializar_copa_si_falta` sin user + `obtener_partido_copa_pendiente` con short-circuit espectador + avanzar_fase_bracket ya no marca eliminado en modo espectador
+- `alpha_football/ui/prepartido_screen.py` — captura secuencia en `_simular_instantaneo` + panel PENALES en `_render_resultado` + limpieza de sim_penales_* al continuar
+- `alpha_football/ui/match_screen.py` — call-site tanda con 3 valores + `sim_penales_secuencia/cobradores_*` + formación y AUTO ONCE no gastan + recordatorio en header
+- `alpha_football/ui/menu.py` — alta T1 calcula `copa_clasificado` por OVR top 3
+- `alpha_football/ui/resumen_temporada_screen.py` — al cerrar temporada, `copa_clasificado` por puntos top 3
+
+---
+
+## 🔴 ESTADO ACTUAL — Para que claude continue
+
+**Versión:** v0.8.7 (recién aplicado por claude, pendiente validación en vivo de Diego)
+
+**Última corrida:** Diego ejecutó `python main.py` 2026-06-19 02:42-02:48 (sobre v0.8.4, no v0.8.5 ni v0.8.6 ni v0.8.7). En este momento:
+- v0.8.5 cubre los bugs críticos (partido en vivo, copa reparada, amistoso aislado, modal borrar slot).
+- v0.8.6 completa el plan de prepartido (panel compacto), subs (AUTO ONCE), jornada auto de copa, stats de copa y fases finales.
+- **v0.8.7** completa los 3 pedidos de Diego (penales con secuencia + subs solo manual + clasificación a copa con modo espectador) y arregla el bug vivo del bracket.
+- 6/6 tests del smoke headless pasan. Falta que Diego pruebe en vivo (6 puntos arriba).
+
+### Cómo está firmado cada cambio (autor)
+- v0.4–v0.5: base original (Diego/Opus).
+- v0.6: ajustes de UX (Diego/Opus).
+- v0.7: paquete grande UX+gameplay (Diego/Opus).
+- v0.7.1: ajustes post-test en vivo (Diego/Opus).
+- v0.8: correcciones críticas (Diego/Opus).
+- v0.8.1: bugs + features (Diego/Opus).
+- v0.8.2: pendiente de documentar.
+- v0.8.3: aislamiento + visor rival + primer par de hotfixes en vivo (claude).
+- v0.8.3.4: 3 fixes de log-spam post-segundo-test-en-vivo (claude).
+- v0.8.4: fixes de raíz post-2º-test (claude).
+- v0.8.5: paquete grande post-3er-test (claude).
+- v0.8.6: plan v0.8.6 (antigravity + claude).
+- **v0.8.7: plan v0.8.7 — penales con secuencia, subs solo manual, clasificación a copa (T1 OVR / T2+ pts), modo espectador con SIMULAR COPA ENTERA, fix bracket placeholder (claude, 2026-06-19 15:35-15:42).**
+
+### Lo que falta (próximas sesiones)
+
+1. **Validar en vivo v0.8.7** (`python main.py`): ver lista de los 6 puntos al final de la bitácora v0.8.7.
+2. **PENDIENTE histórico de context.md** (sigue válido):
+   - Más atributos por jugador y editables uno por uno en modo editar (ampliar `Jugador` dataclass, `from_dict`/`to_dict` tolerante, `edit_screen.py` con un input por atributo, recalcular `overall`).
+3. **PENDIENTE menor:** revisar por qué `mi_equipo` puede ser None en `match_screen` post-clear.
+4. **PENDIENTE menor:** el editor `edit_screen.py` solo deja tocar el OVR (se copia a los 5 atributos). Decisión de diseño: ¿qué atributos quieres añadir?
+5. **Decisión:** sigue en pie la pregunta de la sesión v0.5 sobre si migrar la UI a HTML/CSS (pywebview/Eel/Tauri). Diego descartó Tauri, sigue como decisión futura no implementada.

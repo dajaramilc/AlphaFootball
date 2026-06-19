@@ -482,10 +482,13 @@ def _menu_tactico(screen: pygame.Surface, estado: dict, equipo: Any, alin: Any,
     draw_text(screen, titulo, (panel.x + 25, panel.y + 14), size='lg', color='dorado')
 
     # v0.8.1: contador de cambios realizados (máx 5 por partido).
+    # v0.8.7: solo el swap manual titular↔banco cuenta; formación y AUTO ONCE son gratis.
     subs_realizadas = int(estado.get('sim_subs_realizadas', 0) or 0)
     subs_max = 5
     draw_text(screen, f"Cambios: {subs_realizadas} / {subs_max}",
               (panel.right - 150, panel.y + 18), size='sm', color='dorado' if subs_realizadas < subs_max else 'rojo')
+    draw_text(screen, "(solo el swap manual titular↔banco cuenta)",
+              (panel.right - 320, panel.y + 18), size='sm', color='azul')
 
     if not getattr(alin, 'formacion', None) or not F.existe(alin.formacion):
         alin.formacion = F.FORMACION_DEFECTO
@@ -595,43 +598,26 @@ def _menu_tactico(screen: pygame.Surface, estado: dict, equipo: Any, alin: Any,
 
     if click_pos:
         if rf_prev.collidepoint(click_pos) or rf_next.collidepoint(click_pos):
-            # v0.8.6 (Tarea 2): cambio de formación cuenta sustituciones reales
+            # v0.8.7: cambio de formación NO consume cambios. Es solo reposicionamiento
+            # táctico abstracto. Si quieres meter jugadores del banco, hazlo con
+            # AUTO ONCE (también gratis) o con un swap manual titular↔banco.
             paso = -1 if rf_prev.collidepoint(click_pos) else 1
             i = form_lista.index(alin.formacion) if alin.formacion in form_lista else 0
             alin.formacion = form_lista[(i + paso) % len(form_lista)]
-            viejos_formacion = set(alin.titulares)
-            nuevos_formacion = F.mejor_once(equipo.jugadores, alin.formacion)
-            entrantes_formacion = len(set(nuevos_formacion) - viejos_formacion)
-            if subs_realizadas + entrantes_formacion > subs_max:
-                # Bloquear: excedería el máximo de cambios permitidos
-                estado.setdefault('sim_comentarios', []).append(
-                    f"DT: Cambio de formación haría {entrantes_formacion} cambios; quedan {subs_max - subs_realizadas}.")
-            else:
-                alin.titulares = nuevos_formacion
-                estado['sim_subs_realizadas'] = subs_realizadas + entrantes_formacion
-                if entrantes_formacion > 0:
-                    estado.setdefault('sim_comentarios', []).append(
-                        f"CAMBIOS ({subs_realizadas + entrantes_formacion}/5): Formación → {alin.formacion}")
+            estado.setdefault('sim_comentarios', []).append(
+                f"DT: Formación → {alin.formacion} (sin consumir cambios).")
             estado['sim_sub_out'] = None
         elif rt_prev.collidepoint(click_pos) or rt_next.collidepoint(click_pos):
             paso = -1 if rt_prev.collidepoint(click_pos) else 1
             i = _TACTICAS_MENU.index(equipo.estilo_dt) if equipo.estilo_dt in _TACTICAS_MENU else 0
             equipo.estilo_dt = _TACTICAS_MENU[(i + paso) % len(_TACTICAS_MENU)]
         elif btn_auto.collidepoint(click_pos):
-            # v0.8.6 (Tarea 2): AUTO ONCE cuenta sustituciones reales
-            viejos_auto = set(alin.titulares)
-            nuevos_auto = F.mejor_once(equipo.jugadores, alin.formacion)
-            entrantes_auto = len(set(nuevos_auto) - viejos_auto)
-            if subs_realizadas + entrantes_auto > subs_max:
-                # Bloquear: excedería el máximo de cambios permitidos
-                estado.setdefault('sim_comentarios', []).append(
-                    f"DT: AUTO ONCE haría {entrantes_auto} cambios; quedan {subs_max - subs_realizadas}.")
-            else:
-                alin.titulares = nuevos_auto
-                estado['sim_subs_realizadas'] = subs_realizadas + entrantes_auto
-                if entrantes_auto > 0:
-                    estado.setdefault('sim_comentarios', []).append(
-                        f"CAMBIOS ({subs_realizadas + entrantes_auto}/5): AUTO ONCE aplicado.")
+            # v0.8.7: AUTO ONCE NO consume cambios. Reorganiza titulares pero
+            # no se contabiliza como sustitución. Si el XI actual es subóptimo
+            # para la formación, lo deja óptimo sin gastar una ventana de cambios.
+            alin.titulares = F.mejor_once(equipo.jugadores, alin.formacion)
+            estado.setdefault('sim_comentarios', []).append(
+                f"DT: AUTO ONCE aplicado ({alin.formacion}, sin consumir cambios).")
             estado['sim_sub_out'] = None
         elif btn_reanudar.collidepoint(click_pos):
             estado['sim_sub_out'] = None
@@ -1230,10 +1216,14 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                         rival_eq = visitante if user_eq.id == local.id else local
                         rivales_pen = sorted(getattr(rival_eq, 'jugadores', []),
                                              key=lambda j: getattr(j, 'penales', 0), reverse=True)[:5]
-                        gana_user, marcador = tanda_penales_jugadores(cobradores, rivales_pen)
+                        # v0.8.7: la firma ahora devuelve (gana_user, marcador, secuencia)
+                        gana_user, marcador, secuencia = tanda_penales_jugadores(cobradores, rivales_pen)
                         estado['sim_penales_resuelto'] = True
                         estado['sim_penales_marcador'] = marcador
                         estado['sim_penales_gana_user'] = gana_user
+                        estado['sim_penales_secuencia'] = secuencia
+                        estado['sim_penales_cobradores_l'] = [getattr(j, 'apellido', '?') for j in cobradores]
+                        estado['sim_penales_cobradores_v'] = [getattr(j, 'apellido', '?') for j in rivales_pen]
                         estado.pop('sim_penales_sel', None)
                         estado['sim_comentarios'].append(f"¡Definición por penales {marcador}!")
                     except Exception as e_pen:

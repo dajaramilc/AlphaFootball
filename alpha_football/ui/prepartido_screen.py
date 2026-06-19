@@ -142,10 +142,14 @@ def _simular_instantaneo(estado: dict, local: any, visitante: any) -> None:
                         from alpha_football.engine import tanda_penales_jugadores
                         cobradores_l = sorted(local.jugadores, key=lambda j: j.penales, reverse=True)[:5]
                         cobradores_v = sorted(visitante.jugadores, key=lambda j: j.penales, reverse=True)[:5]
-                        marcador, gana_local = tanda_penales_jugadores(cobradores_l, cobradores_v)
+                        # v0.8.7: la firma ahora devuelve (gana_local, marcador, secuencia)
+                        gana_local, marcador, secuencia = tanda_penales_jugadores(cobradores_l, cobradores_v)
                         penales_str = marcador
                         fase_data['avanza'] = 'user' if gana_local else 'rival'
                         fase_data['penales'] = penales_str
+                        fase_data['penales_secuencia'] = secuencia
+                        fase_data['penales_cobradores_l'] = [getattr(j, 'apellido', '?') for j in cobradores_l]
+                        fase_data['penales_cobradores_v'] = [getattr(j, 'apellido', '?') for j in cobradores_v]
                     else:
                         fase_data['avanza'] = 'user' if gl > gv else 'rival'
                     
@@ -190,9 +194,25 @@ def _simular_instantaneo(estado: dict, local: any, visitante: any) -> None:
             except Exception as e_dev:
                 logger.error(f"Error de desarrollo en sim instantánea copa: {e_dev}")
             
+            # v0.8.7: si hubo penales, agregamos la secuencia y los cobradores
+            # para que la UI de resultado los muestre ronda a ronda.
+            penales_payload = None
+            if penales_str:
+                try:
+                    fase_actual = estado.get('partido_copa_bracket_fase')
+                    fase_data = estado.get('copa_bracket', {}).get(fase_actual) or {}
+                    penales_payload = {
+                        'marcador': penales_str,
+                        'secuencia': fase_data.get('penales_secuencia', []) or [],
+                        'cobrador_l': fase_data.get('penales_cobradores_l', []) or [],
+                        'cobrador_v': fase_data.get('penales_cobradores_v', []) or [],
+                    }
+                except Exception:
+                    penales_payload = {'marcador': penales_str, 'secuencia': [], 'cobrador_l': [], 'cobrador_v': []}
             estado['prepartido_resultado'] = {
                 'titulo': f"{local.corto} {gl} - {gv} {visitante.corto}" + (f" ({penales_str} PEN)" if penales_str else ""),
                 'goles': [f"{e.get('minuto', 0)}'  {e.get('detalle', 'Gol')}" for e in sorted(goles_ev, key=lambda x: x.get('minuto', 0))],
+                'penales': penales_payload,
             }
             
             # Limpiar variables temporales de copa
@@ -211,7 +231,11 @@ def _simular_instantaneo(estado: dict, local: any, visitante: any) -> None:
 
 
 def _render_resultado(screen: pygame.Surface, estado: dict, mouse_pos, click_pos) -> Optional[str]:
-    """Muestra el marcador y los goleadores tras una simulación instantánea."""
+    """Muestra el marcador y los goleadores tras una simulación instantánea.
+    v0.8.7: si el partido terminó en empate y se jugó tanda de penales (modo
+    copa en eliminación directa), agrega un panel lateral con la secuencia
+    ronda a ronda y los nombres de los cobradores.
+    """
     r = estado.get('prepartido_resultado') or {}
     draw_gradient_bg(screen)
     draw_text(screen, "RESULTADO", (SCREEN_W // 2 - 110, 55), size='xl', color='dorado')
@@ -222,23 +246,105 @@ def _render_resultado(screen: pygame.Surface, estado: dict, mouse_pos, click_pos
     tw = get_font('xl').size(titulo)[0]
     draw_text(screen, titulo, (SCREEN_W // 2 - tw // 2, 150), size='xl', color='verde')
 
-    gp = pygame.Rect(SCREEN_W // 2 - 360, 240, 720, 330)
-    draw_panel(screen, gp)
-    draw_text(screen, "GOLES", (gp.x + 20, gp.y + 12), size='md', color='azul')
-    y = gp.y + 50
-    goles = r.get('goles', [])
-    if not goles:
-        draw_text(screen, "Sin goles.", (gp.x + 20, y), size='sm', color='blanco')
-    for linea in goles[:9]:
-        draw_text(screen, linea[:84], (gp.x + 20, y), size='sm', color='blanco')
-        y += 30
+    # v0.8.7: layout con DOS paneles (goles + penales) si hubo penales, o
+    # UN panel ancho (goles) si no los hubo.
+    penales = r.get('penales')
+    if penales and penales.get('secuencia'):
+        gp = pygame.Rect(40, 240, 590, 400)
+        draw_panel(screen, gp)
+        draw_text(screen, "GOLES", (gp.x + 20, gp.y + 12), size='md', color='azul')
+        y = gp.y + 50
+        goles = r.get('goles', [])
+        if not goles:
+            draw_text(screen, "Sin goles en el tiempo regular.", (gp.x + 20, y), size='sm', color='blanco')
+        for linea in goles[:9]:
+            draw_text(screen, linea[:78], (gp.x + 20, y), size='sm', color='blanco')
+            y += 30
 
-    btn = pygame.Rect(SCREEN_W // 2 - 120, 588, 240, 52)
+        # Panel de penales a la derecha
+        pp = pygame.Rect(650, 240, 590, 400)
+        draw_panel(screen, pp)
+        pp_title = f"DEFINICIÓN POR PENALES — {penales.get('marcador', '?')}"
+        draw_text(screen, pp_title, (pp.x + 20, pp.y + 12), size='md', color='dorado')
+        # Encabezado: cobradores
+        cob_l = penales.get('cobrador_l', []) or []
+        cob_v = penales.get('cobrador_v', []) or []
+        header_y = pp.y + 42
+        draw_text(screen, "COBRADORES (local)", (pp.x + 20, header_y), size='sm', color='verde')
+        draw_text(screen, "COBRADORES (visit.)", (pp.x + 320, header_y), size='sm', color='rojo')
+        cob_l_txt = "  ·  ".join(cob_l[:5]) if cob_l else "—"
+        cob_v_txt = "  ·  ".join(cob_v[:5]) if cob_v else "—"
+        draw_text(screen, cob_l_txt[:46], (pp.x + 20, header_y + 20), size='sm', color='blanco')
+        draw_text(screen, cob_v_txt[:46], (pp.x + 320, header_y + 20), size='sm', color='blanco')
+
+        # Línea separadora
+        try:
+            pygame.draw.line(screen, COLORS.get('azul', (0, 191, 255)),
+                             (pp.x + 20, header_y + 50), (pp.right - 20, header_y + 50), 1)
+        except Exception:
+            pass
+
+        # Secuencia ronda a ronda
+        draw_text(screen, "SECUENCIA (local ⚽ / visitante ⚽)", (pp.x + 20, header_y + 60), size='sm', color='azul')
+        seq = penales['secuencia'][:10]
+        col_x_l = pp.x + 24
+        col_x_v = pp.x + 70
+        col_x_n = pp.x + 130
+        ronda_y = header_y + 84
+        gl = gv = 0
+        for disp in seq:
+            try:
+                # Emoji grande del disparo
+                sym_l = "⚽" if disp.get('local_mete') else "❌"
+                sym_v = "⚽" if disp.get('visitante_mete') else "❌"
+                if disp.get('local_mete'):
+                    gl += 1
+                if disp.get('visitante_mete'):
+                    gv += 1
+                ronda = disp.get('ronda', 0)
+                # Ronda + par de emojis
+                draw_text(screen, f"R{ronda:>2}", (col_x_l, ronda_y), size='sm', color='dorado')
+                draw_text(screen, sym_l, (col_x_l + 40, ronda_y), size='sm', color='verde' if disp.get('local_mete') else 'rojo')
+                draw_text(screen, sym_v, (col_x_v, ronda_y), size='sm', color='verde' if disp.get('visitante_mete') else 'rojo')
+                # Nombres de los cobradores (truncados)
+                nom_l = (disp.get('cobrador_local') or '?')[:16]
+                nom_v = (disp.get('cobrador_visitante') or '?')[:16]
+                draw_text(screen, nom_l, (col_x_n, ronda_y), size='sm', color='blanco')
+                draw_text(screen, nom_v, (col_x_n + 200, ronda_y), size='sm', color='blanco')
+                # Acumulado al final de la línea
+                draw_text(screen, f"({gl}-{gv})", (pp.right - 60, ronda_y), size='sm', color='dorado')
+                ronda_y += 24
+            except Exception as e_seq:
+                logger.error(f"Error dibujando disparo {disp}: {e_seq}")
+        if len(penales['secuencia']) > 10:
+            draw_text(screen, f"... +{len(penales['secuencia']) - 10} rondas más", (col_x_l, ronda_y), size='sm', color='azul')
+            ronda_y += 24
+        if len(penales['secuencia']) > 5:
+            draw_text(screen, "Muerte súbita a partir de la ronda 6", (col_x_l, ronda_y), size='sm', color='rojo')
+    else:
+        # Sin penales: panel de goles ancho clásico
+        gp = pygame.Rect(SCREEN_W // 2 - 360, 240, 720, 330)
+        draw_panel(screen, gp)
+        draw_text(screen, "GOLES", (gp.x + 20, gp.y + 12), size='md', color='azul')
+        y = gp.y + 50
+        goles = r.get('goles', [])
+        if not goles:
+            draw_text(screen, "Sin goles.", (gp.x + 20, y), size='sm', color='blanco')
+        for linea in goles[:9]:
+            draw_text(screen, linea[:84], (gp.x + 20, y), size='sm', color='blanco')
+            y += 30
+
+    btn = pygame.Rect(SCREEN_W // 2 - 120, 670, 240, 44)
     draw_button(screen, btn, "CONTINUAR", btn.collidepoint(mouse_pos))
     if click_pos and btn.collidepoint(click_pos):
         estado.pop('prepartido_resultado', None)
         mode = estado.get('match_mode', 'liga')
         estado.pop('match_mode', None)
+        # v0.8.7: limpiamos también los datos de penales para no contaminar el estado
+        for k in ('sim_penales_resuelto', 'sim_penales_marcador', 'sim_penales_gana_user',
+                  'sim_penales_secuencia', 'sim_penales_cobradores_l', 'sim_penales_cobradores_v',
+                  'sim_penales_sel'):
+            estado.pop(k, None)
         if mode == 'copa':
             return "copa_screen"
         elif mode == 'amistoso':
