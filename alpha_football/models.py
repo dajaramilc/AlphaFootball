@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Versión del esquema de datos
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # Enums de navegación y UI
 class Pantalla(str, Enum):
@@ -60,6 +60,18 @@ class Jugador:
     progreso_desarrollo: float = 0.0   # acumulador oculto; al llegar a 1.0 sube OVR
     valor: int = 0                     # valor de mercado recalculado tras cada partido
     edad: int = 25
+    # --- v0.7: atributo de penales y estadística de vallas invictas ---
+    penales: int = 0                   # habilidad para cobrar penales (0 = derivar de tecnica/mental)
+    porterias_cero: int = 0            # vallas invictas (clean sheets) para la tabla de porteros
+
+    def __post_init__(self):
+        # Si no se especificó el atributo de penales, derivarlo de técnica/mental (cubre
+        # TODOS los sitios de creación: data/*, plantilla, free_agents, internacional...).
+        try:
+            if not self.penales:
+                self.penales = (int(self.tecnica) + int(self.mental)) // 2
+        except Exception:
+            self.penales = 60
 
     @property
     def overall(self) -> int:
@@ -154,6 +166,9 @@ class Jugador:
             progreso_desarrollo = float(datos.get("progreso_desarrollo", 0.0))
             valor = int(datos.get("valor", 0))
             edad = int(datos.get("edad", 25))
+            # v0.7: penales (si falta, se deriva de técnica/mental) y vallas invictas.
+            penales = int(datos.get("penales", 0)) or ((tecnica + mental) // 2)
+            porterias_cero = int(datos.get("porterias_cero", 0))
             import random
             id_jug = int(datos.get("id", random.randint(1000, 9999) if "id" not in datos else datos["id"]))
 
@@ -177,7 +192,9 @@ class Jugador:
                 promedio_nota=promedio_nota,
                 progreso_desarrollo=progreso_desarrollo,
                 valor=valor,
-                edad=edad
+                edad=edad,
+                penales=penales,
+                porterias_cero=porterias_cero
             )
         except Exception as e:
             logger.warning(f"Excepción al reconstruir Jugador: {e}. Usando fallback.")
@@ -196,7 +213,10 @@ class Equipo:
     balance: int
     jugadores: list[Jugador] = field(default_factory=list)
     es_usuario: bool = False
-    
+    # v0.7: nombre corto (anti-solapamiento en menús) y familiaridad táctica acumulada.
+    nombre_corto: str = ""
+    tactica_familiaridad: dict[str, float] = field(default_factory=dict)
+
     # Estadísticas de liga acumuladas
     puntos: int = 0
     pj: int = 0
@@ -210,6 +230,13 @@ class Equipo:
     def id(self) -> str:
         """Genera un identificador único estable a partir de su nombre."""
         return self.nombre.lower().replace(" ", "_")
+
+    @property
+    def corto(self) -> str:
+        """Nombre corto para menús; si no se definió, recorta el nombre largo."""
+        if self.nombre_corto:
+            return self.nombre_corto
+        return self.nombre[:14]
 
     @property
     def once_disponible(self) -> list[Jugador]:
@@ -284,6 +311,8 @@ class Equipo:
                 balance=balance,
                 jugadores=jugadores,
                 es_usuario=bool(datos.get("es_usuario", False)),
+                nombre_corto=str(datos.get("nombre_corto", "")),
+                tactica_familiaridad=dict(datos.get("tactica_familiaridad", {}) or {}),
                 puntos=int(datos.get("puntos", 0)),
                 pj=int(datos.get("pj", 0)),
                 pg=int(datos.get("pg", 0)),
@@ -484,8 +513,27 @@ class EstadoJuego:
     # Historial de campañas pasadas para career_screen
     historial: list[dict[str, Any]] = field(default_factory=list)
     
+    # Historial de transferencias realizadas (registro de mercado)
+    transfer_log: list[str] = field(default_factory=list)
+    
     # Alineación activa elegida por el usuario
     alineacion_activa: Optional[Alineacion] = None
+
+    # v0.7: identidad del director técnico elegida al iniciar carrera
+    dt_nombre: str = ""
+    dt_nacionalidad: str = ""
+
+    # Persistencia de copa internacional
+    copa_tipo: Optional[str] = None
+    copa_fase_actual: Optional[str] = None
+    copa_grupo_standing: list[Any] = field(default_factory=list)
+    copa_bracket: dict[str, Any] = field(default_factory=dict)
+    copa_grupo_partidos: list[dict[str, Any]] = field(default_factory=list)
+    copa_jornada_grupo: int = 1
+    copa_tab: Optional[str] = None
+    copa_grupos: dict[str, list[str]] = field(default_factory=dict)
+    copa_grupos_standings: dict[str, list[Any]] = field(default_factory=dict)
+    copa_bracket_otros: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         try:
@@ -499,6 +547,43 @@ class EstadoJuego:
             logger.error(f"Error al serializar alineación activa: {e_alin}. Ignorando alineación.")
             alin_dict = None
 
+        # Serializar standings de copa convirtiendo objetos Standing a diccionarios
+        standings_dict = []
+        for st in self.copa_grupo_standing:
+            if hasattr(st, 'equipo'):
+                standings_dict.append({
+                    "equipo": st.equipo,
+                    "pj": st.pj,
+                    "g": st.g,
+                    "e": st.e,
+                    "p": st.p,
+                    "gf": st.gf,
+                    "gc": st.gc,
+                    "pts": st.pts
+                })
+            else:
+                standings_dict.append(dict(st))
+
+        # Serializar copa_grupos_standings
+        grupos_standings_dict = {}
+        for g_name, st_list in self.copa_grupos_standings.items():
+            g_list = []
+            for st in st_list:
+                if hasattr(st, 'equipo'):
+                    g_list.append({
+                        "equipo": st.equipo,
+                        "pj": st.pj,
+                        "g": st.g,
+                        "e": st.e,
+                        "p": st.p,
+                        "gf": st.gf,
+                        "gc": st.gc,
+                        "pts": st.pts
+                    })
+                else:
+                    g_list.append(dict(st))
+            grupos_standings_dict[g_name] = g_list
+
         return {
             "ligas": [l.to_dict() for l in self.ligas],
             "copas": [c.to_dict() for c in self.copas],
@@ -510,7 +595,20 @@ class EstadoJuego:
             "audio": asdict(self.audio),
             "pantalla_actual": self.pantalla_actual.value,
             "historial": list(self.historial),
-            "alineacion_activa": alin_dict
+            "transfer_log": list(self.transfer_log),
+            "alineacion_activa": alin_dict,
+            "dt_nombre": self.dt_nombre,
+            "dt_nacionalidad": self.dt_nacionalidad,
+            "copa_tipo": self.copa_tipo,
+            "copa_fase_actual": self.copa_fase_actual,
+            "copa_grupo_standing": standings_dict,
+            "copa_bracket": self.copa_bracket,
+            "copa_grupo_partidos": self.copa_grupo_partidos,
+            "copa_jornada_grupo": self.copa_jornada_grupo,
+            "copa_tab": self.copa_tab,
+            "copa_grupos": self.copa_grupos,
+            "copa_grupos_standings": grupos_standings_dict,
+            "copa_bracket_otros": self.copa_bracket_otros
         }
 
     @classmethod
@@ -544,6 +642,56 @@ class EstadoJuego:
                 logger.error(f"Error recuperable al cargar alineación activa: {e_alin_load}. Usando alineación nula.")
                 alineacion_activa = None
 
+            # Cargar historial y transfer_log con retrocompatibilidad
+            hist_cargado = datos.get("historial", [])
+            trans_cargado = datos.get("transfer_log", [])
+            
+            # Si transfer_log está vacío pero el historial tiene strings (debido al bug anterior),
+            # movemos esos strings al transfer_log y limpiamos historial.
+            if hist_cargado and not trans_cargado:
+                if any(isinstance(x, str) for x in hist_cargado):
+                    trans_cargado = [x for x in hist_cargado if isinstance(x, str)]
+                    hist_cargado = [x for x in hist_cargado if isinstance(x, dict)]
+
+            # Reconstruir Standing de copa
+            copa_grupo_standing = []
+            for st in datos.get("copa_grupo_standing", []):
+                try:
+                    from alpha_football.models import Standing
+                    copa_grupo_standing.append(Standing(
+                        equipo=st.get("equipo", ""),
+                        pj=int(st.get("pj", 0)),
+                        g=int(st.get("g", 0)),
+                        e=int(st.get("e", 0)),
+                        p=int(st.get("p", 0)),
+                        gf=int(st.get("gf", 0)),
+                        gc=int(st.get("gc", 0)),
+                        pts=int(st.get("pts", 0))
+                    ))
+                except Exception:
+                    copa_grupo_standing.append(st)
+
+            # Reconstruir copa_grupos_standings
+            copa_grupos_standings = {}
+            for g_name, st_list in datos.get("copa_grupos_standings", {}).items():
+                g_list = []
+                for st in st_list:
+                    try:
+                        from alpha_football.models import Standing
+                        g_list.append(Standing(
+                            equipo=st.get("equipo", ""),
+                            pj=int(st.get("pj", 0)),
+                            g=int(st.get("g", 0)),
+                            e=int(st.get("e", 0)),
+                            p=int(st.get("p", 0)),
+                            gf=int(st.get("gf", 0)),
+                            gc=int(st.get("gc", 0)),
+                            pts=int(st.get("pts", 0))
+                        ))
+                    except Exception:
+                        g_list.append(st)
+                copa_grupos_standings[g_name] = g_list
+
             return cls(
                 ligas=ligas,
                 copas=copas,
@@ -554,8 +702,21 @@ class EstadoJuego:
                 eventos_pendientes=[EventoCaotico.from_dict(e) for e in datos.get("eventos_pendientes", [])],
                 audio=audio,
                 pantalla_actual=pantalla,
-                historial=list(datos.get("historial", [])),
-                alineacion_activa=alineacion_activa
+                historial=list(hist_cargado),
+                transfer_log=list(trans_cargado),
+                alineacion_activa=alineacion_activa,
+                dt_nombre=str(datos.get("dt_nombre", "")),
+                dt_nacionalidad=str(datos.get("dt_nacionalidad", "")),
+                copa_tipo=datos.get("copa_tipo"),
+                copa_fase_actual=datos.get("copa_fase_actual"),
+                copa_grupo_standing=copa_grupo_standing,
+                copa_bracket=datos.get("copa_bracket", {}),
+                copa_grupo_partidos=datos.get("copa_grupo_partidos", []),
+                copa_jornada_grupo=int(datos.get("copa_jornada_grupo", 1)),
+                copa_tab=datos.get("copa_tab"),
+                copa_grupos=datos.get("copa_grupos", {}),
+                copa_grupos_standings=copa_grupos_standings,
+                copa_bracket_otros=datos.get("copa_bracket_otros", {})
             )
         except Exception as e:
             logger.critical(f"Error crítico al deserializar EstadoJuego: {e}. Retornando estado vacío.")
@@ -621,15 +782,29 @@ class Alineacion:
 
     def es_valida(self, jugadores: list) -> bool:
         """
-        Valida que la formación cumpla con las cuotas mínimas:
-        1 Portero, al menos 3 Defensas, al menos 2 Mediocampistas y al menos 1 Delantero.
+        Validación flexible (red de seguridad para no bloquear la edición manual):
+        exactamente 11 titulares, 1 Portero, al menos 3 DEF, 2 MED y 1 DEL.
+        Sirve para CUALQUIER formación del registro.
         """
         try:
+            if len(self.titulares) != 11:
+                return False
             c = self.conteo_por_posicion(jugadores)
             return c["POR"] == 1 and c["DEF"] >= 3 and c["MED"] >= 2 and c["DEL"] >= 1
         except Exception as e:
             logger.error(f"Error al validar alineación: {e}. Retornando False por seguridad.")
             return False
+
+    def cumple_formacion(self, jugadores: list, formacion: Optional[str] = None) -> bool:
+        """True si el conteo por posición coincide EXACTO con las cuotas de la formación."""
+        try:
+            from alpha_football.formaciones import cuotas as _cuotas
+            objetivo = _cuotas(formacion or self.formacion)
+            c = self.conteo_por_posicion(jugadores)
+            return all(c.get(pos, 0) == n for pos, n in objetivo.items())
+        except Exception as e:
+            logger.error(f"Error al validar cuotas de formación: {e}")
+            return self.es_valida(jugadores)
 
 
 def alineacion_por_defecto(equipo: Equipo) -> Alineacion:

@@ -148,14 +148,27 @@ def guardar_al_salir(estado: dict) -> None:
             "equipo_usuario_id": mi_equipo.id,
             "liga_usuario_id": liga.tipo,
             "temporada": estado.get("temporada", 1),
-            "historial": estado.get("transfer_log", []),
+            "historial": estado.get("historial", []),
+            "transfer_log": estado.get("transfer_log", []),
             "pantalla_actual": "temporada",
             "alineacion_activa": {
                 "titulares": list(alin.titulares),
                 "formacion": str(alin.formacion)
-            } if alin else None
+            } if alin else None,
+            "dt_nombre": estado.get("dt_nombre", ""),
+            "dt_nacionalidad": estado.get("dt_nacionalidad", ""),
+            "copa_tipo": estado.get("copa_tipo"),
+            "copa_fase_actual": estado.get("copa_fase_actual"),
+            "copa_grupo_standing": estado.get("copa_grupo_standing", []),
+            "copa_bracket": estado.get("copa_bracket", {}),
+            "copa_grupo_partidos": estado.get("copa_grupo_partidos", []),
+            "copa_jornada_grupo": estado.get("copa_jornada_grupo", 1),
+            "copa_tab": estado.get("copa_tab"),
+            "copa_grupos": estado.get("copa_grupos", {}),
+            "copa_grupos_standings": estado.get("copa_grupos_standings", {}),
+            "copa_bracket_otros": estado.get("copa_bracket_otros", {})
         }
-        
+
         estado_juego = EstadoJuego.from_dict(datos_estado)
 
         # Fase 2: autoguardar en un SLOT (multislot). Si no hay slot activo, se elige el primer
@@ -170,7 +183,7 @@ def guardar_al_salir(estado: dict) -> None:
                 except Exception:
                     slot = 1
                 estado['slot_activo'] = slot
-            nombre = getattr(mi_equipo, 'nombre', None) or "Partida"
+            nombre = f"{mi_equipo.corto} (T{estado_juego.temporada} J{liga.jornada_actual})"
             _save.guardar_en_slot(estado_juego, slot, nombre)
             logger.info(f"Partida autoguardada en el slot {slot} antes de salir.")
         except Exception as e_slot:
@@ -208,40 +221,14 @@ def procesar_eventos_volumen(estado: dict, eventos_frame: list) -> list:
 
     for evento in eventos_frame:
         try:
-            # Procesamiento de clicks con el mouse
-            if evento.type == pygame.MOUSEBUTTONDOWN and evento.button == 1:
-                if RECT_BOTON_MINUS.collidepoint(evento.pos):
-                    # Reducir volumen en 10%
-                    nuevo_volumen = max(0.0, audio.CURRENT_VOLUME - 0.1)
-                    audio.set_volume(nuevo_volumen)
-                    eventos_a_eliminar.append(evento)
-                elif RECT_BOTON_PLUS.collidepoint(evento.pos):
-                    # Aumentar volumen en 10%
-                    nuevo_volumen = min(1.0, audio.CURRENT_VOLUME + 0.1)
-                    audio.set_volume(nuevo_volumen)
-                    eventos_a_eliminar.append(evento)
-                elif RECT_BOTON_MUTE.collidepoint(evento.pos):
-                    # Alternar silencio (Mute)
-                    if audio.CURRENT_VOLUME > 0.0:
-                        estado['last_non_zero_volume'] = audio.CURRENT_VOLUME
-                        audio.set_volume(0.0)
-                    else:
-                        volumen_restaurado = estado.get('last_non_zero_volume', 0.5)
-                        audio.set_volume(volumen_restaurado)
-                    eventos_a_eliminar.append(evento)
-            
-            # Procesamiento de teclas (M para mutear, - y + para control de volumen)
-            elif evento.type == pygame.KEYDOWN:
-                if evento.key == pygame.K_m:
-                    # Alternar silencio por teclado
-                    if audio.CURRENT_VOLUME > 0.0:
-                        estado['last_non_zero_volume'] = audio.CURRENT_VOLUME
-                        audio.set_volume(0.0)
-                    else:
-                        volumen_restaurado = estado.get('last_non_zero_volume', 0.5)
-                        audio.set_volume(volumen_restaurado)
-                    eventos_a_eliminar.append(evento)
-                elif evento.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+            # v0.8: el widget de volumen flotante (con su botón "M") ya NO se dibuja, así que se
+            # eliminan sus zonas de clic invisibles en la esquina superior derecha (mute/+/-),
+            # que silenciaban la música sin querer. El volumen se controla desde Opciones y con
+            # las teclas - / + ; ya no existe atajo de muteo (la tecla/botón M no mutea).
+
+            # Procesamiento de teclas (- y + para control de volumen)
+            if evento.type == pygame.KEYDOWN:
+                if evento.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
                     # Reducir volumen por teclado
                     nuevo_volumen = max(0.0, audio.CURRENT_VOLUME - 0.1)
                     audio.set_volume(nuevo_volumen)
@@ -251,7 +238,14 @@ def procesar_eventos_volumen(estado: dict, eventos_frame: list) -> list:
                     nuevo_volumen = min(1.0, audio.CURRENT_VOLUME + 0.1)
                     audio.set_volume(nuevo_volumen)
                     eventos_a_eliminar.append(evento)
-                    
+                elif evento.key == pygame.K_s and (evento.mod & pygame.KMOD_SHIFT):
+                    # Mayús+S: cambia de pista aleatoriamente (misma lógica que el fin de pista).
+                    try:
+                        audio.next_track()
+                    except Exception as e_skip:
+                        logger.debug(f"No se pudo cambiar de pista con Mayús+S: {e_skip}")
+                    eventos_a_eliminar.append(evento)
+
         except Exception as error_evento:
             logger.error(f"Error al procesar un evento de volumen individual: {error_evento}. Continuando...")
             # En caso de error en un evento, no hacemos nada y continuamos para asegurar continuidad
@@ -387,10 +381,48 @@ def _dibujar_now_playing(screen: pygame.Surface, estado: dict) -> None:
         logger.error(f"Error al dibujar el aviso de canción actual: {error_now_playing}")
 
 
+def _dibujar_oferta_toast(screen: pygame.Surface, estado: dict) -> None:
+    """Aviso breve ARRIBA cuando llega una nueva oferta (se gestiona en la sección Ofertas)."""
+    try:
+        until = estado.get('oferta_toast_until', 0)
+        texto = estado.get('oferta_toast_text', "")
+        if not texto or pygame.time.get_ticks() > until:
+            return
+        from alpha_football.ui.theme import get_font, COLORS
+        etiqueta = f"$ {texto}  —  ve a OFERTAS"
+        if len(etiqueta) > 70:
+            etiqueta = etiqueta[:67] + "…"
+        fuente = get_font('sm')
+        color = COLORS.get('dorado', (255, 215, 0))
+        superficie = fuente.render(etiqueta, True, color)
+        ancho = superficie.get_width() + 30
+        alto = 36
+        x = (SCREEN_W - ancho) // 2
+        y = 16
+        try:
+            panel = pygame.Surface((ancho, alto), pygame.SRCALPHA)
+            panel.fill((10, 14, 26, 220))
+            screen.blit(panel, (x, y))
+            pygame.draw.rect(screen, color, pygame.Rect(x, y, ancho, alto), width=2, border_radius=8)
+        except Exception:
+            pass
+        screen.blit(superficie, (x + 15, y + 9))
+    except Exception as e_toast:
+        logger.error(f"Error al dibujar el aviso de oferta: {e_toast}")
+
+
 # --- Bucle Principal ══════════════════════════════════════════════════════════
 
 def main():
     try:
+        # Buffer de audio GRANDE antes de inicializar: el buffer por defecto de pygame
+        # (512 muestras) provoca underruns y CORTA las canciones antes de terminar. 4096
+        # da reproducción estable de MP3 completos. pre_init debe ir ANTES de pygame.init().
+        try:
+            pygame.mixer.pre_init(44100, -16, 2, 4096)
+        except Exception as e_preinit:
+            logger.warning(f"No se pudo prefijar el buffer de audio: {e_preinit}")
+
         # Inicialización de Pygame
         pygame.init()
         pygame.font.init()
@@ -436,6 +468,12 @@ def main():
             from alpha_football.ui.career_screen import render as career_render
             from alpha_football.ui.team_screen import render as team_render
             from alpha_football.ui.options_screen import render as options_render
+            from alpha_football.ui.prepartido_screen import render as prepartido_render
+            from alpha_football.ui.ofertas_screen import render as ofertas_render
+            from alpha_football.ui.stats_screen import render as stats_render
+            from alpha_football.ui.save_slots_screen import render as save_slots_render
+            from alpha_football.ui.resumen_temporada_screen import render as resumen_temporada_render
+            from alpha_football.ui.edit_screen import render as edit_render
             PANTALLAS = {
                 'menu': menu_render,
                 'league_screen': league_render,
@@ -445,12 +483,23 @@ def main():
                 'career_screen': career_render,
                 'team_screen': team_render,
                 'options_screen': options_render,
+                'prepartido_screen': prepartido_render,
+                'ofertas_screen': ofertas_render,
+                'stats_screen': stats_render,
+                'save_slots_screen': save_slots_render,
+                'resumen_temporada_screen': resumen_temporada_render,
+                'edit_screen': edit_render,
             }
         except Exception as e_import_pantallas:
             logger.critical(f"No se pudieron importar las pantallas del juego: {e_import_pantallas}", exc_info=True)
 
         running = True
         while running:
+            try:
+                from alpha_football import market
+                market.ACTIVE_ESTADO = estado
+            except Exception:
+                pass
             # Consumir y cachear todos los eventos acumulados al inicio del frame
             try:
                 global _cached_frame_events
@@ -523,6 +572,21 @@ def main():
                 _dibujar_now_playing(screen, estado)
             except Exception as e_now_playing:
                 logger.debug(f"No se pudo mostrar el aviso de canción: {e_now_playing}")
+
+            # Aviso de NUEVA OFERTA recibida (toast arriba). Las ofertas se gestionan en Ofertas.
+            try:
+                ofs = estado.get('ofertas_recibidas', []) or []
+                if len(ofs) > estado.get('_ofertas_prev_count', 0):
+                    nueva = ofs[-1]
+                    jug = nueva.get('jugador') if isinstance(nueva, dict) else None
+                    monto = nueva.get('monto', 0) if isinstance(nueva, dict) else 0
+                    if jug is not None:
+                        estado['oferta_toast_text'] = f"{monto:,} por {getattr(jug, 'nombre_completo', 'jugador')}"
+                        estado['oferta_toast_until'] = pygame.time.get_ticks() + 7000
+                estado['_ofertas_prev_count'] = len(ofs)
+                _dibujar_oferta_toast(screen, estado)
+            except Exception as e_toast:
+                logger.debug(f"No se pudo mostrar el aviso de oferta: {e_toast}")
 
             pygame.display.flip()
             clock.tick(FPS)

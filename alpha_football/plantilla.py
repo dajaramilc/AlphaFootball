@@ -19,7 +19,7 @@ _NOMBRES_SUPLENTES = [
     ("Juan", "Bancalarga"), ("Pedro", "Calienta-banca"), ("Luis", "Suplencio"),
     ("Carlos", "Reservez"), ("Diego", "Promesa-Jr"), ("Andrés", "Canterano"),
     ("Mateo", "Polivalente"), ("Brian", "Pierna-fría"), ("Kevin", "Minutos-basura"),
-    ("Santi", "Sub-21"), ("Felipe", "Multiusos"), ("Nico", "Rota-equipo"),
+    ("Santi", "Matamonos"), ("Felipe", "Multiusos"), ("Nico", "Rota-equipo"),
     ("Cristian", "De-la-casa"), ("Yeison", "Garra-extra"), ("Faber", "Comodín"),
 ]
 
@@ -38,10 +38,11 @@ def _atributos_por_posicion(posicion: str, ovr: int):
     return ovr + 10, ovr - 20, ovr, ovr + 5, ovr  # DEL
 
 
-def expandir_plantilla(equipo, cantidad: int = 5):
+def expandir_plantilla(equipo, objetivo: int = 20, tope: int = 32):
     """
-    Agrega `cantidad` suplentes a un equipo, con nivel un poco por debajo del plantel
-    para no desbalancearlo. Es idempotente: si el equipo ya fue expandido, no duplica.
+    Asegura que el equipo tenga al menos `objetivo` jugadores (rellenando con suplentes
+    generados), SIN pasar de `tope`. Idempotente por longitud: si ya tiene `objetivo` o más,
+    no agrega nada. Resiliente: ante error, deja el equipo intacto.
     """
     # Importación perezosa: si models falla, no podemos crear jugadores -> equipo intacto.
     try:
@@ -55,9 +56,10 @@ def expandir_plantilla(equipo, cantidad: int = 5):
         if jugadores is None:
             return equipo
 
-        # Evita duplicar suplentes si la liga se carga más de una vez en la sesión.
-        if getattr(equipo, "_plantilla_expandida", False):
-            return equipo
+        objetivo = min(objetivo, tope)
+        faltan = objetivo - len(jugadores)
+        if faltan <= 0:
+            return equipo  # ya tiene suficientes (idempotente por longitud)
 
         # Nivel base: promedio del once existente (o 60 si el equipo viniera vacío).
         if jugadores:
@@ -68,14 +70,15 @@ def expandir_plantilla(equipo, cantidad: int = 5):
         # ID base por encima de los existentes para no chocar con el mercado/guardado.
         id_base = max([getattr(j, "id", 0) for j in jugadores], default=8000) + 100
 
-        nombres = random.sample(_NOMBRES_SUPLENTES, min(cantidad, len(_NOMBRES_SUPLENTES)))
-
-        for idx in range(cantidad):
+        for idx in range(faltan):
             posicion = _POSICIONES_SUPLENTES[idx % len(_POSICIONES_SUPLENTES)]
             # Suplentes algo por debajo del once base para que los titulares sigan siendo titulares.
             ovr = max(40, base_ovr - random.randint(3, 9))
             atk, dfs, fis, tec, men = _atributos_por_posicion(posicion, ovr)
-            nombre, apellido = nombres[idx] if idx < len(nombres) else (f"Sub{idx + 1}", "Banca")
+            if idx < len(_NOMBRES_SUPLENTES):
+                nombre, apellido = _NOMBRES_SUPLENTES[idx]
+            else:
+                nombre, apellido = (f"Sub{idx + 1}", "Banca")
 
             jugadores.append(Jugador(
                 nombre=nombre,
@@ -91,12 +94,6 @@ def expandir_plantilla(equipo, cantidad: int = 5):
                 edad=random.randint(18, 24),
             ))
 
-        # Marca para idempotencia (las dataclasses sin slots aceptan atributos extra).
-        try:
-            equipo._plantilla_expandida = True
-        except Exception:
-            pass
-
         return equipo
 
     except Exception as error_expansion:
@@ -104,11 +101,11 @@ def expandir_plantilla(equipo, cantidad: int = 5):
         return equipo
 
 
-def expandir_liga(liga, cantidad: int = 5):
-    """Expande la plantilla de todos los equipos de una liga (fail-soft por equipo)."""
+def expandir_liga(liga, objetivo: int = 20, tope: int = 32):
+    """Asegura `objetivo` jugadores (cap `tope`) en todos los equipos de una liga (fail-soft)."""
     try:
         for equipo in getattr(liga, "equipos", []) or []:
-            expandir_plantilla(equipo, cantidad)
+            expandir_plantilla(equipo, objetivo, tope)
     except Exception as error_liga:
         logger.error(f"Error al expandir las plantillas de la liga: {error_liga}")
     return liga

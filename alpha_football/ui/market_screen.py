@@ -97,6 +97,23 @@ except Exception as error_market:
         except Exception:
             return 75000
 
+# v0.7: módulo de mercado para factibilidad y mercado internacional (resiliente).
+try:
+    from alpha_football import market as _market
+except Exception:
+    _market = None
+
+
+def _puede_fichar(mi_equipo, jugador, precio):
+    """Wrapper resiliente de market.puede_fichar (tope de nivel + plantilla 32 + dinero)."""
+    if _market and hasattr(_market, 'puede_fichar'):
+        try:
+            return _market.puede_fichar(mi_equipo, jugador, precio)
+        except Exception:
+            pass
+    # Fallback mínimo: solo dinero
+    return (mi_equipo.balance >= precio, "OK" if mi_equipo.balance >= precio else "Sin fondos")
+
 try:
     from alpha_football.data.free_agents import get_free_agents
 except Exception as error_fa:
@@ -261,10 +278,9 @@ def render(screen, estado: dict) -> str | None:
                 rivales = [e for e in equipos if e.nombre != mi_equipo.nombre]
                 if rivales:
                     comprador = random.choice(rivales)
-                    estado['oferta_inicio_estrella'] = estrella
-                    estado['oferta_inicio_monto'] = monto
-                    estado['oferta_inicio_comprador'] = comprador
-                    estado['oferta_inicio_pendiente'] = True
+                    # v0.7.1: las ofertas NO se muestran en el mercado; van a la sección Ofertas.
+                    estado.setdefault('ofertas_recibidas', []).append(
+                        {'jugador': estrella, 'comprador': comprador, 'monto': monto})
                 estado['oferta_inicio_creada'] = True
             except Exception as e_oferta:
                 print(f"Error al generar oferta inicial: {e_oferta}", file=sys.stderr)
@@ -291,9 +307,17 @@ def render(screen, estado: dict) -> str | None:
                     estado['free_agents_list'] = get_free_agents(jornada)
                 except Exception:
                     estado['free_agents_list'] = []
-            
+
             for j in estado.get('free_agents_list', []):
                 todos_jugadores.append((j, None))
+        elif tab == 'Internacional':
+            # v0.7: jugadores de ligas más fuertes. Se pueden OJEAR aunque no alcance la plata.
+            if _market and hasattr(_market, 'pool_internacional'):
+                try:
+                    for j, club, _tipo in _market.pool_internacional(estado):
+                        todos_jugadores.append((j, club))
+                except Exception as e_intl:
+                    print(f"Error al cargar mercado internacional: {e_intl}", file=sys.stderr)
         else:
             # Jugadores de otros clubes
             for eq in equipos:
@@ -332,11 +356,11 @@ def render(screen, estado: dict) -> str | None:
         draw_text(screen, f"Fichajes de esta ventana: {estado['fichajes_realizados']}/3", (860, 95), size='sm', color='dorado')
 
         # 4. Dibujar Pestañas de Filtrado
-        tab_names = ['Todos', 'POR', 'DEF', 'MED', 'DEL', 'Libres']
+        tab_names = ['Todos', 'POR', 'DEF', 'MED', 'DEL', 'Libres', 'Internacional']
         tab_rects = {}
         tab_x = 40
         tab_y = 100
-        tab_w = 120
+        tab_w = 112
         tab_h = 35
         
         mouse_pos = pygame.mouse.get_pos()
@@ -405,28 +429,30 @@ def render(screen, estado: dict) -> str | None:
             precio = calcular_precio(j)
             draw_text(screen, f"${precio:,}", (x + 180, y + 38), size='md', color='verde')
             
-            # Botón "Fichar" en la parte inferior derecha del card
+            # Botón "Fichar" (v0.7: tope de nivel del club + plantilla 32 + dinero).
             btn_rect = pygame.Rect(x + 240, y + 85, 110, 35)
-            can_afford = (mi_equipo.balance >= precio)
             has_slots = (estado['fichajes_realizados'] < 3)
-            
+            ok, motivo = _puede_fichar(mi_equipo, j, precio)
             btn_hover = btn_rect.collidepoint(mouse_pos)
-            
-            if has_slots and can_afford:
+
+            if has_slots and ok:
                 draw_button(screen, btn_rect, "FICHAR", btn_hover)
-                card_rects.append((btn_rect, j, eq))
-            elif not has_slots:
-                # Dibujar botón deshabilitado
-                pygame.draw.rect(screen, (40, 40, 40), btn_rect, border_radius=5)
-                font = get_font('sm')
-                txt = font.render("LIMITE 3", True, (120, 120, 120))
-                screen.blit(txt, txt.get_rect(center=btn_rect.center))
             else:
-                # Sin fondos
-                pygame.draw.rect(screen, (50, 20, 20), btn_rect, border_radius=5)
+                pygame.draw.rect(screen, (40, 40, 40) if not has_slots else (50, 20, 20), btn_rect, border_radius=5)
+                if not has_slots:
+                    etiqueta, col = "LIMITE 3", (120, 120, 120)
+                elif 'Nivel' in motivo:
+                    etiqueta, col = "NIVEL", COLORS['rojo']
+                elif 'llena' in motivo.lower():
+                    etiqueta, col = "LLENA", COLORS['rojo']
+                else:
+                    etiqueta, col = "AHORRA", COLORS['dorado']
                 font = get_font('sm')
-                txt = font.render("SIN FONDOS", True, COLORS['rojo'])
+                txt = font.render(etiqueta, True, col)
                 screen.blit(txt, txt.get_rect(center=btn_rect.center))
+                
+            # Registrar el botón siempre para capturar clics y dar retroalimentación
+            card_rects.append((btn_rect, j, eq, ok, motivo, has_slots))
 
         # 6. Dibujar Controles de Paginación
         pag_rect_prev = pygame.Rect(40, 630, 100, 35)
@@ -470,8 +496,12 @@ def render(screen, estado: dict) -> str | None:
         # 9. Temporizador de Mensaje de Éxito / Alerta
         if estado.get('success_message'):
             banner_rect = pygame.Rect(40, 610, 760, 50)
-            pygame.draw.rect(screen, (20, 80, 40), banner_rect, border_radius=5)
-            draw_text(screen, estado['success_message'], (60, 623), size='md', color='verde')
+            msg = estado['success_message']
+            is_error = any(kw in msg.lower() for kw in ["llena", "superior", "insuficiente", "límite", "limite", "debes vender"])
+            bg_color = (80, 20, 20) if is_error else (20, 80, 40)
+            text_color = 'rojo' if is_error else 'verde'
+            pygame.draw.rect(screen, bg_color, banner_rect, border_radius=5)
+            draw_text(screen, msg, (60, 623), size='md', color=text_color)
             
             estado['success_timer'] -= 1
             if estado['success_timer'] <= 0:
@@ -509,8 +539,8 @@ def render(screen, estado: dict) -> str | None:
             draw_button(screen, btn_acc_rect, "ACEPTAR OFERTA", acc_hover)
             draw_button(screen, btn_rej_rect, "RECHAZAR OFERTA", rej_hover)
 
-        # 10b. Buzón de ofertas recurrentes de la IA (Fase 4) — una oferta a la vez
-        elif estado['ofertas_recibidas']:
+        # 10b. (v0.7.1) Buzón retirado del mercado: las ofertas se gestionan en la sección Ofertas.
+        elif False:
             of = estado['ofertas_recibidas'][0]
             jug = of.get('jugador'); comp = of.get('comprador'); monto = of.get('monto', 0)
 
@@ -609,8 +639,8 @@ def render(screen, estado: dict) -> str | None:
                         estado['oferta_inicio_pendiente'] = False
                     continue # Salir del frame para evitar clics duplicados bajo el modal
 
-                # A2. Buzón de ofertas recurrentes de la IA (Fase 4)
-                elif estado['ofertas_recibidas']:
+                # A2. (v0.7.1) Buzón retirado del mercado: las ofertas se gestionan en la sección Ofertas.
+                elif False:
                     btn_acc_rect = pygame.Rect(SCREEN_W // 2 - 210, SCREEN_H // 2 + 70, 190, 45)
                     btn_rej_rect = pygame.Rect(SCREEN_W // 2 + 20, SCREEN_H // 2 + 70, 190, 45)
                     if btn_acc_rect.collidepoint(event.pos):
@@ -648,56 +678,44 @@ def render(screen, estado: dict) -> str | None:
                     if btn_yes_rect.collidepoint(event.pos):
                         j_buy = estado['selected_player_to_buy']
                         eq_orig = estado['selected_player_club']
+                        es_intl = estado.get('selected_player_intl', False)
                         precio = calcular_precio(j_buy)
-                        
-                        try:
-                            # Efectuar compra
-                            mi_equipo.balance -= precio
-                            
-                            # Si es un rival, quitarlo de su club
-                            if eq_orig:
-                                eq_orig.jugadores.remove(j_buy)
-                            else:
-                                # Si es un agente libre, quitarlo del pool libre
-                                if 'free_agents_list' in estado and j_buy in estado['free_agents_list']:
+
+                        # Revalidar factibilidad (tope de nivel + plantilla 32 + dinero).
+                        ok, motivo = _puede_fichar(mi_equipo, j_buy, precio)
+                        if not ok:
+                            estado['success_message'] = motivo
+                            estado['success_timer'] = 200
+                        else:
+                            try:
+                                mi_equipo.balance -= precio
+                                if es_intl:
+                                    # Internacional: quitar del pool cacheado (no es un club activo).
+                                    pool = estado.get('_pool_internacional', [])
+                                    estado['_pool_internacional'] = [
+                                        (jj, cc, tt) for (jj, cc, tt) in pool if jj is not j_buy
+                                    ]
+                                elif eq_orig:
+                                    if j_buy in eq_orig.jugadores:
+                                        eq_orig.jugadores.remove(j_buy)
+                                elif 'free_agents_list' in estado and j_buy in estado['free_agents_list']:
                                     estado['free_agents_list'].remove(j_buy)
-                            
-                            # Gestionar límite de 11 jugadores en plantilla.
-                            # Si el equipo ya tiene 11 o más, reemplazamos al peor de la misma posición
-                            misma_pos = [p for p in mi_equipo.jugadores if p.posicion == j_buy.posicion]
-                            if len(misma_pos) >= 2 or len(mi_equipo.jugadores) >= 11:
-                                if misma_pos:
-                                    peor = min(misma_pos, key=lambda player: player.overall)
-                                else:
-                                    peor = min(mi_equipo.jugadores, key=lambda player: player.overall)
-                                    
-                                mi_equipo.jugadores.remove(peor)
-                                if eq_orig:
-                                    # Devolver al club de origen
-                                    eq_orig.jugadores.append(peor)
-                                    log_cambio = f"Cambio: {peor.nombre_completo} al {eq_orig.nombre}"
-                                else:
-                                    # Se vuelve libre
-                                    if 'free_agents_list' in estado:
-                                        estado['free_agents_list'].append(peor)
-                                    log_cambio = f"Liberado: {peor.nombre_completo}"
-                                estado['transfer_log'].append(log_cambio)
-                            
-                            # Añadir a mi equipo
-                            mi_equipo.jugadores.append(j_buy)
-                            estado['fichajes_realizados'] += 1
-                            
-                            club_nombre = eq_orig.nombre if eq_orig else "Libre"
-                            estado['transfer_log'].append(f"Compra: {j_buy.nombre_completo} de {club_nombre} por ${precio:,}")
-                            estado['success_message'] = f"¡Fichaje exitoso de {j_buy.nombre_completo}!"
-                            estado['success_timer'] = 180
-                            
-                        except Exception as e_compra:
-                            print(f"Error procesando compra de jugador: {e_compra}", file=sys.stderr)
-                            
+
+                                # Añadir a mi equipo (hasta 32; el tope ya lo validó puede_fichar).
+                                mi_equipo.jugadores.append(j_buy)
+                                estado['fichajes_realizados'] += 1
+
+                                club_nombre = eq_orig.nombre if eq_orig else "Libre"
+                                estado['transfer_log'].append(f"Compra: {j_buy.nombre_completo} de {club_nombre} por ${precio:,}")
+                                estado['success_message'] = f"¡Fichaje exitoso de {j_buy.nombre_completo}!"
+                                estado['success_timer'] = 180
+                            except Exception as e_compra:
+                                print(f"Error procesando compra de jugador: {e_compra}", file=sys.stderr)
+
                         estado['show_confirm_modal'] = False
                         estado['selected_player_to_buy'] = None
                         estado['selected_player_club'] = None
+                        estado['selected_player_intl'] = False
                         
                     elif btn_no_rect.collidepoint(event.pos):
                         estado['show_confirm_modal'] = False
@@ -718,11 +736,19 @@ def render(screen, estado: dict) -> str | None:
                     estado['market_page'] += 1
                     
                 # E. Botones "Fichar" en los Cards
-                for btn_rect, j, eq in card_rects:
+                for btn_rect, j, eq, ok, motivo, has_slots in card_rects:
                     if btn_rect.collidepoint(event.pos):
-                        estado['selected_player_to_buy'] = j
-                        estado['selected_player_club'] = eq
-                        estado['show_confirm_modal'] = True
+                        if has_slots and ok:
+                            estado['selected_player_to_buy'] = j
+                            estado['selected_player_club'] = eq
+                            estado['selected_player_intl'] = (estado.get('market_tab') == 'Internacional')
+                            estado['show_confirm_modal'] = True
+                        else:
+                            if not has_slots:
+                                estado['success_message'] = "Ya has realizado el límite de 3 fichajes por ventana."
+                            else:
+                                estado['success_message'] = motivo
+                            estado['success_timer'] = 200
                         
                 # F. Botón Salir
                 if exit_rect.collidepoint(event.pos):

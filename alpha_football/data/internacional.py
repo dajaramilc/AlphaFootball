@@ -135,11 +135,40 @@ POOL_CHAMPIONS = [
     )
 ]
 
+# v0.7: nombre corto (anti-solapamiento en tabla/bracket de copa) y algunos estilos equilibrados.
+_NOMBRES_CORTOS_INTL = {
+    "Penarol Roto": "Peñarol", "Nacionall de Montevideo": "Nacional URU", "Colo Colo Roto": "Colo Colo",
+    "Olimpia Abuelo": "Olimpia", "Barcelona Falso de Guayaquil": "Barcelona SC", "Liga de Quito Rota": "LDU Quito",
+    "Bolivar Sin Aire": "Bolívar", "Universitario de la U": "Universitario", "Boca Amargo": "Boca",
+    "Palmeirras": "Palmeiras",
+    "Bayerna de Munich": "Bayerna", "Borussia Dormund": "Dormund", "Piamonte Calcio": "Piamonte",
+    "Inter de Milan Roto": "Inter", "Milan Abuelo": "Milan", "Paris Saint-Germain Sin Champions": "PSG",
+    "Benfica Maldito": "Benfica", "Puerto FC": "Puerto",
+}
+_ESTILO_OVERRIDE_INTL = {
+    "Inter de Milan Roto": "anchelottismo", "Milan Abuelo": "anchelottismo",
+    "Liga de Quito Rota": "anchelottismo",
+}
+for _eq_intl in POOL_LIBERTADORES + POOL_CHAMPIONS:
+    _eq_intl.nombre_corto = _NOMBRES_CORTOS_INTL.get(_eq_intl.nombre, "")
+    if _eq_intl.nombre in _ESTILO_OVERRIDE_INTL:
+        _eq_intl.estilo_dt = _ESTILO_OVERRIDE_INTL[_eq_intl.nombre]
+
 # Cada club internacional también recibe 5 suplentes (plantillas más profundas, igual
 # que las ligas locales). Se hace una sola vez al importar el módulo y es idempotente.
 try:
     from alpha_football.plantilla import expandir_plantilla
     for _equipo_internacional in POOL_LIBERTADORES + POOL_CHAMPIONS:
-        expandir_plantilla(_equipo_internacional, 5)
+        expandir_plantilla(_equipo_internacional, 20)
 except Exception as _error_suplentes_copa:
     logger.warning(f"No se pudieron agregar suplentes a los pools internacionales: {_error_suplentes_copa}")
+
+# v0.7.1: escalar presupuestos de los clubes internacionales igual que las ligas.
+try:
+    from alpha_football.market import BUDGET_SCALE as _BS
+    for _eq_bud in POOL_LIBERTADORES + POOL_CHAMPIONS:
+        if not getattr(_eq_bud, "_presupuesto_escalado", False):
+            _eq_bud.balance = int(_eq_bud.balance * _BS)
+            _eq_bud._presupuesto_escalado = True
+except Exception as _e_bud_intl:
+    logger.warning(f"No se pudieron escalar presupuestos internacionales: {_e_bud_intl}")

@@ -31,6 +31,12 @@ server.log
 saves/
 preferencias.json
 
+# Música local descargada (binarios pesados / con copyright; se bajan con yt-dlp)
+music/
+
+# Configuración local de Claude Code
+.claude/
+
 # IDEs y configuración local de Editores
 .vscode/
 .idea/

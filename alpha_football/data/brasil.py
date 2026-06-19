@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Alpha Football v0.4 — DATOS DE LIGA BRASILEIRA.
+Alpha Football v0.7 — DATOS DE LIGA BRASILEIRA.
 
 Este módulo construye y expone la Liga Brasileira (Brasil) con 6 equipos
 de parodia y sus jugadores reales humorísticos (OVR máximo 80).
+Cada equipo cuenta con 20 jugadores reales parodiados.
 """
 
 from __future__ import annotations
@@ -17,25 +18,93 @@ logger = logging.getLogger(__name__)
 # Pool de rasgos para asignar aleatoriamente
 RASGOS = ["regateador", "lider", "rustico", "pulmon_de_hierro"]
 
-# Plantillas de parodia para los clubes brasileños
+def generar_atributos_por_posicion(ovr_sugerido: int, posicion: str) -> tuple[int, int, int, int, int]:
+    """
+    Genera los 5 atributos individuales de un jugador (ataque, defensa, fisico, tecnica, mental)
+    basado en su posición y una valoración general (OVR) sugerida.
+    Garantiza de manera resiliente que el promedio entero sea exactamente el OVR.
+    """
+    try:
+        ovr_objetivo = min(max(ovr_sugerido, 40), 83)
+        
+        if posicion == "POR":
+            ataque = 15
+            defensa = ovr_objetivo + 15
+            fisico = ovr_objetivo + 5
+            tecnica = ovr_objetivo - 10
+            mental = ovr_objetivo + 10
+        elif posicion == "DEF":
+            ataque = ovr_objetivo - 25
+            defensa = ovr_objetivo + 15
+            fisico = ovr_objetivo + 10
+            tecnica = ovr_objetivo - 10
+            mental = ovr_objetivo + 10
+        elif posicion == "MED":
+            ataque = ovr_objetivo - 5
+            defensa = ovr_objetivo - 5
+            fisico = ovr_objetivo
+            tecnica = ovr_objetivo + 10
+            mental = ovr_objetivo
+        else:
+            ataque = ovr_objetivo + 15
+            defensa = ovr_objetivo - 25
+            fisico = ovr_objetivo + 5
+            tecnica = ovr_objetivo + 10
+            mental = ovr_objetivo - 5
+
+        atributos = [max(10, min(99, val)) for val in (ataque, defensa, fisico, tecnica, mental)]
+        
+        suma_objetivo = ovr_objetivo * 5
+        for _ in range(50):
+            suma_actual = sum(atributos)
+            if suma_actual == suma_objetivo:
+                break
+            diferencia = suma_objetivo - suma_actual
+            paso = 1 if diferencia > 0 else -1
+            
+            indices = [0, 1, 2, 3, 4]
+            random.shuffle(indices)
+            for idx in indices:
+                nuevo_valor = atributos[idx] + paso
+                if 10 <= nuevo_valor <= 99:
+                    atributos[idx] = nuevo_valor
+                    break
+                    
+        return tuple(atributos)
+
+    except Exception as error_generacion:
+        logger.error(f"Fallo al generar atributos (OVR={ovr_sugerido}, Pos={posicion}): {error_generacion}. Aplicando fallback.")
+        valor_defecto = min(max(ovr_sugerido, 45), 83)
+        return (valor_defecto, valor_defecto, valor_defecto, valor_defecto, valor_defecto)
+
+# Plantillas de parodia para los clubes brasileños (20 jugadores base por equipo)
 PLANTILLAS_PARODIA = {
-    "Flamenguito de Rio": {
+    "Flamenguito": {
         "ciudad": "Río de Janeiro",
         "estrellas": 4.5,
         "estilo_dt": "cruyffismo",
         "balance": 22000000,
         "jugadores": [
-            ("Rossi", "Rossini", "POR", 40, 80, 78, 55, 75),
-            ("David", "Lloron (Lider)", "DEF", 35, 78, 80, 50, 80),
-            ("Leo", "Pereira Roto", "DEF", 32, 77, 78, 48, 70),
-            ("Guillermo", "Varela Lenta", "DEF", 38, 75, 76, 52, 65),
-            ("Ayrton", "Lucas Veloz", "DEF", 65, 74, 80, 70, 68),
-            ("Erick", "Pulgar Fuerte", "MED", 58, 78, 79, 66, 74),
-            ("Nicolas", "De Arrastra", "MED", 78, 45, 70, 80, 77),
-            ("Everton", "Cebollon", "MED", 76, 38, 77, 79, 70),
-            ("Luiz", "Araujo Falso", "DEL", 75, 40, 78, 74, 68),
-            ("Pedro", "Pedrogol", "DEL", 80, 30, 74, 70, 78),
-            ("Gabigol", "Gabilento", "DEL", 78, 35, 70, 75, 80)
+            ("Rossi", "Rossini", "POR", 79, "None", 28),
+            ("Matheus", "Cunhazo", "POR", 72, "None", 23),
+            ("David", "Lloron", "DEF", 74, "lider", 37),
+            ("Leo", "Pereira Roto", "DEF", 76, "rustico", 28),
+            ("Guillermo", "Varela Lenta", "DEF", 74, None, 31),
+            ("Ayrton", "Lucas Veloz", "DEF", 77, "pulmon_de_hierro", 26),
+            ("Fabricio", "Bruno", "DEF", 78, "rustico", 28),
+            ("Matias", "Vinazo", "DEF", 75, None, 26),
+            ("Wesley", "Regateador", "DEF", 73, "pulmon_de_hierro", 20),
+            ("Erick", "Pulgar Fuerte", "MED", 76, "rustico", 30),
+            ("Nicolas", "De Arrastra", "MED", 82, "regateador", 30),
+            ("Gerson", "Coringa", "MED", 82, "lider", 27),
+            ("Nicolas", "De la Cruzazo", "MED", 82, "pulmon_de_hierro", 27),
+            ("Allan", "Lento", "MED", 74, None, 27),
+            ("Evertton", "Araujazo", "MED", 72, None, 21),
+            ("Alcaraz", "Millonario", "MED", 76, None, 21),
+            ("Everton", "Cebollon", "DEL", 77, "regateador", 28),
+            ("Luiz", "Araujo Falso", "DEL", 76, "regateador", 28),
+            ("Pedro", "Pedrogol", "DEL", 83, "lider", 26),
+            ("Gabigol", "Gabilento", "DEL", 78, "lider", 27)
         ]
     },
     "Palmeras de Sao Paulo": {
@@ -44,17 +113,26 @@ PLANTILLAS_PARODIA = {
         "estilo_dt": "flickismo",
         "balance": 24000000,
         "jugadores": [
-            ("Weverton", "Wevertonin", "POR", 40, 80, 79, 50, 76),
-            ("Gustavo", "Gominola (Lider)", "DEF", 30, 80, 80, 48, 80),
-            ("Murilo", "Murilito", "DEF", 32, 78, 79, 45, 71),
-            ("Marcos", "Rocha Vieja", "DEF", 35, 74, 73, 56, 73),
-            ("Piquerez", "Uruguayita", "DEF", 62, 76, 78, 72, 70),
-            ("Anibal", "Moreno Rápido", "MED", 60, 77, 78, 68, 72),
-            ("Raphael", "Vejiga", "MED", 78, 48, 72, 80, 76),
-            ("Ze", "Rafaelin", "MED", 70, 72, 76, 71, 73),
-            ("Rony", "Ronito Volador", "DEL", 77, 38, 80, 68, 75),
-            ("Estevao", "Estevito 5★", "DEL", 80, 35, 74, 80, 70),
-            ("Felipe", "Anderson Roto", "DEL", 78, 42, 75, 78, 72)
+            ("Weverton", "Wevertonin", "POR", 78, "lider", 36),
+            ("Marcelo", "Lomba", "POR", 71, None, 37),
+            ("Gustavo", "Gominola", "DEF", 81, "lider", 31),
+            ("Murilo", "Murilito", "DEF", 79, "rustico", 27),
+            ("Marcos", "Rocha Vieja", "DEF", 73, None, 35),
+            ("Piquerez", "Uruguayita", "DEF", 79, "pulmon_de_hierro", 25),
+            ("Vitor", "Reis", "DEF", 75, None, 18),
+            ("Mayke", "Centros", "DEF", 74, None, 31),
+            ("Caio", "Paulista", "DEF", 73, "pulmon_de_hierro", 26),
+            ("Anibal", "Moreno Rapido", "MED", 78, "rustico", 24),
+            ("Raphael", "Vejiga", "MED", 82, "regateador", 29),
+            ("Ze", "Rafaelin", "MED", 76, "rustico", 31),
+            ("Richard", "Rios Cafe", "MED", 78, "regateador", 24),
+            ("Mauricio", "Joven", "MED", 77, None, 23),
+            ("Gabriel", "Menino", "MED", 75, None, 23),
+            ("Rony", "Ronito Volador", "DEL", 76, "pulmon_de_hierro", 29),
+            ("Estevao", "Estevito", "DEL", 83, "regateador", 17),
+            ("Felipe", "Anderson Roto", "DEL", 78, "regateador", 31),
+            ("Flaco", "Lopez", "DEL", 81, None, 23),
+            ("Lazaro", "Promesa", "DEL", 74, None, 22)
         ]
     },
     "Botafogo Estrella": {
@@ -63,82 +141,128 @@ PLANTILLAS_PARODIA = {
         "estilo_dt": "haramball",
         "balance": 19000000,
         "jugadores": [
-            ("John", "Victorin", "POR", 40, 77, 76, 50, 70),
-            ("Bastos", "Bastonero", "DEF", 30, 78, 78, 42, 72),
-            ("Alexander", "Barboza Rustico", "DEF", 28, 79, 80, 40, 76),
-            ("Mateo", "Ponte Duro", "DEF", 45, 74, 76, 60, 64),
-            ("Marcal", "Marcelito", "DEF", 38, 73, 73, 58, 67),
-            ("Marlon", "Freitas Frito", "MED", 64, 75, 77, 72, 73),
-            ("Thiago", "Almohada", "MED", 76, 50, 74, 80, 74),
-            ("Luiz", "Enrique Lento", "MED", 78, 42, 78, 79, 68),
-            ("Tiquinho", "Suarez", "DEL", 79, 32, 76, 70, 77),
-            ("Junior", "Santitos", "DEL", 77, 36, 79, 73, 70),
-            ("Igor", "Jesus Cristo", "DEL", 78, 30, 77, 71, 73)
+            ("John", "Victorin", "POR", 78, None, 28),
+            ("Gatito", "Fernandez", "POR", 72, None, 36),
+            ("Bastos", "Bastonero", "DEF", 77, "rustico", 32),
+            ("Alexander", "Barboza Rustico", "DEF", 76, "rustico", 29),
+            ("Mateo", "Ponte Duro", "DEF", 75, "pulmon_de_hierro", 21),
+            ("Marcal", "Marcelito", "DEF", 73, None, 35),
+            ("Adryelson", "Muro", "DEF", 78, "rustico", 26),
+            ("Vitinho", "Rapido", "DEF", 74, None, 24),
+            ("Cuiabano", "Lateral", "DEF", 75, "pulmon_de_hierro", 21),
+            ("Marlon", "Freitas Frito", "MED", 76, "rustico", 29),
+            ("Thiago", "Almada", "MED", 82, "regateador", 23),
+            ("Gregore", "Volante", "MED", 76, "rustico", 30),
+            ("Allan", "Volantazo", "MED", 74, None, 27),
+            ("Jefferson", "Savarino", "MED", 78, "regateador", 27),
+            ("Tche Tche", "Corredor", "MED", 74, "pulmon_de_hierro", 31),
+            ("Luiz", "Enrique Lento", "DEL", 82, "regateador", 23),
+            ("Tiquinho", "Suarez", "DEL", 78, "lider", 33),
+            ("Junior", "Santitos", "DEL", 76, "pulmon_de_hierro", 29),
+            ("Igor", "Jesus", "DEL", 80, None, 23),
+            ("Matheus", "Martins", "DEL", 75, "regateador", 20)
         ]
     },
-    "San Pablo FC": {
+    "Don Pablo": {
         "ciudad": "São Paulo",
         "estrellas": 4.0,
         "estilo_dt": "cruyffismo",
         "balance": 16000000,
         "jugadores": [
-            ("Rafael", "Rafaelazo", "POR", 40, 78, 75, 48, 73),
-            ("Arboleda", "Arbolito", "DEF", 25, 79, 80, 40, 74),
-            ("Alan", "Franco Malo", "DEF", 32, 76, 76, 45, 68),
-            ("Rafinha", "Rafita Abuelo", "DEF", 35, 73, 68, 60, 78),
-            ("Welington", "Welingtonin", "DEF", 55, 72, 78, 65, 63),
-            ("Pablo", "Maya Incesto", "MED", 62, 76, 77, 70, 71),
-            ("James", "Ruedas (Vidrio)", "MED", 77, 30, 60, 80, 76),
-            ("Lucas", "Muera", "MED", 79, 40, 77, 79, 78),
-            ("Jonathan", "Callao", "DEL", 80, 32, 76, 65, 78),
-            ("Luciano", "Lucianito", "DEL", 76, 35, 71, 72, 72),
-            ("Ferreirinha", "Ferro", "DEL", 75, 30, 74, 75, 64)
+            ("Rafael", "Rafaelazo", "POR", 77, None, 34),
+            ("Jandrei", "Manos", "POR", 71, None, 31),
+            ("Arboleda", "Arbolito", "DEF", 78, "rustico", 32),
+            ("Alan", "Franco Malo", "DEF", 75, "rustico", 27),
+            ("Rafinha", "Rafita Abuelo", "DEF", 73, "lider", 38),
+            ("Welington", "Welingtonin", "DEF", 75, "pulmon_de_hierro", 23),
+            ("Igor", "Vinicius", "DEF", 74, "pulmon_de_hierro", 27),
+            ("Sabino", "Zurdo", "DEF", 72, None, 27),
+            ("Ferraresi", "Vinotinto", "DEF", 73, None, 25),
+            ("Pablo", "Maia Incesto", "MED", 77, "rustico", 22),
+            ("Alisson", "Corredor", "MED", 76, "pulmon_de_hierro", 31),
+            ("Giuliano", "Galoppo", "MED", 74, None, 25),
+            ("Damian", "Bobadilla", "MED", 74, None, 22),
+            ("Luiz", "Gustavo Abuelo", "MED", 73, "lider", 36),
+            ("Wellington", "Rato", "MED", 74, None, 32),
+            ("Lucas", "Muera", "DEL", 82, "regateador", 31),
+            ("Jonathan", "Callao", "DEL", 79, "lider", 30),
+            ("Luciano", "Lucianito", "DEL", 77, "lider", 31),
+            ("Ferreirinha", "Ferro", "DEL", 76, "regateador", 26),
+            ("Andre", "Silva", "DEL", 74, None, 27)
         ]
     },
-    "Fluminense Tricolor": {
+    "Flu": {
         "ciudad": "Río de Janeiro",
         "estrellas": 4.0,
-        "estilo_dt": "cruyffismo",
-        "balance": 14000000,
+        "estilo_dt": "anchelottismo",
+        "balance": 15000000,
         "jugadores": [
-            ("Fabio", "Fabian", "POR", 40, 78, 70, 52, 80),
-            ("Thiago", "Abuelosilva", "DEF", 30, 80, 74, 55, 80),
-            ("Manoel", "Manolo", "DEF", 28, 75, 77, 42, 69),
-            ("Samuel", "Xavierin", "DEF", 38, 73, 73, 58, 68),
-            ("Marcelo", "Pelo Rulo", "DEF", 70, 72, 68, 80, 79),
-            ("Andre", "Andresito", "MED", 65, 78, 79, 73, 76),
-            ("Ganso", "Gansito", "MED", 75, 45, 62, 80, 79),
-            ("Jhon", "Ario (Arias)", "MED", 78, 55, 78, 78, 75),
-            ("German", "Canon", "DEL", 80, 25, 70, 68, 80),
-            ("Keno", "Keniata", "DEL", 75, 30, 73, 74, 68),
-            ("John", "Kennedy Balas", "DEL", 76, 32, 76, 71, 65)
+            ("Fabio", "Abuelo", "POR", 76, "lider", 43),
+            ("Felipe", "Alves", "POR", 69, None, 36),
+            ("Thiago", "Silva Monumento", "DEF", 81, "lider", 39),
+            ("Felipe", "Melo Loco", "DEF", 72, "rustico", 40),
+            ("Guga", "Lateral", "DEF", 73, None, 25),
+            ("Samuel", "Xavier", "DEF", 73, "rustico", 34),
+            ("Diogo", "Barbosa", "DEF", 72, None, 31),
+            ("Ignacio", "Muro", "DEF", 75, "rustico", 27),
+            ("Manoel", "Tronco", "DEF", 72, None, 34),
+            ("Martinelli", "Fluminense", "MED", 76, "pulmon_de_hierro", 22),
+            ("Ganso", "Tortuga", "MED", 78, "regateador", 34),
+            ("Jhon", "Arias Mago", "MED", 82, "regateador", 26),
+            ("Facundo", "Bernal", "MED", 75, None, 20),
+            ("Renato", "Augusto Vidrio", "MED", 75, None, 36),
+            ("Nonato", "Corredor", "MED", 73, None, 26),
+            ("German", "Cano Goleador", "DEL", 78, None, 36),
+            ("Keno", "Regates", "DEL", 75, "regateador", 34),
+            ("Kaua", "Elias Joven", "DEL", 75, None, 18),
+            ("Marquinhos", "Rapido", "DEL", 75, "regateador", 21),
+            ("John", "Kennedy Fiestero", "DEL", 75, None, 22)
         ]
     },
-    "Gremio Inmortal Roto": {
+    "Gremio Copero": {
         "ciudad": "Porto Alegre",
-        "estrellas": 3.5,
+        "estrellas": 4.1,
         "estilo_dt": "haramball",
-        "balance": 11000000,
+        "balance": 14000000,
         "jugadores": [
-            ("Marchesin", "Marche", "POR", 40, 77, 72, 50, 74),
-            ("Pedro", "Geromel Viejo", "DEF", 28, 76, 71, 45, 78),
-            ("Walter", "Rustico Kannemann", "DEF", 25, 78, 79, 38, 80),
-            ("Joao", "Pedro Lento", "DEF", 40, 72, 74, 55, 62),
-            ("Reinaldo", "Rei del penal", "DEF", 58, 72, 75, 64, 69),
-            ("Villasanti", "Villa Triste", "MED", 62, 76, 78, 68, 73),
-            ("Pepê", "Pepito", "MED", 68, 60, 72, 70, 67),
-            ("Franco", "Cristaldo", "MED", 75, 48, 71, 77, 72),
-            ("Enano", "Soteldo", "DEL", 78, 30, 70, 79, 70),
-            ("Diego", "Costilla", "DEL", 77, 35, 76, 68, 78),
-            ("Cristian", "Pavito", "DEL", 74, 38, 74, 71, 65)
+            ("Agustin", "Marchesin", "POR", 75, None, 36),
+            ("Caique", "Muro", "POR", 71, None, 26),
+            ("Jemerson", "Lento", "DEF", 74, "rustico", 31),
+            ("Walter", "Kannemann Carnicero", "DEF", 77, "rustico", 33),
+            ("Reinaldo", "Penales", "DEF", 75, "pulmon_de_hierro", 34),
+            ("Joao", "Pedro", "DEF", 75, None, 27),
+            ("Rodrigo", "Ely", "DEF", 73, "rustico", 30),
+            ("Fabio", "Lateral", "DEF", 72, None, 33),
+            ("Gustavo", "Martins", "DEF", 72, None, 21),
+            ("Villasanti", "Pulmon", "MED", 78, "pulmon_de_hierro", 27),
+            ("Pepe", "Pase", "MED", 75, None, 26),
+            ("Edenilson", "Viejo", "MED", 73, None, 34),
+            ("Franco", "Cristaldo", "MED", 78, "regateador", 27),
+            ("Yeferson", "Soteldo Enano", "MED", 81, "regateador", 26),
+            ("Dodi", "Volante", "MED", 74, "rustico", 28),
+            ("Martin", "Braithwaite Vikingo", "DEL", 78, "lider", 32),
+            ("Diego", "Costa Abuelo", "DEL", 76, "rustico", 35),
+            ("Pavon", "Turbo", "DEL", 76, "regateador", 28),
+            ("Gustavo", "Nunes", "DEL", 74, "regateador", 18),
+            ("Nathan", "Fernandes", "DEL", 73, None, 19)
         ]
     }
+}
+
+NOMBRES_CORTOS = {
+    "Flamenguito": "Flamenguito", "Palmeras de Sao Paulo": "Palmeiras",
+    "Botafogo Estrella": "Botafogo", "Don Pablo": "Don Pablo",
+    "Flu": "Flu", "Gremio Copero": "Gremio",
+}
+ESTILO_OVERRIDE = {
+    "Flu": "anchelottismo",
+    "Gremio Copero": "haramball"
 }
 
 def get_liga() -> Liga:
     """
     Construye y devuelve el objeto Liga Brasileira
-    con plantillas de parodia completamente pobladas.
+    con plantillas de parodia completamente pobladas de 20 jugadores.
     """
     try:
         equipos = []
@@ -148,35 +272,43 @@ def get_liga() -> Liga:
             jugadores = []
             for j_data in datos["jugadores"]:
                 id_counter += 1
-                rasgo = random.choice(RASGOS) if random.random() < 0.28 else None
+                
+                # Obtener los datos base del jugador
+                pnombre, papellido, pos, ovr, rasgo, edad = j_data
+                
+                # Generamos los 5 atributos individuales de forma coherente y robusta
+                atk, dfs, fis, tec, men = generar_atributos_por_posicion(ovr, pos)
+                
                 jugadores.append(Jugador(
-                    nombre=j_data[0],
-                    apellido=j_data[1],
-                    posicion=j_data[2],
-                    ataque=j_data[3],
-                    defensa=j_data[4],
-                    fisico=j_data[5],
-                    tecnica=j_data[6],
-                    mental=j_data[7],
+                    nombre=pnombre,
+                    apellido=papellido,
+                    posicion=pos,
+                    ataque=atk,
+                    defensa=dfs,
+                    fisico=fis,
+                    tecnica=tec,
+                    mental=men,
                     rasgo=rasgo,
                     moral=70,
-                    id=id_counter
+                    id=id_counter,
+                    edad=edad
                 ))
             
             equipos.append(Equipo(
                 nombre=nombre_parodia,
                 ciudad=datos["ciudad"],
                 estrellas=datos["estrellas"],
-                estilo_dt=datos["estilo_dt"],
+                estilo_dt=ESTILO_OVERRIDE.get(nombre_parodia, datos["estilo_dt"]),
                 balance=datos["balance"],
-                jugadores=jugadores
+                jugadores=jugadores,
+                nombre_corto=NOMBRES_CORTOS.get(nombre_parodia, "")
             ))
             
         return Liga(
             nombre="Brasileirão Brasil",
-            tipo="brasil", # de acuerdo a models.py tipo = brasil
+            tipo="brasil",
             equipos=equipos,
-            num_jornadas=10 # 6 equipos -> 10 jornadas ida y vuelta
+            num_jornadas=10
         )
     except Exception as e:
         logger.critical(f"Error crítico al construir Liga Brasileira: {e}. Retornando fallback.")

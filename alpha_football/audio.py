@@ -43,6 +43,12 @@ def init_audio() -> None:
     try:
         if not pygame.mixer.get_init():
             try:
+                # Buffer grande (4096) para que los MP3 suenen COMPLETOS (evita underruns que
+                # cortan la canción). Si pygame.init() ya inicializó el mixer, esto se omite.
+                try:
+                    pygame.mixer.pre_init(44100, -16, 2, 4096)
+                except Exception:
+                    pass
                 pygame.mixer.init()
             except Exception as e_mix:
                 logger.warning(f"No se pudo inicializar pygame.mixer directamente: {e_mix}. Inicializando pygame completo...")
@@ -102,10 +108,50 @@ def _intentar_instalar_ytdlp() -> bool:
         logger.error(f"No se pudo instalar yt-dlp mediante subprocess: {error_inst}")
         return False
 
+# Manifiesto de URLs ya descargadas (por URL, NO por nombre de archivo) para que
+# renombrar las pistas no provoque que se vuelvan a descargar como pista_N.
+_MANIFEST_PATH = os.path.join(MUSIC_DIR, ".descargas.json")
+_EXT_AUDIO = (".mp3", ".wav", ".ogg", ".m4a", ".webm", ".opus")
+
+
+def _cargar_manifest_descargas() -> set:
+    """Lee el conjunto de URLs ya descargadas; vacío si no existe/ilegible."""
+    import json
+    try:
+        if os.path.exists(_MANIFEST_PATH):
+            with open(_MANIFEST_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return set(data)
+    except Exception as e:
+        logger.warning(f"No se pudo leer el manifiesto de descargas: {e}")
+    return set()
+
+
+def _guardar_manifest_descargas(urls: set) -> None:
+    """Guarda el conjunto de URLs ya descargadas (fail-soft)."""
+    import json
+    try:
+        os.makedirs(MUSIC_DIR, exist_ok=True)
+        with open(_MANIFEST_PATH, "w", encoding="utf-8") as f:
+            json.dump(sorted(urls), f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.warning(f"No se pudo guardar el manifiesto de descargas: {e}")
+
+
+def _hay_audio_en_carpeta() -> bool:
+    """True si ya hay al menos un archivo de audio en la carpeta de música."""
+    try:
+        return any(f.lower().endswith(_EXT_AUDIO) for f in os.listdir(MUSIC_DIR))
+    except Exception:
+        return False
+
+
 def _descargar_musica() -> None:
     """
     Descarga de forma silenciosa y asíncrona las canciones listadas en musica.txt.
-    Usa la biblioteca yt-dlp para mayor estabilidad, instalándola si es necesario.
+    Usa un MANIFIESTO por URL para no re-descargar pistas que el usuario ya tiene
+    (aunque las haya renombrado) y guarda con el NOMBRE REAL del tema.
     """
     try:
         musica_txt_path = os.path.join(PROJECT_ROOT, "musica.txt")
@@ -119,6 +165,16 @@ def _descargar_musica() -> None:
         if not urls:
             logger.info("El archivo musica.txt esta vacio.")
             return
+
+        # Manifiesto: evita RE-CREAR pistas que ya se bajaron (clave = URL, no nombre de archivo).
+        manifest = _cargar_manifest_descargas()
+        if not os.path.exists(_MANIFEST_PATH):
+            # Primera vez con esta lógica: si YA hay música en la carpeta, asumimos que estas
+            # URLs ya se descargaron (el usuario pudo renombrarlas) y NO las volvemos a bajar.
+            if _hay_audio_en_carpeta():
+                manifest = set(urls)
+                _guardar_manifest_descargas(manifest)
+                logger.info("Manifiesto de música sembrado: no se re-descargan pistas existentes.")
 
         # Importamos yt_dlp dinámicamente o intentamos su instalación si no está
         try:
@@ -135,22 +191,13 @@ def _descargar_musica() -> None:
                 logger.error("No se pudo obtener yt-dlp. Las descargas de musica estan deshabilitadas.")
                 return
 
-        # Procesar y descargar cada URL de la lista
-        for i, url in enumerate(urls):
-            # Comprobar si ya existe algún archivo con el prefijo pista_i en cualquier formato admitido
-            ya_existe = False
-            for ext in [".mp3", ".wav", ".ogg", ".m4a", ".webm"]:
-                if os.path.exists(os.path.join(MUSIC_DIR, f"pista_{i+1}{ext}")):
-                    ya_existe = True
-                    break
-            
-            if ya_existe:
+        # Descargar SOLO las URLs que no estén en el manifiesto, con el nombre real del tema.
+        out_pattern = os.path.join(MUSIC_DIR, "%(title)s.%(ext)s")
+        for url in urls:
+            if url in manifest:
                 continue
 
-            logger.info(f"Iniciando descarga de pista {i+1}: {url}")
-            
-            # 1. Opción recomendada: Descarga y conversión a MP3 con FFmpeg
-            out_pattern = os.path.join(MUSIC_DIR, f"pista_{i+1}.%(ext)s")
+            logger.info(f"Iniciando descarga de: {url}")
             ydl_opts_mp3 = {
                 'format': 'bestaudio/best',
                 'postprocessors': [{
@@ -168,14 +215,15 @@ def _descargar_musica() -> None:
             try:
                 with yt_dlp.YoutubeDL(ydl_opts_mp3) as ydl:
                     ydl.download([url])
-                logger.info(f"Pista {i+1} descargada y convertida a MP3.")
+                logger.info("Descargada y convertida a MP3.")
+                manifest.add(url)
+                _guardar_manifest_descargas(manifest)
                 _actualizar_playlist()
             except Exception as ffmpeg_err:
                 logger.warning(
                     f"Fallo al convertir a MP3 (posiblemente falta FFmpeg): {ffmpeg_err}. "
                     f"Intentando descargar en formato original (m4a/webm/etc.)...."
                 )
-                # 2. Alternativa: Descargar en formato original directo sin FFmpeg
                 ydl_opts_raw = {
                     'format': 'bestaudio/best',
                     'outtmpl': out_pattern,
@@ -187,10 +235,12 @@ def _descargar_musica() -> None:
                 try:
                     with yt_dlp.YoutubeDL(ydl_opts_raw) as ydl:
                         ydl.download([url])
-                    logger.info(f"Pista {i+1} descargada exitosamente en formato de audio original.")
+                    logger.info("Descargada exitosamente en formato de audio original.")
+                    manifest.add(url)
+                    _guardar_manifest_descargas(manifest)
                     _actualizar_playlist()
                 except Exception as raw_err:
-                    logger.error(f"Error critico al descargar pista {i+1} ({url}) sin postprocesamiento: {raw_err}")
+                    logger.error(f"Error critico al descargar ({url}) sin postprocesamiento: {raw_err}")
 
     except Exception as e:
         logger.error(f"Error inesperado en el modulo de descarga de musica: {e}")
@@ -261,6 +311,103 @@ def descargar_url_async(url: str) -> None:
     threading.Thread(target=_worker, args=(url,), daemon=True).start()
 
 
+def descargar_por_nombre_async(nombre: str) -> None:
+    """
+    Descarga por NOMBRE de canción: yt-dlp busca el primer resultado en YouTube
+    (`ytsearch1:<nombre>`) y lo baja. Reutiliza el worker de descarga por URL.
+    """
+    nombre = (nombre or "").strip()
+    if not nombre:
+        global _DOWNLOAD_STATUS
+        _DOWNLOAD_STATUS = {"activo": False, "mensaje": "Escribe el nombre de la canción."}
+        return
+    descargar_url_async(f"ytsearch1:{nombre}")
+
+
+# --- Búsqueda interactiva: mostrar resultados antes de descargar (para elegir) -----
+
+# Estado y resultados de la última búsqueda por nombre (para que la UI los muestre).
+_SEARCH_STATUS = {"activo": False, "mensaje": ""}
+_SEARCH_RESULTS: list = []
+
+
+def estado_busqueda() -> dict:
+    """Estado de la búsqueda interactiva (activo + mensaje)."""
+    return dict(_SEARCH_STATUS)
+
+
+def resultados_busqueda() -> list:
+    """Copia de los resultados de la última búsqueda: dicts {title, uploader, duration, url}."""
+    return list(_SEARCH_RESULTS)
+
+
+def limpiar_busqueda() -> None:
+    """Borra los resultados (tras elegir uno o al iniciar otra búsqueda)."""
+    global _SEARCH_RESULTS, _SEARCH_STATUS
+    _SEARCH_RESULTS = []
+    _SEARCH_STATUS = {"activo": False, "mensaje": ""}
+
+
+def buscar_canciones_async(query: str, n: int = 5) -> None:
+    """
+    Busca en YouTube SIN descargar y deja hasta `n` resultados en _SEARCH_RESULTS para
+    que el usuario elija cuál bajar. No bloquea la UI (hilo aparte). Resiliente.
+    """
+    global _SEARCH_STATUS, _SEARCH_RESULTS
+    query = (query or "").strip()
+    if not query:
+        _SEARCH_STATUS = {"activo": False, "mensaje": "Escribe algo para buscar."}
+        return
+    if _SEARCH_STATUS.get("activo"):
+        return  # ya hay una búsqueda en curso
+    _SEARCH_RESULTS = []
+    _SEARCH_STATUS = {"activo": True, "mensaje": "Buscando…"}
+
+    def _worker(q: str) -> None:
+        global _SEARCH_STATUS, _SEARCH_RESULTS
+        try:
+            try:
+                import yt_dlp
+            except ImportError:
+                if _intentar_instalar_ytdlp():
+                    import yt_dlp
+                else:
+                    _SEARCH_STATUS = {"activo": False, "mensaje": "yt-dlp no disponible."}
+                    return
+            opts = {
+                "quiet": True, "no_warnings": True, "skip_download": True,
+                "extract_flat": True, "noplaylist": True,
+                "default_search": "ytsearch", "socket_timeout": SOCKET_TIMEOUT,
+            }
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(f"ytsearch{int(n)}:{q}", download=False)
+            entries = (info or {}).get("entries", []) or []
+            resultados = []
+            for e in entries:
+                if not e:
+                    continue
+                vid = e.get("id") or ""
+                url = e.get("url") or e.get("webpage_url") or vid
+                if url and not str(url).startswith("http"):
+                    url = f"https://www.youtube.com/watch?v={url}"
+                if not url:
+                    continue
+                resultados.append({
+                    "title": e.get("title") or "Sin título",
+                    "uploader": e.get("uploader") or e.get("channel") or "",
+                    "duration": e.get("duration"),
+                    "url": url,
+                })
+            _SEARCH_RESULTS = resultados
+            _SEARCH_STATUS = {"activo": False,
+                              "mensaje": f"{len(resultados)} resultados — elige uno." if resultados else "Sin resultados."}
+        except Exception as ex:
+            logger.error(f"Error al buscar canciones '{q}': {ex}")
+            _SEARCH_STATUS = {"activo": False, "mensaje": "Falló la búsqueda."}
+
+    threading.Thread(target=_worker, args=(query,), daemon=True).start()
+
+
 # Preferencias persistentes (volumen, música activada, liga por defecto).
 _PREFS_PATH = os.path.join(PROJECT_ROOT, "preferencias.json")
 _PREFS_DEFECTO = {"volumen": 0.5, "musica_activada": True, "liga_por_defecto": None}
@@ -297,7 +444,12 @@ def start_music() -> None:
     try:
         if not pygame.mixer.get_init():
             return
-            
+
+        # Idempotente: si YA hay una pista sonando, no reiniciar (antes, al volver al menú
+        # o re-llamar start_music, se cortaba la canción en curso y empezaba otra).
+        if IS_PLAYING and pygame.mixer.music.get_busy():
+            return
+
         if not PLAYLIST:
             _actualizar_playlist()
             if not PLAYLIST:
@@ -318,8 +470,39 @@ _CURRENT_TRACK_NAME: str = ""
 _TRACK_CHANGED: bool = False
 
 
+def _titulo_legible(ruta: str) -> str:
+    """
+    Devuelve el NOMBRE REAL de la pista: usa el tag de título (ID3 vía mutagen si está
+    disponible) y, si no, embellece el nombre de archivo (quita guiones bajos y sufijos
+    tipo '(Video Oficial)'). Fail-soft: si algo falla, devuelve el nombre de archivo.
+    """
+    base = os.path.splitext(os.path.basename(ruta))[0]
+    # 1) Intentar el título de los metadatos (mejor fuente). Mutagen es opcional.
+    try:
+        from mutagen import File as _MFile  # type: ignore
+        mf = _MFile(ruta, easy=True)
+        if mf:
+            titulo = (mf.get("title") or [None])[0]
+            if titulo:
+                base = str(titulo)
+    except Exception:
+        pass
+    # 2) Limpieza del nombre: guiones bajos -> espacios y quitar sufijos de YouTube.
+    try:
+        import re
+        limpio = base.replace("_", " ").strip()
+        limpio = re.sub(
+            r"\s*[\(\[][^)\]]*(?:oficial|official|video|lyric|audio|hd|4k|mv|visualizer)[^)\]]*[\)\]]",
+            "", limpio, flags=re.IGNORECASE,
+        )
+        limpio = limpio.strip(" -|·")
+        return limpio or base
+    except Exception:
+        return base
+
+
 def cancion_actual() -> str:
-    """Devuelve el nombre legible de la pista que está sonando (sin ruta ni extensión)."""
+    """Devuelve el nombre legible (real) de la pista que está sonando."""
     return _CURRENT_TRACK_NAME
 
 
@@ -355,8 +538,8 @@ def _reproducir_siguiente() -> None:
         if os.path.exists(pista):
             pygame.mixer.music.load(pista)
             pygame.mixer.music.play()
-            # Guardar el nombre legible y avisar a la UI de que cambió la canción.
-            _CURRENT_TRACK_NAME = os.path.splitext(os.path.basename(pista))[0]
+            # Guardar el nombre REAL/legible y avisar a la UI de que cambió la canción.
+            _CURRENT_TRACK_NAME = _titulo_legible(pista)
             _TRACK_CHANGED = True
             logger.info(f"Reproduciendo pista: {pista}")
             # Definir un evento personalizado para indicar el final de la pista
@@ -406,3 +589,42 @@ def stop_music() -> None:
             pygame.mixer.music.stop()
     except Exception as e:
         logger.error(f"Error al detener la musica: {e}")
+
+
+def eliminar_pista(ruta: str) -> None:
+    """
+    Elimina físicamente la pista de audio de disco y actualiza la playlist.
+    Si la canción a borrar es la que está sonando actualmente, la avanza primero.
+    Libera el archivo de pygame.mixer.music.unload() para evitar bloqueos en Windows.
+    """
+    global PLAYLIST, _LAST_PLAYED_TRACK
+    try:
+        norm_ruta = os.path.normpath(ruta)
+        # Si es la que está sonando, avanzamos pista
+        if norm_ruta == os.path.normpath(_LAST_PLAYED_TRACK or ""):
+            next_track()
+            
+        # Intentamos borrar directamente
+        try:
+            if os.path.exists(norm_ruta):
+                os.remove(norm_ruta)
+        except OSError:
+            # En Windows, si el mixer tiene cargado el archivo, está bloqueado.
+            # Forzamos una parada, descargamos la pista cargada y borramos.
+            if pygame.mixer.get_init():
+                pygame.mixer.music.stop()
+                pygame.mixer.music.unload()
+            if os.path.exists(norm_ruta):
+                os.remove(norm_ruta)
+            
+            # Si estaba reproduciéndose música, reanudamos
+            if IS_PLAYING:
+                _actualizar_playlist()
+                _reproducir_siguiente()
+                
+        # Actualizamos la playlist local
+        _actualizar_playlist()
+        logger.info(f"Canción eliminada de disco: {norm_ruta}")
+    except Exception as e:
+        logger.error(f"Error al intentar eliminar la canción {ruta}: {e}")
+

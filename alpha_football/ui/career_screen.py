@@ -318,12 +318,13 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 logger.error(f"Error al renderizar banner de alerta en carrera: {str(e_alert)}")
                 
         # --- BOTONES EN EL MENÚ IZQUIERDO (Mismas posiciones que league_screen) ---
-        btn_liga = pygame.Rect(40, 250, 220, 50)
-        btn_mercado = pygame.Rect(40, 320, 220, 50)
-        btn_copa = pygame.Rect(40, 390, 220, 50)
-        btn_career = pygame.Rect(40, 460, 220, 50)
-        btn_equipo = pygame.Rect(40, 530, 220, 50)
-        btn_salir = pygame.Rect(40, 630, 220, 50)
+        btn_liga = pygame.Rect(40, 240, 220, 45)
+        btn_mercado = pygame.Rect(40, 295, 220, 45)
+        btn_copa = pygame.Rect(40, 350, 220, 45)
+        btn_career = pygame.Rect(40, 405, 220, 45)
+        btn_equipo = pygame.Rect(40, 460, 220, 45)
+        btn_opciones = pygame.Rect(40, 515, 220, 45)
+        btn_salir = pygame.Rect(40, 620, 220, 45)
         
         # Procesar hovers de los botones
         mouse_pos = pygame.mouse.get_pos()
@@ -343,6 +344,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         hov_mercado = btn_mercado.collidepoint(mouse_pos)
         hov_copa = btn_copa.collidepoint(mouse_pos)
         hov_equipo = btn_equipo.collidepoint(mouse_pos)
+        hov_opciones = btn_opciones.collidepoint(mouse_pos)
         hov_salir = btn_salir.collidepoint(mouse_pos)
         
         # Renderizar botones en menú lateral
@@ -352,6 +354,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         # Pestaña activa (resaltada en dorado)
         draw_styled_button(screen, btn_career, "HISTORIAL CARRERA", True, COLORS.get('dorado', (255, 215, 0)))
         draw_styled_button(screen, btn_equipo, "DIRECCIÓN EQUIPO", hov_equipo, COLORS.get('azul', (0, 191, 255)))
+        draw_styled_button(screen, btn_opciones, "OPCIONES", hov_opciones, COLORS.get('verde', (0, 255, 136)))
         draw_styled_button(screen, btn_salir, "GUARDAR Y SALIR", hov_salir, COLORS.get('rojo', (255, 68, 68)))
         
         # --- PANEL CENTRAL: ESTADÍSTICAS GLOBALES ---
@@ -494,33 +497,17 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 estado.pop('career_scroll_offset', None)
                 return "team_screen"
                 
+            # Ir a Opciones (música, volumen)
+            elif btn_opciones.collidepoint(click_pos):
+                estado.pop('career_scroll_offset', None)
+                estado['options_return'] = 'career_screen'
+                return "options_screen"
+                
             # Guardar partida y salir al menú principal
             elif btn_salir.collidepoint(click_pos):
-                try:
-                    from alpha_football.save import guardar_partida
-                    from alpha_football.models import EstadoJuego
-                    
-                    alin = estado.get('alineacion_activa')
-                    datos_estado = {
-                        "ligas": [liga.to_dict()] if liga else [],
-                        "copas": [c.to_dict() for c in estado.get("copas", [])],
-                        "equipo_usuario_id": mi_equipo.id if mi_equipo else None,
-                        "liga_usuario_id": liga.tipo if liga else None,
-                        "temporada": estado.get("temporada", 1),
-                        "historial": estado.get("transfer_log", []),
-                        "pantalla_actual": "temporada",
-                        "alineacion_activa": {
-                            "titulares": list(alin.titulares),
-                            "formacion": str(alin.formacion)
-                        } if alin else None
-                    }
-                    estado_juego = EstadoJuego.from_dict(datos_estado)
-                    guardar_partida(estado_juego)
-                    logger.info("Partida guardada de forma segura al salir de career_screen.")
-                except Exception as error_guardar:
-                    logger.error(f"Error al guardar la partida desde la pantalla de carrera: {error_guardar}")
                 estado.pop('career_scroll_offset', None)
-                return "menu"
+                estado['save_slots_return'] = 'career_screen'
+                return "save_slots_screen"
                 
             # Lógica de Scroll en el historial
             if len(historial) > items_visibles:

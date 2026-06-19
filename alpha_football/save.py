@@ -270,3 +270,21 @@ def listar_slots(carpeta: str = CARPETA_SLOTS, total: int = TOTAL_SLOTS) -> list
     (dict) o None si está libre. Pensado para pintar el menú Cargar/Guardar.
     """
     return [leer_cabecera_slot(n, carpeta) for n in range(1, total + 1)]
+
+
+def eliminar_slot(n: int, carpeta: str = CARPETA_SLOTS) -> None:
+    """
+    Elimina físicamente los archivos correspondientes al slot n y su backup (.bak).
+    Funciona de forma resiliente y fail-soft.
+    """
+    try:
+        ruta = ruta_slot(n, carpeta)
+        ruta_bak = _ruta_backup(ruta)
+        
+        # Eliminar de forma segura
+        _eliminar_silencioso(ruta)
+        _eliminar_silencioso(ruta_bak)
+        logger.info(f"Slot de guardado {n} y su backup eliminados de forma física.")
+    except Exception as e:
+        logger.error(f"Error al eliminar slot {n} de la carpeta {carpeta}: {e}")
+

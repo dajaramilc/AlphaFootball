@@ -32,13 +32,61 @@ LIGAS_DISPONIBLES = [
     {'id': 'argentina', 'name': 'Liga Argentina (Argentina)'}
 ]
 
+# v0.7: nacionalidades sugeridas para el alta del DT (además del campo de texto libre).
+NACIONALIDADES = [
+    "Colombia", "Argentina", "España", "Brasil", "Inglaterra",
+    "Italia", "Francia", "Alemania", "Uruguay", "México",
+]
+
 def load_league_teams(league_id: str):
     """
     Importa dinámicamente el módulo correspondiente a la liga y obtiene el objeto Liga.
-    Implementa un mecanismo de resiliencia con fallback a datos simulados si falla la importación.
+    Intenta primero cargar desde la base de datos editada por el usuario en formato JSON.
+    Implementa un mecanismo de resiliencia con fallback a datos por defecto si falla.
     """
+    # Intentamos primero cargar los datos editados por el usuario si existen localmente
+    import os
+    import json
+    ruta_db_editada = "alpha_football_edited_db.json"
+    if os.path.exists(ruta_db_editada):
+        try:
+            with open(ruta_db_editada, "r", encoding="utf-8") as archivo_json:
+                db_datos = json.load(archivo_json)
+            if league_id in db_datos:
+                from alpha_football.models import Liga, Equipo
+                lista_equipos_datos = db_datos[league_id]
+                lista_equipos_construidos = []
+                for datos_equipo in lista_equipos_datos:
+                    try:
+                        equipo_instancia = Equipo.from_dict(datos_equipo)
+                        lista_equipos_construidos.append(equipo_instancia)
+                    except Exception as error_equipo:
+                        logger.warning(f"No se pudo reconstruir un equipo individual desde JSON: {error_equipo}. Omitiendo equipo.")
+                
+                # Mapeo de nombres oficiales y jornadas predeterminadas por liga
+                CONFIGURACION_LIGAS = {
+                    'betplay': {'nombre': "Liga BetPlay Dimayor Parodia", 'num_jornadas': 14},
+                    'laliga': {'nombre': "LaLiga EA Sports Parodia", 'num_jornadas': 10},
+                    'premier': {'nombre': "Premier League Parodia", 'num_jornadas': 10},
+                    'brasil': {'nombre': "Brasileirao Parodia", 'num_jornadas': 10},
+                    'argentina': {'nombre': "Liga Profesional Argentina Parodia", 'num_jornadas': 10}
+                }
+                config_liga = CONFIGURACION_LIGAS.get(league_id, {'nombre': f"Liga {league_id.upper()} Parodia", 'num_jornadas': 10})
+                
+                liga_cargada = Liga(
+                    nombre=config_liga['nombre'],
+                    tipo=league_id,
+                    equipos=lista_equipos_construidos,
+                    num_jornadas=config_liga['num_jornadas']
+                )
+                logger.info(f"Liga '{league_id}' cargada exitosamente desde la base de datos editada por el usuario.")
+                return liga_cargada
+        except Exception as error_carga_json:
+            # En caso de error al parsear o abrir el JSON, registramos el detalle y continuamos con la carga por defecto
+            logger.error(f"Error al leer base de datos editada '{ruta_db_editada}' para liga '{league_id}': {error_carga_json}. Procediendo con la importación dinámica estándar.")
+
     try:
-        # Importaciones dinámicas según la liga seleccionada
+        # Importaciones dinámicas según la liga seleccionada si no se usó JSON
         if league_id == 'betplay':
             from alpha_football.data.betplay import get_liga
         elif league_id == 'laliga':
@@ -57,9 +105,15 @@ def load_league_teams(league_id: str):
             # +5 suplentes por equipo (aplica a liga, carrera y amistoso, que pasan por aquí).
             try:
                 from alpha_football.plantilla import expandir_liga
-                expandir_liga(liga_obj, 5)
+                expandir_liga(liga_obj, 20)  # 20 jugadores base por equipo (cap 32)
             except Exception as e_suplentes:
                 logger.warning(f"No se pudieron agregar suplentes a la liga '{league_id}': {e_suplentes}")
+            # v0.7.1: escalar presupuestos para que el mercado sea jugable con valores realistas.
+            try:
+                from alpha_football.market import escalar_presupuestos
+                escalar_presupuestos(liga_obj)
+            except Exception as e_bud:
+                logger.warning(f"No se pudieron escalar presupuestos de '{league_id}': {e_bud}")
             return liga_obj
         else:
             raise ValueError("El cargador de liga retornó un objeto nulo.")
@@ -456,6 +510,47 @@ def _dibujar_boton_premium(screen: pygame.Surface, rect: pygame.Rect, texto: str
     return button_rect
 
 
+def _dibujar_boton_rojo(screen: pygame.Surface, rect: pygame.Rect, texto: str, hover: bool) -> pygame.Rect:
+    """
+    Dibuja un botón rojo premium interactivo con bordes redondeados y efectos interactivos.
+    Utilizado para confirmación y acciones destructivas (p.ej. eliminar slots de guardado).
+    """
+    button_rect = pygame.Rect(rect)
+    try:
+        if hover:
+            dibujo_rect = pygame.Rect(button_rect.left, button_rect.top - 2, button_rect.width, button_rect.height)
+            bg_color = (60, 20, 25)
+            border_color = COLORS.get('rojo', (255, 68, 68))
+            text_color = COLORS.get('rojo', (255, 68, 68))
+        else:
+            dibujo_rect = button_rect
+            bg_color = COLORS.get('panel', (20, 26, 46))
+            border_color = COLORS.get('rojo', (255, 68, 68))
+            text_color = COLORS.get('blanco', (255, 255, 255))
+            
+        sombra_rect = pygame.Rect(dibujo_rect.left + 3, dibujo_rect.top + 3, dibujo_rect.width, dibujo_rect.height)
+        try:
+            pygame.draw.rect(screen, (5, 8, 15), sombra_rect, border_radius=8)
+        except TypeError:
+            pygame.draw.rect(screen, (5, 8, 15), sombra_rect)
+            
+        try:
+            pygame.draw.rect(screen, bg_color, dibujo_rect, border_radius=8)
+            pygame.draw.rect(screen, border_color, dibujo_rect, width=2, border_radius=8)
+        except TypeError:
+            pygame.draw.rect(screen, bg_color, dibujo_rect)
+            pygame.draw.rect(screen, border_color, dibujo_rect, width=2)
+            
+        font = get_font('sm')
+        text_surf = font.render(texto, True, text_color)
+        text_rect = text_surf.get_rect(center=dibujo_rect.center)
+        screen.blit(text_surf, text_rect)
+    except Exception as e:
+        logger.error(f"Error al dibujar boton rojo: {e}")
+    return button_rect
+
+
+
 def _dibujar_panel_derecho(screen: pygame.Surface, estado: dict):
     """
     Dibuja un panel informativo premium y alegre sobre el fútbol en el lado derecho de la pantalla
@@ -600,6 +695,18 @@ def _aplicar_estado_cargado(estado: dict, loaded) -> bool:
                 if eq.id == loaded.equipo_usuario_id:
                     mi_equipo = eq
                     break
+        
+        # --- EXPANSIÓN RESILIENTE DE PLANTILLA AL CARGAR ---
+        # Si la liga viene de un save con plantillas viejas (menos jugadores),
+        # las expandimos con suplentes generados para garantizar que el usuario
+        # siempre tenga fondo de banco completo.
+        try:
+            from alpha_football.plantilla import expandir_liga
+            if liga:
+                expandir_liga(liga, 20, 32)  # Plantilla incompleta -> mín. 20, tope 32
+        except Exception as error_expansion_carga:
+            logger.warning(f"No se pudo expandir plantillas al cargar save: {error_expansion_carga}")
+
         slot = estado.get('slot_activo')  # preservar si ya venía marcado
         estado.clear()
         estado['liga'] = liga
@@ -608,7 +715,24 @@ def _aplicar_estado_cargado(estado: dict, loaded) -> bool:
         estado['temporada'] = loaded.temporada
         estado['jornada'] = liga.jornada_actual if liga else 1
         estado['copas'] = loaded.copas
-        estado['transfer_log'] = loaded.historial
+        estado['transfer_log'] = list(loaded.transfer_log)
+        estado['historial'] = list(loaded.historial)
+        estado['dt_nombre'] = getattr(loaded, 'dt_nombre', "")
+        estado['dt_nacionalidad'] = getattr(loaded, 'dt_nacionalidad', "")
+        
+        # Restaurar estado de la copa internacional
+        if getattr(loaded, 'copa_tipo', None) is not None:
+            estado['copa_tipo'] = loaded.copa_tipo
+            estado['copa_fase_actual'] = loaded.copa_fase_actual
+            estado['copa_grupo_standing'] = list(loaded.copa_grupo_standing)
+            estado['copa_bracket'] = dict(loaded.copa_bracket)
+            estado['copa_grupo_partidos'] = list(loaded.copa_grupo_partidos)
+            estado['copa_jornada_grupo'] = loaded.copa_jornada_grupo
+            estado['copa_tab'] = loaded.copa_tab
+            estado['copa_grupos'] = dict(getattr(loaded, 'copa_grupos', {}))
+            estado['copa_grupos_standings'] = dict(getattr(loaded, 'copa_grupos_standings', {}))
+            estado['copa_bracket_otros'] = dict(getattr(loaded, 'copa_bracket_otros', {}))
+        
         if slot:
             estado['slot_activo'] = slot
         if loaded.alineacion_activa:
@@ -655,7 +779,8 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
     # 2. Captura segura de posición de ratón y clics del frame actual
     mouse_pos = pygame.mouse.get_pos()
     click_pos = None
-    
+    key_events = []  # v0.7: teclas para el alta del DT (nombre / nacionalidad libre)
+
     try:
         # Extraemos eventos del cache (manejado por el orquestador principal main.py)
         for event in pygame.event.get():
@@ -665,6 +790,8 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:  # Clic izquierdo
                     click_pos = event.pos
+            elif event.type == pygame.KEYDOWN:
+                key_events.append(event)
     except Exception as e_events:
         logger.error(f"Error al procesar eventos en render de menú: {e_events}")
 
@@ -679,16 +806,18 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         draw_text(screen, "La revolución táctica pixelada", (100, 215), size='sm', color='azul')
 
         # Rectángulos de los botones principales alineados a la izquierda
-        btn_nueva_rect = pygame.Rect(100, 270, 320, 52)
-        btn_cargar_rect = pygame.Rect(100, 332, 320, 52)
-        btn_amistoso_rect = pygame.Rect(100, 394, 320, 52)
-        btn_opciones_rect = pygame.Rect(100, 456, 320, 52)
-        btn_salir_rect = pygame.Rect(100, 518, 320, 52)
+        btn_nueva_rect = pygame.Rect(100, 256, 320, 50)
+        btn_cargar_rect = pygame.Rect(100, 312, 320, 50)
+        btn_amistoso_rect = pygame.Rect(100, 368, 320, 50)
+        btn_editor_rect = pygame.Rect(100, 424, 320, 50)
+        btn_opciones_rect = pygame.Rect(100, 480, 320, 50)
+        btn_salir_rect = pygame.Rect(100, 536, 320, 50)
 
         # Dibujar botones premium
         _dibujar_boton_premium(screen, btn_nueva_rect, "NUEVA PARTIDA", btn_nueva_rect.collidepoint(mouse_pos))
         _dibujar_boton_premium(screen, btn_cargar_rect, "CARGAR PARTIDA", btn_cargar_rect.collidepoint(mouse_pos))
         _dibujar_boton_premium(screen, btn_amistoso_rect, "PARTIDO AMISTOSO", btn_amistoso_rect.collidepoint(mouse_pos))
+        _dibujar_boton_premium(screen, btn_editor_rect, "MODO EDICIÓN", btn_editor_rect.collidepoint(mouse_pos))
         _dibujar_boton_premium(screen, btn_opciones_rect, "OPCIONES", btn_opciones_rect.collidepoint(mouse_pos))
         _dibujar_boton_premium(screen, btn_salir_rect, "SALIR", btn_salir_rect.collidepoint(mouse_pos))
 
@@ -708,6 +837,9 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 estado['amis_visitante'] = None
                 estado['amis_phase'] = 'local'
                 estado['menu_step'] = 'amistoso_league'
+            elif btn_editor_rect.collidepoint(click_pos):
+                estado['current_screen'] = 'edit_screen'
+                return 'edit_screen'
             elif btn_opciones_rect.collidepoint(click_pos):
                 estado['options_return'] = 'menu'
                 estado['current_screen'] = 'options_screen'
@@ -805,31 +937,12 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             _dibujar_boton_premium(screen, btn_rect, equipo.nombre, hover_eq)
 
             if click_pos and btn_rect.collidepoint(click_pos):
-                try:
-                    estado['liga'] = estado['selected_liga_obj']
-                    estado['mi_equipo'] = equipo
-                    estado['equipos'] = estado['selected_liga_obj'].equipos
-                    estado['temporada'] = 1
-                    estado['jornada'] = 1
-                    estado['historial'] = []
-                    estado['dt_nombre'] = "DT Parodia"
-                    
-                    # Generar alineación activa por defecto para el nuevo equipo
-                    from alpha_football.models import alineacion_por_defecto
-                    def_alin = alineacion_por_defecto(equipo)
-                    estado['alineacion_activa'] = def_alin
-                    equipo.alineacion_activa = def_alin
-
-                    estado['current_screen'] = "league_screen"
-
-                    # Limpieza de variables temporales del menú
-                    estado.pop('menu_step', None)
-                    estado.pop('selected_league_id', None)
-                    estado.pop('selected_liga_obj', None)
-                    
-                    return "league_screen"
-                except Exception as e_select:
-                    logger.critical(f"Error al asignar equipo y liga elegida: {e_select}")
+                # v0.7: antes de empezar, el usuario crea su DT (nombre + nacionalidad).
+                estado['pending_equipo'] = equipo
+                estado['menu_step'] = 'dt_setup'
+                estado.setdefault('dt_nombre', "")
+                estado.setdefault('dt_nac_sel', "")
+                estado['dt_name_focus'] = True
 
         # Panel de detalles en la derecha
         panel_rect = pygame.Rect(760, 220, 420, 380)
@@ -868,6 +981,108 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         if click_pos and volver_rect.collidepoint(click_pos):
             estado['menu_step'] = 'select_league'
 
+    # --- ALTA DEL DT: NOMBRE + NACIONALIDAD (v0.7) ---
+    elif estado['menu_step'] == 'dt_setup':
+        _dibujar_logo_principal(screen, 100, 55, estado)
+        draw_text(screen, "CREA TU DIRECTOR TÉCNICO", (100, 170), size='lg', color='verde')
+        equipo = estado.get('pending_equipo')
+        if equipo:
+            draw_text(screen, f"Club elegido: {getattr(equipo, 'corto', None) or equipo.nombre}", (100, 210), size='sm', color='dorado')
+
+        estado.setdefault('dt_nac_custom', "")
+        estado.setdefault('dt_focus', 'name')
+
+        # Campo de nombre del DT
+        draw_text(screen, "Nombre del DT:", (100, 248), size='sm', color='blanco')
+        name_rect = pygame.Rect(100, 272, 430, 44)
+        foco_name = (estado['dt_focus'] == 'name')
+        pygame.draw.rect(screen, (12, 18, 36), name_rect, border_radius=6)
+        pygame.draw.rect(screen, COLORS.get('verde', (0, 255, 136)) if foco_name else COLORS.get('azul', (0, 191, 255)),
+                         name_rect, width=2, border_radius=6)
+        nombre_txt = estado.get('dt_nombre', '') or "Escribe tu nombre…"
+        draw_text(screen, nombre_txt[:30], (name_rect.x + 10, name_rect.y + 12), size='sm',
+                  color='blanco' if estado.get('dt_nombre') else 'azul')
+
+        # Nacionalidades sugeridas (botones)
+        draw_text(screen, "Nacionalidad:", (100, 335), size='sm', color='blanco')
+        nac_rects = []
+        for i, pais in enumerate(NACIONALIDADES):
+            col = i % 2
+            row = i // 2
+            r = pygame.Rect(100 + col * 215, 365 + row * 46, 200, 38)
+            nac_rects.append((r, pais))
+            sel = (estado.get('dt_nac_sel') == pais and not estado.get('dt_nac_custom', '').strip())
+            _dibujar_boton_premium(screen, r, pais, r.collidepoint(mouse_pos) or sel)
+
+        # Campo de nacionalidad libre
+        draw_text(screen, "Otra nacionalidad:", (560, 335), size='sm', color='blanco')
+        nac_rect = pygame.Rect(560, 365, 320, 42)
+        foco_nac = (estado['dt_focus'] == 'nac')
+        pygame.draw.rect(screen, (12, 18, 36), nac_rect, border_radius=6)
+        pygame.draw.rect(screen, COLORS.get('verde', (0, 255, 136)) if foco_nac else COLORS.get('azul', (0, 191, 255)),
+                         nac_rect, width=2, border_radius=6)
+        nac_txt = estado.get('dt_nac_custom', '') or "Escribe otra…"
+        draw_text(screen, nac_txt[:24], (nac_rect.x + 8, nac_rect.y + 11), size='sm',
+                  color='blanco' if estado.get('dt_nac_custom') else 'azul')
+
+        # Procesar teclado en el campo enfocado
+        for ev in key_events:
+            campo = 'dt_nombre' if estado['dt_focus'] == 'name' else ('dt_nac_custom' if estado['dt_focus'] == 'nac' else None)
+            if not campo:
+                continue
+            if ev.key == pygame.K_BACKSPACE:
+                estado[campo] = estado.get(campo, '')[:-1]
+            elif getattr(ev, 'unicode', '') and ev.unicode.isprintable() and len(estado.get(campo, '')) < 24:
+                estado[campo] = estado.get(campo, '') + ev.unicode
+
+        # Botones de acción
+        nac_final = (estado.get('dt_nac_custom', '').strip() or estado.get('dt_nac_sel', '')).strip()
+        listo = bool(estado.get('dt_nombre', '').strip()) and bool(nac_final)
+        btn_conf = pygame.Rect(560, 540, 320, 52)
+        btn_volver = pygame.Rect(100, 600, 200, 48)
+        _dibujar_boton_premium(screen, btn_conf, "EMPEZAR CARRERA" if listo else "FALTAN DATOS", btn_conf.collidepoint(mouse_pos))
+        _dibujar_boton_premium(screen, btn_volver, "VOLVER", btn_volver.collidepoint(mouse_pos))
+
+        if click_pos:
+            if name_rect.collidepoint(click_pos):
+                estado['dt_focus'] = 'name'
+            elif nac_rect.collidepoint(click_pos):
+                estado['dt_focus'] = 'nac'
+            elif btn_volver.collidepoint(click_pos):
+                estado['menu_step'] = 'select_team'
+            elif btn_conf.collidepoint(click_pos) and listo:
+                try:
+                    equipo = estado.get('pending_equipo')
+                    estado['liga'] = estado['selected_liga_obj']
+                    estado['mi_equipo'] = equipo
+                    estado['equipos'] = estado['selected_liga_obj'].equipos
+                    estado['temporada'] = 1
+                    estado['jornada'] = 1
+                    estado['historial'] = []
+                    estado['dt_nombre'] = estado.get('dt_nombre', '').strip() or "DT Parodia"
+                    estado['dt_nacionalidad'] = nac_final
+                    # Táctica por defecto al iniciar carrera: equilibrada (cambiable luego).
+                    equipo.estilo_dt = "anchelottismo"
+                    if not getattr(equipo, 'tactica_familiaridad', None):
+                        equipo.tactica_familiaridad = {}
+                    from alpha_football.models import alineacion_por_defecto
+                    def_alin = alineacion_por_defecto(equipo)
+                    estado['alineacion_activa'] = def_alin
+                    equipo.alineacion_activa = def_alin
+                    estado['current_screen'] = "league_screen"
+                    for k in ('menu_step', 'selected_league_id', 'selected_liga_obj', 'pending_equipo',
+                              'dt_focus', 'dt_nac_sel', 'dt_nac_custom', 'dt_name_focus'):
+                        estado.pop(k, None)
+                    return "league_screen"
+                except Exception as e_dt:
+                    logger.error(f"Error al finalizar alta del DT: {e_dt}")
+            else:
+                for r, pais in nac_rects:
+                    if r.collidepoint(click_pos):
+                        estado['dt_nac_sel'] = pais
+                        estado['dt_nac_custom'] = ""
+                        estado['dt_focus'] = None
+
     # --- CARGAR PARTIDA: SELECTOR DE SLOTS (Fase 2) ---
     elif estado['menu_step'] == 'load_slots':
         _dibujar_logo_principal(screen, 100, 70, estado)
@@ -884,30 +1099,77 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             hdr = cabeceras[i] if i < len(cabeceras) else None
             etiqueta = f"Slot {i+1}: {hdr.get('nombre_partida','Partida')}" if hdr else f"Slot {i+1}: [Slot Libre]"
             _dibujar_boton_premium(screen, r, etiqueta, r.collidepoint(mouse_pos))
+            
+            del_rect = pygame.Rect(1080, 245 + i * 64, 100, 54)
             if hdr:
                 draw_text(screen, f"{hdr.get('equipo_nombre','—')}  ·  Temp {hdr.get('temporada',1)}  ·  Jor {hdr.get('jornada',1)}",
                           (680, 245 + i * 64 + 16), size='sm', color='azul')
-            if click_pos and r.collidepoint(click_pos) and hdr:
-                try:
-                    from alpha_football import save
-                    loaded = save.cargar_slot(i + 1)
-                    estado['slot_activo'] = i + 1
-                    if _aplicar_estado_cargado(estado, loaded):
-                        return 'league_screen'
-                except Exception as e_ld:
-                    logger.error(f"Error al cargar slot {i+1}: {e_ld}")
-                    estado['menu_error'] = "No se pudo cargar ese slot."
-                    estado['menu_error_ticks'] = pygame.time.get_ticks()
+                
+                # Botón de borrar rojo al extremo derecho
+                hov_del = del_rect.collidepoint(mouse_pos)
+                _dibujar_boton_rojo(screen, del_rect, "BORRAR", hov_del)
+
+            # Bloquear clics normales si se está confirmando un borrado
+            if not estado.get('confirmar_borrar_slot'):
+                if click_pos and hdr and del_rect.collidepoint(click_pos):
+                    estado['confirmar_borrar_slot'] = i + 1
+                elif click_pos and r.collidepoint(click_pos) and hdr:
+                    try:
+                        from alpha_football import save
+                        loaded = save.cargar_slot(i + 1)
+                        estado['slot_activo'] = i + 1
+                        if _aplicar_estado_cargado(estado, loaded):
+                            return 'league_screen'
+                    except Exception as e_ld:
+                        logger.error(f"Error al cargar slot {i+1}: {e_ld}")
+                        estado['menu_error'] = "No se pudo cargar ese slot."
+                        estado['menu_error_ticks'] = pygame.time.get_ticks()
 
         volver_rect = pygame.Rect(100, 600, 200, 50)
         _dibujar_boton_premium(screen, volver_rect, "VOLVER", volver_rect.collidepoint(mouse_pos))
-        if click_pos and volver_rect.collidepoint(click_pos):
+        if click_pos and volver_rect.collidepoint(click_pos) and not estado.get('confirmar_borrar_slot'):
             estado['menu_step'] = 'main'
         if 'menu_error' in estado:
             if pygame.time.get_ticks() - estado.get('menu_error_ticks', 0) > 3000:
                 estado.pop('menu_error', None)
             else:
                 draw_text(screen, estado['menu_error'], (100, 560), size='sm', color='rojo')
+
+        # Modal de confirmación de borrado
+        slot_a_borrar = estado.get('confirmar_borrar_slot')
+        if slot_a_borrar:
+            # Dibujamos un overlay oscuro translúcido
+            overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
+            overlay.fill((10, 14, 26, 210))
+            screen.blit(overlay, (0, 0))
+            
+            modal_rect = pygame.Rect(SCREEN_W // 2 - 220, SCREEN_H // 2 - 100, 440, 200)
+            pygame.draw.rect(screen, COLORS.get('panel', (20, 26, 46)), modal_rect, border_radius=12)
+            pygame.draw.rect(screen, COLORS.get('rojo', (255, 68, 68)), modal_rect, width=2, border_radius=12)
+            
+            draw_text(screen, "CONFIRMAR BORRADO", (modal_rect.centerx - 120, modal_rect.y + 20), size='md', color='rojo')
+            draw_text(screen, f"¿Deseas eliminar la partida del Slot {slot_a_borrar}?", (modal_rect.centerx - 170, modal_rect.y + 70), size='sm', color='blanco')
+            
+            btn_si = pygame.Rect(modal_rect.x + 40, modal_rect.y + 120, 150, 44)
+            btn_no = pygame.Rect(modal_rect.x + 250, modal_rect.y + 120, 150, 44)
+            
+            hov_si = btn_si.collidepoint(mouse_pos)
+            hov_no = btn_no.collidepoint(mouse_pos)
+            
+            _dibujar_boton_rojo(screen, btn_si, "SÍ, BORRAR", hov_si)
+            _dibujar_boton_premium(screen, btn_no, "CANCELAR", hov_no)
+            
+            if click_pos:
+                if btn_si.collidepoint(click_pos):
+                    try:
+                        from alpha_football import save
+                        save.eliminar_slot(slot_a_borrar)
+                        logger.info(f"Slot {slot_a_borrar} borrado con éxito.")
+                    except Exception as e_del:
+                        logger.error(f"Error borrando slot {slot_a_borrar}: {e_del}")
+                    estado.pop('confirmar_borrar_slot', None)
+                elif btn_no.collidepoint(click_pos) or not modal_rect.collidepoint(click_pos):
+                    estado.pop('confirmar_borrar_slot', None)
 
     # --- PARTIDO AMISTOSO: ELEGIR LIGA (Fase 6) ---
     # Se elige una liga por equipo: primero la del local y luego la del visitante,
@@ -959,13 +1221,13 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     estado['amis_phase'] = 'visitante'
                     estado['menu_step'] = 'amistoso_league'
                 elif local is not None and equipo.id != local.id:
-                    # Visitante elegido: lanzar el amistoso (sin impacto en liga/copa/carrera).
+                    # Visitante elegido: lanzar el prepartido (que luego va al amistoso).
                     estado['amis_visitante'] = equipo
                     estado['match_mode'] = 'amistoso'
-                    estado.pop('sim_resultado', None)  # forzar simulación nueva
-                    estado['current_screen'] = 'match_screen'
-                    estado['menu_step'] = 'main'  # al volver del amistoso, menú principal
-                    return 'match_screen'
+                    estado['partido_actual'] = None
+                    estado.pop('sim_resultado', None)
+                    estado['menu_step'] = 'main'
+                    return 'prepartido_screen'
         # Botón para cambiar de liga sin perder el equipo ya elegido.
         otra_liga_rect = pygame.Rect(340, 600, 230, 50)
         _dibujar_boton_premium(screen, otra_liga_rect, "OTRA LIGA", otra_liga_rect.collidepoint(mouse_pos))

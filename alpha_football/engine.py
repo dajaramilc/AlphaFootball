@@ -19,9 +19,12 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 # ── Parametros tacticos ───────────────────────────────────────────────────────
-ESTILOS_DT: list[str] = ["haramball", "cruyffismo", "flickismo"]
+# v0.7: "anchelottismo" es la 4a tactica (equilibrada). NO entra en el triangulo
+# rock-paper-scissors, asi que bono_estilo devuelve 1.0 contra cualquiera: su ventaja
+# es la consistencia + la sinergia con la formacion/familiaridad (ver synergy_equipo).
+ESTILOS_DT: list[str] = ["haramball", "cruyffismo", "flickismo", "anchelottismo"]
 
-# Rock-paper-scissors: la clave vence al valor
+# Rock-paper-scissors: la clave vence al valor (anchelottismo queda fuera = neutro)
 ESTILO_VENTAJA: dict[str, str] = {
     "cruyffismo": "flickismo",
     "flickismo":  "haramball",
@@ -188,6 +191,107 @@ def bono_estilo(estilo_atk: str, estilo_def: str) -> float:
     if ESTILO_VENTAJA.get(estilo_atk) == estilo_def: return 1.15
     if ESTILO_VENTAJA.get(estilo_def) == estilo_atk: return 0.87
     return 1.0
+
+
+def synergy_equipo(equipo) -> float:
+    """
+    Multiplicador de ataque por SINERGIA entre la formación elegida y la táctica del equipo,
+    más la FAMILIARIDAD acumulada con esa táctica (jugar mucho una táctica con buenos
+    resultados la potencia, hasta poder superar el bonus base de la formación).
+
+    Devuelve un factor en [0.95, 1.25]. Resiliente: 1.0 si faltan datos.
+    """
+    try:
+        estilo = getattr(equipo, "estilo_dt", "") or ""
+        alin = getattr(equipo, "alineacion_activa", None)
+        formacion = getattr(alin, "formacion", None) if alin else None
+        syn = 1.0
+        # Bonus si la táctica coincide con la preferida de la formación.
+        # OJO: el motor amplifica mucho los multiplicadores de ataque (umbral gaussiano),
+        # así que los bonos son pequeños a propósito (sinergia plena ~ +35% goles, no x2).
+        if formacion and estilo:
+            try:
+                from alpha_football.formaciones import pref as _pref
+                if estilo == _pref(formacion):
+                    syn += 0.035
+            except Exception:
+                pass
+        # Bonus por familiaridad (0..1 -> hasta +0.05)
+        fam = getattr(equipo, "tactica_familiaridad", None) or {}
+        try:
+            syn += min(0.05, max(0.0, float(fam.get(estilo, 0.0))) * 0.05)
+        except Exception:
+            pass
+        return max(0.97, min(1.09, syn))
+    except Exception:
+        return 1.0
+
+
+def actualizar_familiaridad(equipo, gano: bool, empato: bool) -> None:
+    """
+    Sube la familiaridad del equipo con la táctica que jugó (más si ganó), con leve decay
+    de las demás. Acumulador 0..1. Se llama tras el partido del usuario.
+    """
+    try:
+        fam = getattr(equipo, "tactica_familiaridad", None)
+        if fam is None:
+            fam = {}
+            setattr(equipo, "tactica_familiaridad", fam)
+        estilo = getattr(equipo, "estilo_dt", "") or ""
+        if not estilo:
+            return
+        inc = 0.06 if gano else (0.02 if empato else 0.0)
+        fam[estilo] = max(0.0, min(1.0, fam.get(estilo, 0.0) + inc))
+        # Leve decay de las otras tácticas (se "olvida" lo que no se practica)
+        for k in list(fam.keys()):
+            if k != estilo:
+                fam[k] = max(0.0, fam[k] - 0.01)
+    except Exception:
+        pass
+
+
+def _prob_penal(jugador) -> float:
+    """Probabilidad de convertir un penal según el atributo `penales` del jugador."""
+    try:
+        pen = getattr(jugador, "penales", 0) or 60
+    except Exception:
+        pen = 60
+    return max(0.30, min(0.92, 0.55 + (pen - 60) * 0.006))
+
+
+def tanda_penales_jugadores(cobradores_local: list, cobradores_vis: list,
+                            rng: Optional[object] = None) -> tuple[bool, str]:
+    """
+    Resuelve una tanda de penales usando el atributo `penales` de los cobradores elegidos.
+    5 rondas + muerte súbita. Devuelve (gana_local, "X-Y").
+    """
+    azar = rng or random
+    cl = list(cobradores_local) or [None]
+    cv = list(cobradores_vis) or [None]
+
+    def _mete(j) -> bool:
+        return azar.random() < (_prob_penal(j) if j is not None else 0.55)
+
+    gl = gv = 0
+    for i in range(5):
+        if _mete(cl[i % len(cl)]):
+            gl += 1
+        if _mete(cv[i % len(cv)]):
+            gv += 1
+
+    ronda = 5
+    while gl == gv and ronda < 30:
+        a = _mete(cl[ronda % len(cl)])
+        b = _mete(cv[ronda % len(cv)])
+        if a and not b:
+            gl += 1
+        elif b and not a:
+            gv += 1
+        ronda += 1
+    if gl == gv:  # tope de seguridad para no colgar
+        gl += 1 if azar.random() < 0.5 else 0
+        gv += 1 if gl == gv else 0
+    return (gl > gv), f"{gl}-{gv}"
 
 
 # ── Nucleo de simulacion ──────────────────────────────────────────────────────
@@ -390,6 +494,9 @@ def simular_partido(
     jv = visitante.once_disponible
     mt = decision_mt or {}
     eventos_partido = []
+    # v0.7: sinergia formación/táctica/familiaridad sobre el ataque de cada equipo.
+    syn_l = synergy_equipo(local)
+    syn_v = synergy_equipo(visitante)
 
     # Agregar evento caótico simulado si se solicita
     if con_eventos_caoticos:
@@ -413,9 +520,9 @@ def simular_partido(
             pass
 
     for mitad, minutos in ((1, range(1, 46)), (2, range(46, 91))):
-        al = mt.get("atk_l", 1.0) if mitad == 2 else 1.0
+        al = (mt.get("atk_l", 1.0) if mitad == 2 else 1.0) * syn_l
         dl = mt.get("def_l", 1.0) if mitad == 2 else 1.0
-        av = mt.get("atk_v", 1.0) if mitad == 2 else 1.0
+        av = (mt.get("atk_v", 1.0) if mitad == 2 else 1.0) * syn_v
         dv = mt.get("def_v", 1.0) if mitad == 2 else 1.0
         for m in minutos:
             gl, gv = procesar_minuto(
@@ -444,8 +551,11 @@ def simular_rango(
     Retorna (goles_local_del_rango, goles_visitante_del_rango, eventos_acumulados).
     """
     m = mult or {}
-    al = float(m.get("atk_l", 1.0)); dl = float(m.get("def_l", 1.0))
-    av = float(m.get("atk_v", 1.0)); dv = float(m.get("def_v", 1.0))
+    # v0.7: la sinergia (formación/táctica/familiaridad) también afecta tramos sueltos.
+    al = float(m.get("atk_l", 1.0)) * synergy_equipo(local)
+    dl = float(m.get("def_l", 1.0))
+    av = float(m.get("atk_v", 1.0)) * synergy_equipo(visitante)
+    dv = float(m.get("def_v", 1.0))
     jl = local.once_disponible
     jv = visitante.once_disponible
     ev = eventos if eventos is not None else []

@@ -111,18 +111,23 @@ def desarrollar_plantilla_post_partido(
         pj = max(1, j.partidos_jugados)
         j.promedio_nota = round(((j.promedio_nota * (pj - 1)) + nota) / pj, 2)
 
-        # Progreso oculto de desarrollo según posición
+        # Progreso oculto de desarrollo según posición (v0.7: más peso a MED/DEL y a la nota)
         inc = 0.0
         if j.posicion in ("POR", "DEF"):
             if clean_sheet:
                 inc += 0.10
+                if j.posicion == "POR":
+                    j.porterias_cero += 1   # valla invicta para la tabla de porteros
             if nota > 7.5:
-                inc += 0.05
-        else:  # MED, DEL
-            inc += gp * 0.20
-            inc += ap * 0.10
+                inc += 0.06
+        else:  # MED, DEL — crecen más rápido por goles/asistencias/nota
+            inc += gp * 0.26
+            inc += ap * 0.14
             if nota > 7.5:
-                inc += 0.10
+                inc += 0.14
+        # Bonus por regularidad: un buen promedio histórico también hace subir el valor/OVR.
+        if j.promedio_nota >= 7.0:
+            inc += 0.04
         j.progreso_desarrollo += inc
 
         # Subidas de OVR: cada 1.0 de progreso -> +1 a 3 atributos base al azar
@@ -147,5 +152,13 @@ def desarrollar_plantilla_post_partido(
             "asistencias": ap,
             "subio_ovr": subio,
         })
+
+    # v0.7: el equipo se "familiariza" con la táctica usada (más si ganó). Vale para el
+    # partido en vivo y la simulación instantánea, que pasan ambos por aquí.
+    try:
+        from alpha_football.engine import actualizar_familiaridad
+        actualizar_familiaridad(equipo, gano, empato)
+    except Exception as e_fam:
+        logger.debug(f"No se pudo actualizar familiaridad táctica: {e_fam}")
 
     return reporte

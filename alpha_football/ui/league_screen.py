@@ -245,6 +245,12 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             logger.error(f"Error al inicializar fixtures de liga: {str(error_fixtures)}. Intentando continuar.")
         
         # 1. Obtener la jornada actual y partidos
+        mouse_pos = pygame.mouse.get_pos()
+        # Panel de historial más grande para mostrar más partidos con scroll
+        hist_rect = pygame.Rect(300, 510, 560, 175)
+        rect_hist_up = pygame.Rect(300 + 560 - 80, 510 + 4, 32, 28)
+        rect_hist_down = pygame.Rect(300 + 560 - 42, 510 + 4, 32, 28)
+        
         jornada_actual = getattr(liga, "jornada_actual", 1)
         partidos_jornada = [p for p in getattr(liga, "calendario", []) if p.jornada == jornada_actual]
         
@@ -331,7 +337,8 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 logger.error(f"Error al renderizar banner de alerta: {str(e_alert)}")
                 
         # --- PANEL IZQUIERDO DE CONTENIDO: CLASIFICACIÓN ---
-        left_rect = pygame.Rect(300, 100, 560, 580)
+        # Tabla de posiciones: ligeramente más pequeña para dar espacio al historial
+        left_rect = pygame.Rect(300, 100, 560, 395)
         try:
             draw_panel(screen, left_rect)
             draw_text(screen, "TABLA DE POSICIONES ⚽", (320, 115), size='md', color='azul')
@@ -404,7 +411,56 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         except Exception as e_table:
             logger.error(f"Error crítico al renderizar la tabla de posiciones: {str(e_table)}")
             draw_text(screen, "Error al cargar clasificación. Intente reiniciar.", (320, 200), size='md', color='rojo')
+
+        # --- HISTORIAL DE PARTIDOS (debajo de la tabla, más grande para ver hasta 6 partidos) ---
+        try:
+            # Panel expandido para mostrar más partidos con scroll
+            draw_panel(screen, hist_rect)
+            jugados = [p for p in getattr(liga, 'calendario', [])
+                       if p.jugado and (p.local_id == mi_equipo.id or p.visitante_id == mi_equipo.id)]
+            jugados.sort(key=lambda p: p.jornada, reverse=True)
+            total_jugados = len(jugados)
             
+            # Título con contador de partidos
+            titulo_hist = f"HISTORIAL DE PARTIDOS ⚽ ({total_jugados} jugados)"
+            draw_text(screen, titulo_hist, (320, hist_rect.y + 8), size='sm', color='dorado')
+            
+            # Paginación: mostrar hasta 6 partidos a la vez
+            PARTIDOS_VISIBLES = 6
+            offset = estado.setdefault('hist_scroll_offset', 0)
+            max_offset = max(0, total_jugados - PARTIDOS_VISIBLES)
+            if offset > max_offset:
+                offset = max_offset
+                estado['hist_scroll_offset'] = offset
+            
+            # Botones de scroll visibles y funcionales
+            draw_styled_button(screen, rect_hist_up, "▲", rect_hist_up.collidepoint(mouse_pos), COLORS.get('azul', (0, 191, 255)))
+            draw_styled_button(screen, rect_hist_down, "▼", rect_hist_down.collidepoint(mouse_pos), COLORS.get('azul', (0, 191, 255)))
+
+            hy = hist_rect.y + 34
+            if not jugados:
+                draw_text(screen, "Aún no has jugado partidos esta temporada.", (320, hy), size='sm', color='blanco')
+            else:
+                # Indicador de página si hay más de los visibles
+                if total_jugados > PARTIDOS_VISIBLES:
+                    pag_texto = f"[{offset + 1}-{min(offset + PARTIDOS_VISIBLES, total_jugados)} de {total_jugados}]"
+                    draw_text(screen, pag_texto, (hist_rect.right - 140, hist_rect.y + 8), size='sm', color='azul')
+                    
+                for p in jugados[offset:offset + PARTIDOS_VISIBLES]:
+                    loc = next((e for e in liga.equipos if e.id == p.local_id), None)
+                    vis = next((e for e in liga.equipos if e.id == p.visitante_id), None)
+                    ln = f"{(getattr(loc, 'corto', None) or '?')} {p.goles_local}-{p.goles_visitante} {(getattr(vis, 'corto', None) or '?')}"
+                    col = 'blanco'
+                    if loc and vis:
+                        user_is_local = (p.local_id == mi_equipo.id)
+                        ug = p.goles_local if user_is_local else p.goles_visitante
+                        rg = p.goles_visitante if user_is_local else p.goles_local
+                        col = 'verde' if ug > rg else ('rojo' if ug < rg else 'azul')
+                    draw_text(screen, f"J{p.jornada}:  {ln}", (320, hy), size='sm', color=col)
+                    hy += 23
+        except Exception as e_hist:
+            logger.error(f"Error al renderizar historial de partidos: {str(e_hist)}")
+
         # --- PANEL DERECHO DE CONTENIDO: ENCUENTROS ---
         right_rect = pygame.Rect(880, 100, 360, 580)
         try:
@@ -460,13 +516,15 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         except Exception as e_other_matches:
             logger.error(f"Error al renderizar otros partidos: {str(e_other_matches)}")
             
-        # --- BOTONES EN EL MENÚ IZQUIERDO (Mismas posiciones y tamaños que career_screen) ---
-        btn_jugar = pygame.Rect(40, 250, 220, 50)
-        btn_mercado = pygame.Rect(40, 320, 220, 50)
-        btn_copa = pygame.Rect(40, 390, 220, 50)
-        btn_career = pygame.Rect(40, 460, 220, 50)
-        btn_equipo = pygame.Rect(40, 530, 220, 50)
-        btn_salir = pygame.Rect(40, 630, 220, 50)
+        # --- BOTONES EN EL MENÚ IZQUIERDO ---
+        btn_jugar = pygame.Rect(40, 232, 220, 44)
+        btn_mercado = pygame.Rect(40, 288, 220, 44)
+        btn_copa = pygame.Rect(40, 344, 220, 44)
+        btn_ofertas = pygame.Rect(40, 400, 220, 44)
+        btn_stats = pygame.Rect(40, 456, 220, 44)
+        btn_career = pygame.Rect(40, 512, 220, 44)
+        btn_equipo = pygame.Rect(40, 568, 220, 44)
+        btn_salir = pygame.Rect(40, 632, 220, 44)
         
         mouse_pos = pygame.mouse.get_pos()
         click_pos = None
@@ -476,8 +534,18 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     return "menu"
-                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    click_pos = event.pos
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    if event.button == 1:
+                        click_pos = event.pos
+                    elif event.button == 4:  # Rueda arriba
+                        if hist_rect.collidepoint(mouse_pos):
+                            estado['hist_scroll_offset'] = max(0, estado.get('hist_scroll_offset', 0) - 1)
+                    elif event.button == 5:  # Rueda abajo
+                        if hist_rect.collidepoint(mouse_pos):
+                            jugados_wh = [p for p in getattr(liga, 'calendario', [])
+                                       if p.jugado and (p.local_id == mi_equipo.id or p.visitante_id == mi_equipo.id)]
+                            max_offset = max(0, len(jugados_wh) - 6)
+                            estado['hist_scroll_offset'] = min(max_offset, estado.get('hist_scroll_offset', 0) + 1)
         except Exception as e_events:
             logger.error(f"Error al procesar eventos en league_screen: {str(e_events)}")
             
@@ -489,8 +557,11 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         hov_equipo = btn_equipo.collidepoint(mouse_pos)
         hov_salir = btn_salir.collidepoint(mouse_pos)
         
+        jornada_maxima = getattr(liga, "num_jornadas", 10)
+        esta_finalizada = (jornada_actual == jornada_maxima and all(p.jugado for p in getattr(liga, "calendario", []) if p.jornada == jornada_actual))
+
         # Dibujar botones
-        # A. Jugar Jornada (puede estar bloqueado)
+        # A. Jugar Jornada (puede estar bloqueado o finalizado)
         if tiene_copa_pendiente:
             try:
                 pygame.draw.rect(screen, (40, 20, 20), btn_jugar, border_radius=8)
@@ -502,57 +573,62 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             txt_surf = font.render("JUGAR JORNADA 🔒", True, (150, 150, 150))
             txt_rect = txt_surf.get_rect(center=btn_jugar.center)
             screen.blit(txt_surf, txt_rect)
+        elif esta_finalizada:
+            draw_styled_button(screen, btn_jugar, "AVANZAR TEMP", hov_jugar, COLORS.get('verde', (0, 255, 136)))
         else:
             draw_styled_button(screen, btn_jugar, "JUGAR JORNADA", hov_jugar, COLORS.get('verde', (0, 255, 136)))
             
         draw_styled_button(screen, btn_mercado, "MERCADO DE PASES", hov_mercado, COLORS.get('azul', (0, 191, 255)))
         draw_styled_button(screen, btn_copa, "COPA INTERNACIONAL", hov_copa, COLORS.get('dorado', (255, 215, 0)))
+        draw_styled_button(screen, btn_ofertas, "OFERTAS", btn_ofertas.collidepoint(mouse_pos), COLORS.get('verde', (0, 255, 136)))
+        draw_styled_button(screen, btn_stats, "ESTADÍSTICAS", btn_stats.collidepoint(mouse_pos), COLORS.get('dorado', (255, 215, 0)))
         draw_styled_button(screen, btn_career, "HISTORIAL CARRERA", hov_career, COLORS.get('azul', (0, 191, 255)))
         draw_styled_button(screen, btn_equipo, "DIRECCIÓN EQUIPO", hov_equipo, COLORS.get('azul', (0, 191, 255)))
         draw_styled_button(screen, btn_salir, "GUARDAR Y SALIR", hov_salir, COLORS.get('rojo', (255, 68, 68)))
+
+        # Badge con el número de ofertas pendientes
+        _n_of = len(estado.get('ofertas_recibidas', []) or [])
+        if _n_of > 0:
+            try:
+                bx, by = btn_ofertas.right - 18, btn_ofertas.top + 6
+                pygame.draw.circle(screen, (255, 68, 68), (bx, by), 11)
+                bs = get_font('sm').render(str(_n_of), True, (255, 255, 255))
+                screen.blit(bs, bs.get_rect(center=(bx, by)))
+            except Exception:
+                pass
         
         # Lógica de clicks
         if click_pos:
-            if btn_jugar.collidepoint(click_pos):
+            if rect_hist_up.collidepoint(click_pos):
+                estado['hist_scroll_offset'] = max(0, estado.get('hist_scroll_offset', 0) - 1)
+            elif rect_hist_down.collidepoint(click_pos):
+                jugados_cl = [p for p in getattr(liga, 'calendario', [])
+                           if p.jugado and (p.local_id == mi_equipo.id or p.visitante_id == mi_equipo.id)]
+                max_offset = max(0, len(jugados_cl) - 6)
+                estado['hist_scroll_offset'] = min(max_offset, estado.get('hist_scroll_offset', 0) + 1)
+            elif btn_jugar.collidepoint(click_pos):
                 if tiene_copa_pendiente:
                     logger.warning("Intento de jugar jornada de liga cuando hay copa internacional pendiente. Bloqueado.")
+                elif esta_finalizada:
+                    return "resumen_temporada_screen"
                 else:
                     estado['partido_actual'] = partido_usuario
-                    return "match_screen"
+                    return "prepartido_screen"
             elif btn_mercado.collidepoint(click_pos):
                 return "market_screen"
             elif btn_copa.collidepoint(click_pos):
                 return "copa_screen"
+            elif btn_ofertas.collidepoint(click_pos):
+                return "ofertas_screen"
+            elif btn_stats.collidepoint(click_pos):
+                return "stats_screen"
             elif btn_career.collidepoint(click_pos):
                 return "career_screen"
             elif btn_equipo.collidepoint(click_pos):
                 return "team_screen"
             elif btn_salir.collidepoint(click_pos):
-                # Guardado de partida seguro y resiliente
-                try:
-                    from alpha_football.save import guardar_partida
-                    from alpha_football.models import EstadoJuego
-                    
-                    alin = estado.get('alineacion_activa')
-                    datos_estado = {
-                        "ligas": [liga.to_dict()] if liga else [],
-                        "copas": [c.to_dict() for c in estado.get("copas", [])],
-                        "equipo_usuario_id": mi_equipo.id if mi_equipo else None,
-                        "liga_usuario_id": liga.tipo if liga else None,
-                        "temporada": estado.get("temporada", 1),
-                        "historial": estado.get("transfer_log", []),
-                        "pantalla_actual": "temporada",
-                        "alineacion_activa": {
-                            "titulares": list(alin.titulares),
-                            "formacion": str(alin.formacion)
-                        } if alin else None
-                    }
-                    estado_juego = EstadoJuego.from_dict(datos_estado)
-                    guardar_partida(estado_juego)
-                    logger.info("Partida guardada de forma segura al salir de league_screen.")
-                except Exception as e_save:
-                    logger.error(f"Error al guardar partida al salir: {str(e_save)}. Continuando con la salida sin guardar.")
-                return "menu"
+                estado['save_slots_return'] = 'league_screen'
+                return "save_slots_screen"
         return None
     except Exception as error_general:
         logger.error(f"Error crítico en render de league_screen: {error_general}. Recuperando pantalla al menú principal.")

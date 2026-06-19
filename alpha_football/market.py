@@ -19,9 +19,54 @@ logger = logging.getLogger(__name__)
 # Parámetros del mercado
 TAMANO_MERCADO = 12
 PLANTILLA_MINIMA = 11
-PLANTILLA_MAXIMA = 25
+PLANTILLA_MAXIMA = 32   # Límite máximo de jugadores por equipo
 RECARGO_COMPRA = 1.10
 RETORNO_VENTA = 0.90
+# v0.7.1: margen AMPLIO sobre el nivel del club para poder fichar jugadores mejores
+# (antes +5, muy estricto). El dinero pasa a ser el límite real para los cracks.
+MARGEN_FICHAJE = 15
+
+# Como los valores ahora son realistas (cracks €100M+), se escalan los presupuestos para
+# que el mercado siga siendo jugable (clubes grandes pueden fichar; los chicos ahorran).
+BUDGET_SCALE = 8
+
+
+def escalar_presupuestos(liga: Any) -> None:
+    """
+    Multiplica el presupuesto de cada equipo de la liga para hacerlo compatible con el mercado.
+    Aplica una escala de 8 en Europa y una escala menor de 3 en ligas de Latinoamérica para mantener el equilibrio económico.
+    Garantiza idempotencia a través de la bandera _presupuesto_escalado.
+    """
+    try:
+        # Detectar el tipo de liga para determinar el factor de escala
+        tipo_liga = getattr(liga, "tipo", "")
+        if tipo_liga in ("betplay", "brasil", "argentina"):
+            factor_escala = 3  # Mantener balanceado con los precios LatAm (0.35)
+        else:
+            factor_escala = BUDGET_SCALE
+
+        for e in getattr(liga, "equipos", []):
+            if not getattr(e, "_presupuesto_escalado", False):
+                try:
+                    e.balance = int(getattr(e, "balance", 0) * factor_escala)
+                    setattr(e, "_presupuesto_escalado", True)
+                except Exception as error_individual:
+                    logger.error(f"No se pudo escalar el presupuesto del equipo {getattr(e, 'nombre', 'desconocido')}: {error_individual}")
+    except Exception as e:
+        logger.error(f"Error general al escalar presupuestos de la liga: {e}")
+
+# v0.7: fuerza relativa de cada liga (por tope de OVR). Define qué ligas son "más fuertes"
+# para el mercado internacional y las ofertas del exterior.
+FUERZA_LIGA = {
+    "betplay": 76,
+    "argentina": 80, "brasil": 80, "libertadores": 82,
+    "laliga": 85, "premier": 85, "champions": 88,
+}
+
+
+def fuerza_liga(tipo: str) -> int:
+    """Devuelve la 'fuerza' (tope OVR) de una liga; 78 por defecto."""
+    return FUERZA_LIGA.get(str(tipo or ""), 78)
 
 # --- Lectura y escritura resiliente de campos ---------------------------------
 
@@ -91,29 +136,95 @@ def _quitar_jugador_de_equipo(equipo: Any, jugador_id: int | str) -> Optional[An
 
 # --- Lógica de precios de mercado ---------------------------------------------
 
-def calcular_valor(jugador: Any) -> int:
-    """Recalcula el valor de mercado de un jugador según su overall."""
+ACTIVE_ESTADO: Optional[dict] = None
+
+def es_jugador_latam(jugador: Any) -> bool:
+    """Detecta de forma resiliente si un jugador pertenece a un club o pool de Latinoamérica."""
     try:
-        # Se lee el overall de manera resiliente
+        j_id = _campo(jugador, "id", None)
+        if j_id is None:
+            return False
+            
+        global ACTIVE_ESTADO
+        if ACTIVE_ESTADO and isinstance(ACTIVE_ESTADO, dict):
+            # 1. Buscar en la liga activa
+            liga = ACTIVE_ESTADO.get('liga')
+            if liga:
+                es_sud = getattr(liga, "tipo", "") in ['betplay', 'brasil', 'argentina']
+                for eq in getattr(liga, "equipos", []):
+                    for j in getattr(eq, "jugadores", []):
+                        if _campo(j, "id", None) == j_id:
+                            return es_sud
+                            
+            # 2. Buscar en todas las ligas cargadas
+            ligas = ACTIVE_ESTADO.get('ligas', [])
+            for l in ligas:
+                try:
+                    l_tipo = l.tipo if hasattr(l, "tipo") else l.get("tipo", "")
+                    es_sud = l_tipo in ['betplay', 'brasil', 'argentina']
+                    l_equipos = l.equipos if hasattr(l, "equipos") else l.get("equipos", [])
+                    for eq in l_equipos:
+                        eq_jugadores = eq.jugadores if hasattr(eq, "jugadores") else eq.get("jugadores", [])
+                        for j in eq_jugadores:
+                            j_id_cmp = j.id if hasattr(j, "id") else j.get("id")
+                            if j_id_cmp == j_id:
+                                return es_sud
+                except Exception:
+                    pass
+                    
+        # 3. Buscar en el pool de Copa Libertadores
+        try:
+            from alpha_football.data.internacional import POOL_LIBERTADORES
+            for eq in POOL_LIBERTADORES:
+                for j in eq.jugadores:
+                    if j.id == j_id:
+                        return True
+        except Exception:
+            pass
+            
+    except Exception as e_latam:
+        logger.error(f"Error en es_jugador_latam: {e_latam}")
+    return False
+
+def calcular_valor(jugador: Any) -> int:
+    """
+    Valor de mercado realista (anclado a la vida real): limitado a un máximo inicial
+    de $220M (en OVR 93). A partir de OVR 93, crece de forma equivalente/lineal
+    pero no de forma descabellada. En LatAm se aplica un factor corrector de reducción (0.35)
+    para ajustarse a su realidad de mercado.
+    """
+    try:
         overall = _campo(jugador, "overall", 50)
-        # Como models.Jugador no tiene edad, usamos 27 (pico de valor) por defecto
         edad = _campo(jugador, "edad", 27)
 
-        # Base exponencial
-        valor_base = int((max(1, overall) ** 2) * 1000)
+        # Base con OVR <= 93 cap en 220M
+        if overall <= 93:
+            # rate = 1.13328 (da 220M a OVR 93 con base 1M)
+            valor_base = 1_000_000 * (1.13328 ** (max(1, overall) - 50))
+        else:
+            # Crecimiento lineal/moderado para OVR > 93
+            valor_base = 180_000_000 + (overall - 93) * 15_000_000
+
+        # Reducción en Latinoamérica
+        if es_jugador_latam(jugador):
+            valor_base = valor_base * 0.35
 
         # Factor de edad
         if edad < 23:
-            factor_edad = 1.05
+            factor_edad = 1.10
         elif edad <= 29:
             factor_edad = 1.0
         else:
             factor_edad = max(0.30, 1.0 - (edad - 29) * 0.06)
 
-        return max(1000, int(valor_base * factor_edad))
+        return max(50_000, int(valor_base * factor_edad))
     except Exception as e:
-        logger.error(f"Error al calcular valor del jugador: {e}. Retornando 50000.")
-        return 50000
+        logger.error(f"Error al calcular valor del jugador: {e}. Usando valor por defecto resiliente.")
+        try:
+            ovr = _campo(jugador, "overall", 50)
+            return max(50_000, int(ovr * ovr * 1000))
+        except Exception:
+            return 50000
 
 def precio_compra(jugador: Any) -> int:
     """Precio de fichaje (valor + recargo)."""
@@ -436,7 +547,23 @@ def crear_oferta_ui(mi_equipo: Any, rivales: list, jornada: int, num_jornadas: i
             return None
         if not mi_equipo or len(getattr(mi_equipo, "jugadores", [])) <= PLANTILLA_MINIMA:
             return None
-        objetivo = azar.choice(mi_equipo.jugadores)
+            
+        # Variedad de ofertas: evitar jugadores recientemente ofertados
+        recent_ids = []
+        global ACTIVE_ESTADO
+        if ACTIVE_ESTADO and isinstance(ACTIVE_ESTADO, dict):
+            recent_ids = ACTIVE_ESTADO.setdefault('recent_offers_player_ids', [])
+        candidatos = [j for j in mi_equipo.jugadores if j.id not in recent_ids]
+        if not candidatos:
+            if isinstance(recent_ids, list):
+                recent_ids.clear()
+            candidatos = list(mi_equipo.jugadores)
+        objetivo = azar.choice(candidatos)
+        if isinstance(recent_ids, list):
+            recent_ids.append(objetivo.id)
+            if len(recent_ids) > 4:
+                recent_ids.pop(0)
+
         valor = getattr(objetivo, "valor", 0) or calcular_valor(objetivo)
         monto = int(valor * azar.uniform(0.95, 1.5))
         rivales_ok = [r for r in rivales if getattr(r, "balance", 0) >= monto] or list(rivales)
@@ -488,3 +615,149 @@ def _retirar_oferta(estado: Any, oferta: OfertaMercado) -> None:
                 and getattr(o, "equipo_destino_id", None) == oferta.equipo_destino_id)
     ]
     _escribir_campo(estado, "mercado_ofertas", restantes)
+
+
+# --- v0.7: factibilidad de fichaje (nivel del club) y mercado internacional --------
+
+def nivel_club(equipo: Any) -> int:
+    """Nivel del club = promedio de OVR de su mejor XI (referencia para fichar)."""
+    js = sorted(_campo(equipo, "jugadores", []), key=lambda j: _campo(j, "overall", 50), reverse=True)[:11]
+    if not js:
+        return 50
+    return sum(_campo(j, "overall", 50) for j in js) // len(js)
+
+
+def puede_fichar(equipo: Any, jugador: Any, precio: Optional[int] = None) -> tuple[bool, str]:
+    """
+    Reglas para que el usuario pueda fichar a un jugador:
+    - plantilla < 32 (si no, vender primero),
+    - OVR del jugador <= nivel del club + MARGEN_FICHAJE,
+    - presupuesto suficiente.
+    Devuelve (permitido, motivo).
+    """
+    try:
+        plantilla = _campo(equipo, "jugadores", [])
+        if len(plantilla) >= PLANTILLA_MAXIMA:
+            return False, f"Plantilla llena ({PLANTILLA_MAXIMA}). Debes vender a un jugador para comprarlo."
+        nivel = nivel_club(equipo)
+        ovr = _campo(jugador, "overall", 50)
+        if ovr > nivel + MARGEN_FICHAJE:
+            return False, f"Nivel muy superior (OVR {ovr} > tope {nivel + MARGEN_FICHAJE})."
+        if precio is None:
+            precio = precio_compra(jugador)
+        if _campo(equipo, "presupuesto", 0) < precio:
+            return False, "Presupuesto insuficiente (puedes ahorrar)."
+        return True, "OK"
+    except Exception as e:
+        logger.error(f"Error en puede_fichar: {e}")
+        return False, "No disponible."
+
+
+def pool_internacional(estado: Any) -> list:
+    """
+    Lista de (jugador, club, tipo_liga) de ligas MÁS FUERTES que la del usuario, para
+    ojear/ahorrar y fichar en el mercado internacional. Se construye una vez y se cachea
+    en estado['_pool_internacional'] (los clubes son instancias nuevas, no las activas).
+    """
+    cache = _campo(estado, "_pool_internacional", None)
+    if cache:
+        return cache
+
+    user_liga = _campo(estado, "liga", None)
+    user_fuerza = fuerza_liga(getattr(user_liga, "tipo", "betplay") if user_liga else "betplay")
+    candidatos: list = []
+
+    # Ligas domésticas más fuertes
+    fuentes = ("betplay", "argentina", "brasil", "laliga", "premier")
+    for tipo in fuentes:
+        if fuerza_liga(tipo) <= user_fuerza:
+            continue
+        try:
+            mod = __import__(f"alpha_football.data.{tipo}", fromlist=["get_liga"])
+            lg = mod.get_liga()
+            for eq in getattr(lg, "equipos", []):
+                for j in getattr(eq, "jugadores", []):
+                    candidatos.append((j, eq, tipo))
+        except Exception as e_src:
+            logger.debug(f"No se pudo cargar la liga internacional {tipo}: {e_src}")
+
+    # Pools de copa (élite internacional)
+    try:
+        from alpha_football.data.internacional import POOL_LIBERTADORES, POOL_CHAMPIONS
+        for eq in POOL_LIBERTADORES:
+            if fuerza_liga("libertadores") > user_fuerza:
+                for j in getattr(eq, "jugadores", []):
+                    candidatos.append((j, eq, "libertadores"))
+        for eq in POOL_CHAMPIONS:
+            if fuerza_liga("champions") > user_fuerza:
+                for j in getattr(eq, "jugadores", []):
+                    candidatos.append((j, eq, "champions"))
+    except Exception as e_pool:
+        logger.debug(f"No se pudieron cargar los pools de copa: {e_pool}")
+
+    # Recalcular valor y ordenar por OVR descendente
+    for j, _eq, _t in candidatos:
+        try:
+            _escribir_campo(j, "valor", calcular_valor(j))
+        except Exception:
+            pass
+    candidatos.sort(key=lambda t: _campo(t[0], "overall", 0), reverse=True)
+    _escribir_campo(estado, "_pool_internacional", candidatos)
+    logger.info(f"Mercado internacional: {len(candidatos)} jugadores de ligas más fuertes.")
+    return candidatos
+
+
+def crear_oferta_exterior(mi_equipo: Any, estado: Any,
+                          rng: Optional[random.Random] = None, prob: float = 0.12) -> Optional[dict]:
+    """
+    Si un jugador del usuario rinde muy bien, un club de una liga MÁS FUERTE puede ofertar
+    (monto mayor: valor * Random(1.3, 2.2)). Devuelve dict {jugador, comprador, monto, exterior}.
+    """
+    azar = rng or random.Random()
+    try:
+        jugadores = getattr(mi_equipo, "jugadores", [])
+        if len(jugadores) <= PLANTILLA_MINIMA:
+            return None
+        buenos = [
+            j for j in jugadores
+            if getattr(j, "promedio_nota", 0) >= 7.2
+            or (getattr(j, "goles", 0) + getattr(j, "asistencias", 0)) >= 4
+        ]
+        if not buenos or azar.random() > prob:
+            return None
+
+        # Variedad de ofertas del exterior: evitar recientemente ofertados y elegir de los mejores
+        recent_ids = estado.setdefault('recent_offers_player_ids', []) if estado and isinstance(estado, dict) else []
+        candidatos = [j for j in buenos if j.id not in recent_ids]
+        if not candidatos:
+            candidatos = list(buenos)
+
+        def _rend(j):
+            return getattr(j, "promedio_nota", 0) + (getattr(j, "goles", 0) + getattr(j, "asistencias", 0)) * 0.3
+
+        # Ordenar y seleccionar de forma aleatoria de los mejores
+        candidatos.sort(key=_rend, reverse=True)
+        top_candidates = candidatos[:max(1, min(3, len(candidatos)))]
+        objetivo = azar.choice(top_candidates)
+        
+        if isinstance(recent_ids, list):
+            recent_ids.append(objetivo.id)
+            if len(recent_ids) > 4:
+                recent_ids.pop(0)
+
+        clubes = []
+        vistos = set()
+        for _j, club, _t in pool_internacional(estado):
+            cid = getattr(club, "id", getattr(club, "nombre", ""))
+            if cid not in vistos:
+                vistos.add(cid)
+                clubes.append(club)
+        if not clubes:
+            return None
+        comprador = azar.choice(clubes)
+        valor = getattr(objetivo, "valor", 0) or calcular_valor(objetivo)
+        monto = int(valor * azar.uniform(1.3, 2.2))
+        return {"jugador": objetivo, "comprador": comprador, "monto": monto, "exterior": True}
+    except Exception as e:
+        logger.error(f"Error al crear oferta del exterior: {e}")
+        return None

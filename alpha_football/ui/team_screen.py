@@ -12,6 +12,8 @@ import random
 import logging
 from typing import Optional, Any, Dict, List
 
+from alpha_football import formaciones as F
+
 # Configurar logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s')
 logger = logging.getLogger(__name__)
@@ -197,6 +199,23 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         if '_original_alignment' not in estado:
             estado['_original_alignment'] = list(alin.titulares)
 
+        # v0.7: formación válida del registro y posiciones del campo según ella.
+        if not getattr(alin, 'formacion', None) or not F.existe(alin.formacion):
+            alin.formacion = F.FORMACION_DEFECTO
+        posiciones_campo = F.posiciones(alin.formacion)
+        tacticas = ["anchelottismo", "cruyffismo", "flickismo", "haramball"]
+        form_lista = F.lista_formaciones()
+        # Cicladores de formación y táctica (en la cabecera derecha, sobre el campo).
+        rect_f_prev = pygame.Rect(770, 28, 30, 30)
+        rect_f_box = pygame.Rect(804, 28, 150, 30)
+        rect_f_next = pygame.Rect(958, 28, 30, 30)
+        rect_t_prev = pygame.Rect(770, 64, 30, 30)
+        rect_t_box = pygame.Rect(804, 64, 150, 30)
+        rect_t_next = pygame.Rect(958, 64, 30, 30)
+
+        rect_scr_up = pygame.Rect(740 - 80, 95 + 4, 32, 28)
+        rect_scr_down = pygame.Rect(740 - 42, 95 + 4, 32, 28)
+
         # Inicializar variables auxiliares en el estado si faltan
         estado.setdefault('team_scroll_offset', 0)
         estado.setdefault('team_player_hover', -1)
@@ -248,15 +267,40 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
 
         # --- ENCABEZADO DE CONTENIDO (DERECHA) ---
         draw_text(screen, "DIRECCIÓN TÁCTICA DEL EQUIPO", (300, 20), size='xl', color='dorado')
-        draw_text(screen, "Define tus 11 titulares para el próximo encuentro. ¡Busca la gloria!", (300, 65), size='sm', color='azul')
+        draw_text(screen, "Define tu once, formación y táctica.", (300, 66), size='sm', color='azul')
+
+        # --- v0.7: CICLADORES DE FORMACIÓN Y TÁCTICA ---
+        _mp = pygame.mouse.get_pos()
+
+        def _cycler(prev_r, box_r, next_r, valor, etiqueta, color_acc):
+            draw_styled_button(screen, prev_r, "<", prev_r.collidepoint(_mp), color_acc)
+            draw_styled_button(screen, next_r, ">", next_r.collidepoint(_mp), color_acc)
+            try:
+                pygame.draw.rect(screen, (15, 22, 40), box_r, border_radius=6)
+                pygame.draw.rect(screen, color_acc, box_r, width=2, border_radius=6)
+            except Exception:
+                pass
+            vs = get_font('sm').render(str(valor), True, (255, 255, 255))
+            screen.blit(vs, vs.get_rect(center=box_r.center))
+            draw_text(screen, etiqueta, (box_r.right + 6, box_r.y + 6), size='sm', color='azul')
+
+        _cycler(rect_f_prev, rect_f_box, rect_f_next, alin.formacion, "FORMACIÓN",
+                COLORS.get('verde', (0, 255, 136)))
+        _fam_pct = int(float((mi_equipo.tactica_familiaridad or {}).get(mi_equipo.estilo_dt, 0.0)) * 100)
+        _cycler(rect_t_prev, rect_t_box, rect_t_next, mi_equipo.estilo_dt, "TÁCTICA",
+                COLORS.get('dorado', (255, 215, 0)))
+        draw_text(screen, f"Preferida de {alin.formacion}: {F.pref(alin.formacion)}  ·  Familiaridad: {_fam_pct}%",
+                  (1000, 70), size='sm', color='blanco')
 
         # --- BOTONES EN EL MENÚ IZQUIERDO ---
-        btn_jugar = pygame.Rect(40, 250, 220, 50)
-        btn_mercado = pygame.Rect(40, 320, 220, 50)
-        btn_copa = pygame.Rect(40, 390, 220, 50)
-        btn_career = pygame.Rect(40, 460, 220, 50)
-        btn_equipo = pygame.Rect(40, 530, 220, 50)
-        btn_salir = pygame.Rect(40, 630, 220, 50)
+        btn_jugar = pygame.Rect(40, 232, 220, 44)
+        btn_mercado = pygame.Rect(40, 288, 220, 44)
+        btn_copa = pygame.Rect(40, 344, 220, 44)
+        btn_ofertas = pygame.Rect(40, 400, 220, 44)
+        btn_stats = pygame.Rect(40, 456, 220, 44)
+        btn_career = pygame.Rect(40, 512, 220, 44)
+        btn_equipo = pygame.Rect(40, 568, 220, 44)
+        btn_salir = pygame.Rect(40, 632, 220, 44)
 
         mouse_pos = pygame.mouse.get_pos()
         click_pos = None
@@ -290,6 +334,8 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         draw_styled_button(screen, btn_jugar, "JUGAR JORNADA", hov_jugar, COLORS.get('verde', (0, 255, 136)))
         draw_styled_button(screen, btn_mercado, "MERCADO DE PASES", hov_mercado, COLORS.get('azul', (0, 191, 255)))
         draw_styled_button(screen, btn_copa, "COPA INTERNACIONAL", hov_copa, COLORS.get('dorado', (255, 215, 0)))
+        draw_styled_button(screen, btn_ofertas, "OFERTAS", btn_ofertas.collidepoint(mouse_pos), COLORS.get('verde', (0, 255, 136)))
+        draw_styled_button(screen, btn_stats, "ESTADÍSTICAS", btn_stats.collidepoint(mouse_pos), COLORS.get('dorado', (255, 215, 0)))
         draw_styled_button(screen, btn_career, "HISTORIAL CARRERA", hov_career, COLORS.get('azul', (0, 191, 255)))
         draw_styled_button(screen, btn_equipo, "DIRECCIÓN EQUIPO", True, COLORS.get('dorado', (255, 215, 0)))
         draw_styled_button(screen, btn_salir, "GUARDAR Y SALIR", hov_salir, COLORS.get('rojo', (255, 68, 68)))
@@ -305,6 +351,10 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         
         titulares = alin.titulares
         draw_text(screen, f"PLANTILLA — {len(titulares)}/11 TITULARES", (rect_lista.x + 15, rect_lista.y + 8), size='sm', color='dorado')
+        
+        # Botones de scroll físico para la plantilla
+        draw_styled_button(screen, rect_scr_up, "▲", rect_scr_up.collidepoint(_mp), COLORS.get('azul', (0, 191, 255)))
+        draw_styled_button(screen, rect_scr_down, "▼", rect_scr_down.collidepoint(_mp), COLORS.get('azul', (0, 191, 255)))
 
         fila_alto = 55
         visible_h = rect_lista.height - encabezado_h
@@ -408,9 +458,9 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
 
         radio_circ = 20
         for slot_idx, jugador in enumerate(jugadores_titulares_ord[:11]):
-            if slot_idx >= len(POSICIONES_CAMPO_433):
+            if slot_idx >= len(posiciones_campo):
                 break
-            fx, fy_frac = POSICIONES_CAMPO_433[slot_idx]
+            fx, fy_frac = posiciones_campo[slot_idx]
             cx = int(rect_campo.x + rect_campo.width * fx)
             cy = int(rect_campo.y + rect_campo.height * fy_frac)
 
@@ -432,7 +482,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             draw_text(screen, ap_trunc, (cx - 24, cy - radio_circ - 18), size='sm', color='dorado')
 
         # Formación de la esquina
-        draw_text(screen, "FORMACIÓN 4-3-3", (rect_campo.right - 140, rect_campo.y + 10), size='sm', color='dorado')
+        draw_text(screen, f"FORMACIÓN {alin.formacion}", (rect_campo.right - 150, rect_campo.y + 10), size='sm', color='dorado')
 
         # --- BOTONES DE ACCIÓN (ABAJO) ---
         btn_auto = pygame.Rect(300, 615, 180, 45)
@@ -449,38 +499,34 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
 
         # --- LÓGICA DE PROCESAMIENTO DE CLICS ---
         if click_pos:
+            # 0. Cicladores de formación / táctica (tienen prioridad sobre el resto)
+            if rect_f_prev.collidepoint(click_pos) or rect_f_next.collidepoint(click_pos):
+                paso = -1 if rect_f_prev.collidepoint(click_pos) else 1
+                f_idx = form_lista.index(alin.formacion) if alin.formacion in form_lista else 0
+                alin.formacion = form_lista[(f_idx + paso) % len(form_lista)]
+                # Al cambiar de formación, re-balancear el once a sus cuotas.
+                alin.titulares = F.mejor_once(mi_equipo.jugadores, alin.formacion)
+                estado['team_flash_msg'] = f"Formación: {alin.formacion}"
+                estado['team_flash_timer'] = 1.5
+            elif rect_t_prev.collidepoint(click_pos) or rect_t_next.collidepoint(click_pos):
+                paso = -1 if rect_t_prev.collidepoint(click_pos) else 1
+                t_idx = tacticas.index(mi_equipo.estilo_dt) if mi_equipo.estilo_dt in tacticas else 0
+                mi_equipo.estilo_dt = tacticas[(t_idx + paso) % len(tacticas)]
+                estado['team_flash_msg'] = f"Táctica: {mi_equipo.estilo_dt}"
+                estado['team_flash_timer'] = 1.5
+            elif rect_scr_up.collidepoint(click_pos):
+                estado['team_scroll_offset'] = max(0, estado['team_scroll_offset'] - 1)
+            elif rect_scr_down.collidepoint(click_pos):
+                total_j = len(mi_equipo.jugadores)
+                n_visible = 8  # 440 de altura visible / 55
+                max_sc = max(0, total_j - n_visible)
+                estado['team_scroll_offset'] = min(max_sc, estado['team_scroll_offset'] + 1)
+
             # 1. Clic en los botones de acción inferior
-            if btn_auto.collidepoint(click_pos):
+            elif btn_auto.collidepoint(click_pos):
                 try:
-                    # Selección automatizada del mejor XI inicial
-                    por_pos = {"POR": [], "DEF": [], "MED": [], "DEL": []}
-                    for idx, j in enumerate(mi_equipo.jugadores):
-                        if j.lesion_partidos == 0:
-                            p = j.posicion if j.posicion in por_pos else "MED"
-                            por_pos[p].append((j.overall, idx))
-                    
-                    for pos in por_pos:
-                        por_pos[pos].sort(reverse=True)
-                    
-                    titulares_auto = []
-                    cuotas = {"POR": 1, "DEF": 4, "MED": 3, "DEL": 3}
-                    for pos, cuota in cuotas.items():
-                        for _, idx in por_pos[pos][:cuota]:
-                            titulares_auto.append(idx)
-                    
-                    # Rellenar a 11 si es necesario
-                    seleccionados = set(titulares_auto)
-                    restantes = sorted(
-                        [(j.overall, idx) for idx, j in enumerate(mi_equipo.jugadores) if j.lesion_partidos == 0 and idx not in seleccionados],
-                        reverse=True
-                    )
-                    for _, idx in restantes:
-                        if len(titulares_auto) >= 11:
-                            break
-                        titulares_auto.append(idx)
-                        
-                    alin.titulares = titulares_auto[:11]
-                    estado['team_flash_msg'] = "Once óptimo seleccionado"
+                    alin.titulares = F.mejor_once(mi_equipo.jugadores, alin.formacion)
+                    estado['team_flash_msg'] = f"Once óptimo para {alin.formacion}"
                     estado['team_flash_timer'] = 2.0
                 except Exception as e_auto:
                     logger.error(f"Fallo en autoselección: {e_auto}")
@@ -545,33 +591,19 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             elif btn_copa.collidepoint(click_pos):
                 estado.pop('_original_alignment', None)
                 return "copa_screen"
+            elif btn_ofertas.collidepoint(click_pos):
+                estado.pop('_original_alignment', None)
+                return "ofertas_screen"
+            elif btn_stats.collidepoint(click_pos):
+                estado.pop('_original_alignment', None)
+                return "stats_screen"
             elif btn_career.collidepoint(click_pos):
                 estado.pop('_original_alignment', None)
                 return "career_screen"
             elif btn_salir.collidepoint(click_pos):
-                try:
-                    from alpha_football.save import guardar_partida
-                    from alpha_football.models import EstadoJuego
-                    datos_estado = {
-                        "ligas": [liga.to_dict()] if liga else [],
-                        "copas": [c.to_dict() for c in estado.get("copas", [])],
-                        "equipo_usuario_id": mi_equipo.id if mi_equipo else None,
-                        "liga_usuario_id": liga.tipo if liga else None,
-                        "temporada": estado.get("temporada", 1),
-                        "historial": estado.get("transfer_log", []),
-                        "pantalla_actual": "temporada",
-                        "alineacion_activa": {
-                            "titulares": list(alin.titulares),
-                            "formacion": str(alin.formacion)
-                        } if alin else None
-                    }
-                    estado_juego = EstadoJuego.from_dict(datos_estado)
-                    guardar_partida(estado_juego)
-                    logger.info("Partida guardada con éxito antes de salir.")
-                except Exception as e_save:
-                    logger.error(f"Fallo al guardar al salir de team_screen: {e_save}")
                 estado.pop('_original_alignment', None)
-                return "menu"
+                estado['save_slots_return'] = 'team_screen'
+                return "save_slots_screen"
 
         # --- RENDERIZAR NOTIFICACIÓN FLASH ---
         flash_msg = estado.get('team_flash_msg', "")

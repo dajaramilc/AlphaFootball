@@ -14,6 +14,8 @@ import logging
 from typing import Any, Optional
 import pygame
 
+from alpha_football import formaciones as F
+
 # Importación resiliente del tema visual
 try:
     from alpha_football.ui.theme import (
@@ -266,6 +268,7 @@ def simular_otros_partidos(liga: Any, jornada_actual: int) -> None:
     """Simula los demás partidos de la jornada actual que no sean del usuario."""
     try:
         from alpha_football.engine import simular_partido
+        from alpha_football.desarrollo import desarrollar_plantilla_post_partido
         
         partidos_jornada = [p for p in liga.calendario if p.jornada == jornada_actual]
         for p in partidos_jornada:
@@ -278,6 +281,13 @@ def simular_otros_partidos(liga: Any, jornada_actual: int) -> None:
                 p.goles_local = res.goles_local
                 p.goles_visitante = res.goles_visitante
                 p.jugado = True
+                
+                # Desarrollar los jugadores de ambos equipos de la IA
+                try:
+                    desarrollar_plantilla_post_partido(loc_eq, res.goles_local, res.goles_visitante)
+                    desarrollar_plantilla_post_partido(vis_eq, res.goles_visitante, res.goles_local)
+                except Exception as e_dev_ia:
+                    logger.error(f"Error al desarrollar equipo de la IA: {e_dev_ia}")
     except Exception as e:
         logger.error(f"Error al simular otros partidos de la jornada: {e}")
 
@@ -328,11 +338,10 @@ def recalcular_standings_copa(estado: dict) -> None:
         standings = estado.get('copa_grupo_standing', [])
         partidos = estado.get('copa_grupo_partidos', [])
         
-        # Reiniciar estadísticas
+        # Reiniciar estadísticas (NOTA: Standing.dg es una property calculada, no se asigna).
         for st in standings:
             if hasattr(st, 'pj'):
                 st.pj = st.g = st.e = st.p = st.gf = st.gc = st.pts = 0
-                st.dg = 0
             else:
                 st['pj'] = st['g'] = st['e'] = st['p'] = st['gf'] = st['gc'] = st['pts'] = 0
                 
@@ -370,7 +379,6 @@ def recalcular_standings_copa(estado: dict) -> None:
                     else:
                         st_l.e += 1
                         st_l.pts += 1
-                    st_l.dg = st_l.gf - st_l.gc
                 else:
                     st_l['pj'] += 1
                     st_l['gf'] += gl
@@ -397,7 +405,6 @@ def recalcular_standings_copa(estado: dict) -> None:
                     else:
                         st_v.e += 1
                         st_v.pts += 1
-                    st_v.dg = st_v.gf - st_v.gc
                 else:
                     st_v['pj'] += 1
                     st_v['gf'] += gv
@@ -412,6 +419,245 @@ def recalcular_standings_copa(estado: dict) -> None:
                         st_v['pts'] += 1
     except Exception as err:
         logger.error(f"Fallo en recalcular_standings_copa: {err}")
+
+# --- v0.7: cierre de jornada de liga reutilizable (live + simulación instantánea) ═══
+
+def finalizar_jornada_liga(estado: dict, liga: Any, mi_equipo: Any, partido: Any,
+                           goles_l: int, goles_v: int) -> None:
+    """
+    Cierra el partido del usuario: guarda goles, simula el resto de la jornada,
+    recuenta la tabla, avanza la jornada y genera posibles ofertas (local y exterior).
+    Lo usan tanto la pantalla en vivo como la "Simulación instantánea" del pre-partido.
+    """
+    try:
+        partido.goles_local = goles_l
+        partido.goles_visitante = goles_v
+        partido.jugado = True
+        simular_otros_partidos(liga, liga.jornada_actual)
+        actualizar_estadisticas_liga(liga)
+        if liga.jornada_actual < liga.num_jornadas:
+            liga.jornada_actual += 1
+        else:
+            logger.info("Fin de temporada alcanzado.")
+        # Ofertas tras la jornada (IA local + posible oferta del exterior por buen rendimiento)
+        try:
+            from alpha_football import market
+            if mi_equipo:
+                rivales = [e for e in liga.equipos if e.id != mi_equipo.id]
+                oferta_ia = market.crear_oferta_ui(mi_equipo, rivales, liga.jornada_actual, liga.num_jornadas)
+                if oferta_ia:
+                    estado.setdefault('ofertas_recibidas', []).append(oferta_ia)
+                _crear_ext = getattr(market, 'crear_oferta_exterior', None)
+                if _crear_ext:
+                    oferta_ext = _crear_ext(mi_equipo, estado)
+                    if oferta_ext:
+                        estado.setdefault('ofertas_recibidas', []).append(oferta_ext)
+        except Exception as e_of:
+            logger.error(f"Error al generar ofertas tras la jornada: {e_of}")
+    except Exception as e:
+        logger.error(f"Error en finalizar_jornada_liga: {e}")
+
+
+# --- v0.7: menú táctico en partido (medio tiempo + cambio en vivo) ═══════════════
+
+_TACTICAS_MENU = ["anchelottismo", "cruyffismo", "flickismo", "haramball"]
+
+
+def _menu_tactico(screen: pygame.Surface, estado: dict, equipo: Any, alin: Any,
+                  mouse_pos: tuple, click_pos: Optional[tuple], titulo: str) -> Optional[str]:
+    """
+    Overlay para dirigir el equipo durante el partido: FORMACIÓN, TÁCTICA, y CAMBIOS
+    (sacar un titular y meter un suplente, anunciados en la transmisión).
+    Devuelve 'reanudar' cuando el usuario pulsa REANUDAR; muta equipo/alineación in situ.
+    """
+    try:
+        ov = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
+        ov.fill((8, 20, 14, 210))
+        screen.blit(ov, (0, 0))
+    except Exception:
+        pass
+
+    panel = pygame.Rect(SCREEN_W // 2 - 340, 40, 680, 600)
+    draw_glass_panel(screen, panel, bg_color=(12, 28, 20), border_color=(255, 215, 0), alpha=240)
+    draw_text(screen, titulo, (panel.x + 25, panel.y + 14), size='lg', color='dorado')
+
+    if not getattr(alin, 'formacion', None) or not F.existe(alin.formacion):
+        alin.formacion = F.FORMACION_DEFECTO
+    form_lista = F.lista_formaciones()
+    jugadores = getattr(equipo, 'jugadores', [])
+
+    # --- Fila de cicladores: Formación y Táctica ---
+    fy = panel.y + 58
+    ty = panel.y + 104
+    rf_prev = pygame.Rect(panel.x + 150, fy, 38, 38)
+    rf_box = pygame.Rect(panel.x + 192, fy, 150, 38)
+    rf_next = pygame.Rect(panel.x + 346, fy, 38, 38)
+    rt_prev = pygame.Rect(panel.x + 150, ty, 38, 38)
+    rt_box = pygame.Rect(panel.x + 192, ty, 150, 38)
+    rt_next = pygame.Rect(panel.x + 346, ty, 38, 38)
+
+    def _box(box_r, valor, acc):
+        try:
+            pygame.draw.rect(screen, (15, 22, 40), box_r, border_radius=6)
+            pygame.draw.rect(screen, acc, box_r, width=2, border_radius=6)
+        except Exception:
+            pass
+        s = get_font('sm').render(str(valor), True, (255, 255, 255))
+        screen.blit(s, s.get_rect(center=box_r.center))
+
+    draw_text(screen, "Formación:", (panel.x + 25, fy + 9), size='sm', color='blanco')
+    draw_text(screen, "Táctica:", (panel.x + 25, ty + 9), size='sm', color='blanco')
+    draw_button(screen, rf_prev, "<", rf_prev.collidepoint(mouse_pos))
+    draw_button(screen, rf_next, ">", rf_next.collidepoint(mouse_pos))
+    _box(rf_box, alin.formacion, (0, 255, 136))
+    draw_button(screen, rt_prev, "<", rt_prev.collidepoint(mouse_pos))
+    draw_button(screen, rt_next, ">", rt_next.collidepoint(mouse_pos))
+    _box(rt_box, equipo.estilo_dt, (255, 215, 0))
+    fam_pct = int(float((getattr(equipo, 'tactica_familiaridad', {}) or {}).get(equipo.estilo_dt, 0.0)) * 100)
+    draw_text(screen, f"Pref {F.pref(alin.formacion)} · Fam {fam_pct}%", (panel.x + 400, fy + 9), size='sm', color='azul')
+
+    # --- Dirección del equipo: TITULARES (izq) y BANCO (der), toca uno y otro para cambiar ---
+    sub_out = estado.get('sim_sub_out')
+    draw_text(screen, "Toca un TITULAR y luego un SUPLENTE para cambiar:", (panel.x + 25, panel.y + 150), size='sm', color='dorado')
+    draw_text(screen, "TITULARES", (panel.x + 30, panel.y + 176), size='sm', color='verde')
+    draw_text(screen, "BANCO", (panel.x + 365, panel.y + 176), size='sm', color='azul')
+
+    fila_rects = []   # (rect, idx, es_banco)
+    titulares_idx = [i for i in alin.titulares if 0 <= i < len(jugadores)]
+    banco_idx = [i for i, j in enumerate(jugadores) if i not in alin.titulares and getattr(j, 'lesion_partidos', 0) == 0]
+
+    y0 = panel.y + 200
+    for n, idx in enumerate(titulares_idx[:11]):
+        r = pygame.Rect(panel.x + 25, y0 + n * 20, 310, 18)
+        j = jugadores[idx]
+        sel = (idx == sub_out)
+        try:
+            pygame.draw.rect(screen, (40, 80, 55) if sel else (20, 30, 26), r, border_radius=3)
+            if sel:
+                pygame.draw.rect(screen, (0, 255, 136), r, width=1, border_radius=3)
+        except Exception:
+            pass
+        draw_text(screen, f"[{j.posicion}] {j.apellido[:16]}  {j.overall}", (r.x + 6, r.y + 1), size='sm',
+                  color='verde' if sel else 'blanco')
+        fila_rects.append((r, idx, False))
+    for n, idx in enumerate(banco_idx[:11]):
+        r = pygame.Rect(panel.x + 360, y0 + n * 20, 295, 18)
+        j = jugadores[idx]
+        try:
+            pygame.draw.rect(screen, (20, 26, 46), r, border_radius=3)
+        except Exception:
+            pass
+        draw_text(screen, f"[{j.posicion}] {j.apellido[:15]}  {j.overall}", (r.x + 6, r.y + 1), size='sm', color='blanco')
+        fila_rects.append((r, idx, True))
+
+    btn_auto = pygame.Rect(panel.x + 30, panel.bottom - 56, 280, 44)
+    btn_reanudar = pygame.Rect(panel.x + 360, panel.bottom - 56, 290, 44)
+    draw_button(screen, btn_auto, "AUTO ONCE", btn_auto.collidepoint(mouse_pos))
+    draw_button(screen, btn_reanudar, "REANUDAR PARTIDO", btn_reanudar.collidepoint(mouse_pos))
+
+    if click_pos:
+        if rf_prev.collidepoint(click_pos) or rf_next.collidepoint(click_pos):
+            paso = -1 if rf_prev.collidepoint(click_pos) else 1
+            i = form_lista.index(alin.formacion) if alin.formacion in form_lista else 0
+            alin.formacion = form_lista[(i + paso) % len(form_lista)]
+            alin.titulares = F.mejor_once(equipo.jugadores, alin.formacion)
+            estado['sim_sub_out'] = None
+        elif rt_prev.collidepoint(click_pos) or rt_next.collidepoint(click_pos):
+            paso = -1 if rt_prev.collidepoint(click_pos) else 1
+            i = _TACTICAS_MENU.index(equipo.estilo_dt) if equipo.estilo_dt in _TACTICAS_MENU else 0
+            equipo.estilo_dt = _TACTICAS_MENU[(i + paso) % len(_TACTICAS_MENU)]
+        elif btn_auto.collidepoint(click_pos):
+            alin.titulares = F.mejor_once(equipo.jugadores, alin.formacion)
+            estado['sim_sub_out'] = None
+        elif btn_reanudar.collidepoint(click_pos):
+            estado['sim_sub_out'] = None
+            return 'reanudar'
+        else:
+            for r, idx, es_banco in fila_rects:
+                if not r.collidepoint(click_pos):
+                    continue
+                if not es_banco:
+                    estado['sim_sub_out'] = idx  # marcar titular a sacar
+                else:
+                    # meter suplente: cambiar el titular marcado por este del banco
+                    out_idx = estado.get('sim_sub_out')
+                    if out_idx is not None and out_idx in alin.titulares:
+                        pos = alin.titulares.index(out_idx)
+                        alin.titulares[pos] = idx
+                        try:
+                            sale = jugadores[out_idx].apellido
+                            entra = jugadores[idx].apellido
+                            estado.setdefault('sim_comentarios', []).append(
+                                f"CAMBIO: SALE {sale}, ENTRA {entra}")
+                        except Exception:
+                            pass
+                        estado['sim_sub_out'] = None
+                break
+    return None
+
+
+def _menu_penales(screen: pygame.Surface, estado: dict, user_eq: Any,
+                  mouse_pos: tuple, click_pos: Optional[tuple]) -> Optional[list]:
+    """
+    Selección de cobradores antes de la tanda. Pre-selecciona el top-5 por atributo
+    `penales`; el usuario puede alternar (máx 5). Devuelve la lista de Jugador al
+    pulsar 'DEFINIR EN PENALES'.
+    """
+    try:
+        ov = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
+        ov.fill((20, 8, 8, 210))
+        screen.blit(ov, (0, 0))
+    except Exception:
+        pass
+
+    panel = pygame.Rect(SCREEN_W // 2 - 320, 70, 640, 580)
+    draw_glass_panel(screen, panel, bg_color=(28, 14, 14), border_color=(255, 215, 0), alpha=235)
+    draw_text(screen, "EMPATE — ELIGE TUS 5 COBRADORES", (panel.x + 30, panel.y + 18), size='lg', color='dorado')
+    draw_text(screen, "Ordenados por atributo de penales. Clic para alternar (máx 5).",
+              (panel.x + 30, panel.y + 56), size='sm', color='azul')
+
+    jugadores = list(getattr(user_eq, 'jugadores', []) or [])
+    orden = sorted(range(len(jugadores)), key=lambda i: getattr(jugadores[i], 'penales', 0), reverse=True)
+
+    # Pre-selección por defecto: top-5
+    if 'sim_penales_sel' not in estado:
+        estado['sim_penales_sel'] = orden[:5]
+    sel = estado['sim_penales_sel']
+
+    fila_rects = []
+    y = panel.y + 95
+    for idx in orden[:14]:
+        j = jugadores[idx]
+        r = pygame.Rect(panel.x + 30, y, 580, 32)
+        elegido = idx in sel
+        bg = (30, 65, 45) if elegido else (24, 26, 40)
+        try:
+            pygame.draw.rect(screen, bg, r, border_radius=5)
+            pygame.draw.rect(screen, (0, 255, 136) if elegido else (60, 70, 95), r, width=1, border_radius=5)
+        except Exception:
+            pass
+        orden_txt = f"{sel.index(idx) + 1}. " if elegido else "   "
+        draw_text(screen, f"{orden_txt}[{j.posicion}] {j.nombre_completo[:24]}", (r.x + 10, r.y + 7), size='sm',
+                  color='verde' if elegido else 'blanco')
+        draw_text(screen, f"PEN {getattr(j, 'penales', 0)}", (r.right - 80, r.y + 7), size='sm', color='dorado')
+        fila_rects.append((r, idx))
+        y += 36
+
+    btn_def = pygame.Rect(panel.x + 200, panel.bottom - 60, 240, 46)
+    draw_button(screen, btn_def, "DEFINIR EN PENALES", btn_def.collidepoint(mouse_pos))
+
+    if click_pos:
+        for r, idx in fila_rects:
+            if r.collidepoint(click_pos):
+                if idx in sel:
+                    sel.remove(idx)
+                elif len(sel) < 5:
+                    sel.append(idx)
+                break
+        if btn_def.collidepoint(click_pos) and sel:
+            return [jugadores[i] for i in sel]
+    return None
+
 
 # --- Renderizador de la Pantalla ══════════════════════════════════════════════
 
@@ -457,7 +703,21 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             if match_mode == 'amistoso':
                 return "menu"
             return "league_screen"
-            
+
+        # v0.7: equipo que el usuario controla en este partido (menús tácticos / penales).
+        user_eq = None
+        if mi_equipo and mi_equipo.id in (local.id, visitante.id):
+            user_eq = mi_equipo
+        elif match_mode == 'amistoso':
+            user_eq = local
+        user_alin = None
+        if user_eq is not None:
+            user_alin = getattr(user_eq, 'alineacion_activa', None)
+            if user_alin is None:
+                from alpha_football.models import alineacion_por_defecto
+                user_alin = alineacion_por_defecto(user_eq)
+                user_eq.alineacion_activa = user_alin
+
         # 1. Simulación de la PRIMERA MITAD al entrar. La 2ª mitad se simula DESPUÉS de la
         #    charla de medio tiempo, para que la decisión táctica afecte de verdad al motor.
         if 'sim_resultado' not in estado:
@@ -493,7 +753,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             # Velocidad de simulación: factor 1 = normal, 2 = el doble de rápido. Se conserva
             # entre partidos (estado), por eso se lee con get en vez de fijarlo siempre a 1.
             estado.setdefault('sim_velocidad_factor', 1)
-            estado['sim_speed'] = max(60, MS_POR_MINUTO // estado['sim_velocidad_factor'])
+            estado['sim_speed'] = max(40, MS_POR_MINUTO // estado['sim_velocidad_factor'])
             estado['sim_last_tick'] = pygame.time.get_ticks()
 
         minuto = estado['sim_minuto']
@@ -503,7 +763,8 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         
         # 2. Lógica del Ticker del Reloj
         now = pygame.time.get_ticks()
-        if sim_state in ('jugando', 'segundo_tiempo') and estado['sim_flash_goles'] == 0:
+        if (sim_state in ('jugando', 'segundo_tiempo') and estado['sim_flash_goles'] == 0
+                and not estado.get('sim_tactico_abierto')):
             if now - estado['sim_last_tick'] >= estado['sim_speed']:
                 estado['sim_minuto'] += 1
                 minuto = estado['sim_minuto']
@@ -589,9 +850,9 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         board_rect = pygame.Rect(40, 20, 1200, 150)
         draw_glass_panel(screen, board_rect, bg_color=(10, 25, 20), border_color=(255, 215, 0), alpha=210)
         
-        # Nombre de equipos truncados a 20 caracteres para evitar solapamiento con el marcador
-        local_nombre_trunc = local.nombre[:20].upper()
-        visitante_nombre_trunc = visitante.nombre[:20].upper()
+        # Nombre corto (v0.7) para evitar solapamiento con el marcador.
+        local_nombre_trunc = (getattr(local, 'corto', None) or local.nombre)[:20].upper()
+        visitante_nombre_trunc = (getattr(visitante, 'corto', None) or visitante.nombre)[:20].upper()
         
         # Dibujar escudos decorativos al lado de los nombres de los equipos
         color_local = get_team_color(local.id)
@@ -614,10 +875,17 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         r_w = get_font('md').size(reloj_str)[0]
         draw_text(screen, reloj_str, (SCREEN_W // 2 - r_w // 2, 115), size='md', color='azul')
 
-        # Botón de velocidad: alterna x1 / x2 para duplicar la rapidez de la simulación.
+        # Botón de velocidad: cicla x1 / x2 / x5 para acelerar la simulación.
         factor_vel = estado.get('sim_velocidad_factor', 1)
         rect_velocidad = pygame.Rect(1085, 112, 115, 42)
         draw_button(screen, rect_velocidad, f"VEL x{factor_vel}", rect_velocidad.collidepoint(pygame.mouse.get_pos()))
+
+        # Botón TÁCTICA: abre el menú de formación/táctica/dirección durante el partido.
+        rect_tactica = pygame.Rect(948, 112, 128, 42)
+        mostrar_tactica = (user_eq is not None and sim_state in ('jugando', 'segundo_tiempo')
+                           and not estado.get('sim_tactico_abierto'))
+        if mostrar_tactica:
+            draw_button(screen, rect_tactica, "TÁCTICA", rect_tactica.collidepoint(pygame.mouse.get_pos()))
         
         # Barra de progreso del partido interactiva con pelotita corriendo
         try:
@@ -696,12 +964,17 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 click_pos = event.pos
 
-        # Clic en el botón de velocidad: alterna x1 <-> x2 y actualiza el ritmo del reloj al instante.
+        # Clic en velocidad: cicla x1 -> x2 -> x5 y actualiza el ritmo del reloj al instante.
         if click_pos and rect_velocidad.collidepoint(click_pos):
-            nuevo_factor = 1 if estado.get('sim_velocidad_factor', 1) >= 2 else 2
+            nuevo_factor = {1: 2, 2: 5, 5: 1}.get(estado.get('sim_velocidad_factor', 1), 1)
             estado['sim_velocidad_factor'] = nuevo_factor
-            estado['sim_speed'] = max(60, MS_POR_MINUTO // nuevo_factor)
+            estado['sim_speed'] = max(40, MS_POR_MINUTO // nuevo_factor)
             click_pos = None  # consumir el clic para que no active otra cosa debajo
+
+        # Clic en TÁCTICA: abre el overlay de ajuste táctico en vivo (pausa el reloj).
+        if mostrar_tactica and click_pos and rect_tactica.collidepoint(click_pos):
+            estado['sim_tactico_abierto'] = True
+            click_pos = None
 
         # A. Animación de Flash de Gol con Confeti y Balón Rebotando
         if estado['sim_flash_goles'] > 0:
@@ -762,77 +1035,73 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             t2_w = get_font('lg').size(t2)[0]
             draw_text(screen, t2, (SCREEN_W // 2 - t2_w // 2, SCREEN_H // 2 + 15), size='lg', color='bg', shadow=False)
             
-        # B. Medio Tiempo Interactividad con Pizarra Táctica y Estilo Pizarra/Madera
+        # B. Ajuste táctico EN VIVO (botón TÁCTICA durante el juego) — pausa el reloj.
+        elif estado.get('sim_tactico_abierto') and user_eq is not None:
+            res = _menu_tactico(screen, estado, user_eq, user_alin, mouse_pos, click_pos,
+                                "AJUSTE TÁCTICO EN VIVO")
+            if res == 'reanudar':
+                estado['sim_tactico_abierto'] = False
+                # Re-simular SOLO el tramo restante de la mitad en curso con la nueva config.
+                fin = 45 if minuto < 45 else 90
+                try:
+                    from alpha_football.engine import simular_rango
+                    if minuto < fin:
+                        _gl, _gv, nuevos = simular_rango(local, visitante, minuto + 1, fin)
+                        estado['sim_eventos'] = [e for e in estado['sim_eventos'] if e['minuto'] <= minuto] + nuevos
+                except Exception as e_resim:
+                    logger.error(f"Error al re-simular tras cambio táctico: {e_resim}")
+                estado['sim_last_tick'] = pygame.time.get_ticks()
+
+        # C. Medio Tiempo: menú de formación / táctica / dirección + REANUDAR.
         elif sim_state == 'medio_tiempo':
-            # Capa de oscurecimiento verde oscuro translúcido
-            try:
-                mid_overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
-                mid_overlay.fill((10, 40, 20, 180))
-                screen.blit(mid_overlay, (0, 0))
-            except Exception:
-                pass
-            
-            # Pizarra táctica de entrenador
-            panel_mid = pygame.Rect(SCREEN_W // 2 - 320, SCREEN_H // 2 - 220, 640, 440)
-            draw_tactical_board(screen, panel_mid)
-            
-            draw_text(screen, "MEDIO TIEMPO — CHARLA TÁCTICA", (SCREEN_W // 2 - 280, SCREEN_H // 2 - 190), size='lg', color='dorado')
-            draw_text(screen, "Selecciona una estrategia para la segunda mitad:", (SCREEN_W // 2 - 280, SCREEN_H // 2 - 145), size='sm', color='blanco')
-            
-            # Botones tácticos rediseñados como tarjetas de la pizarra
-            b1 = pygame.Rect(SCREEN_W // 2 - 280, SCREEN_H // 2 - 90, 560, 45)
-            b2 = pygame.Rect(SCREEN_W // 2 - 280, SCREEN_H // 2 - 35, 560, 45)
-            b3 = pygame.Rect(SCREEN_W // 2 - 280, SCREEN_H // 2 + 20, 560, 45)
-            b4 = pygame.Rect(SCREEN_W // 2 - 280, SCREEN_H // 2 + 75, 560, 45)
-            
-            hov1 = b1.collidepoint(mouse_pos)
-            hov2 = b2.collidepoint(mouse_pos)
-            hov3 = b3.collidepoint(mouse_pos)
-            hov4 = b4.collidepoint(mouse_pos)
-            
-            # Dibujamos las opciones con bordes de color neón y texto
-            draw_tactical_option_button(screen, b1, "1. CHARLA MOTIVACIONAL (+Moral del equipo)", hov1, border_color=(255, 215, 0))
-            draw_tactical_option_button(screen, b2, "2. PLANTEAMIENTO OFENSIVO (+Ocasiones de Gol)", hov2, border_color=(255, 68, 68))
-            draw_tactical_option_button(screen, b3, "3. AUTOBÚS ATRÁS (Cerrar filas defensivas)", hov3, border_color=(0, 191, 255))
-            draw_tactical_option_button(screen, b4, "4. MANTENER PLAN DE JUEGO ORIGINAL", hov4, border_color=(255, 255, 255))
-            
-            if click_pos:
-                eleccion = None
-                if b1.collidepoint(click_pos):   eleccion = 1
-                elif b2.collidepoint(click_pos): eleccion = 2
-                elif b3.collidepoint(click_pos): eleccion = 3
-                elif b4.collidepoint(click_pos): eleccion = 4
-
-                if eleccion:
-                    charla = CHARLAS_MT[eleccion]
-                    # La charla motivacional sube moral real (afecta el poder efectivo de los jugadores).
-                    if eleccion == 1 and mi_equipo:
-                        try:
-                            for j in mi_equipo.jugadores:
-                                j.moral = min(100, j.moral + 10)
-                        except Exception:
-                            pass
-                    estado['sim_comentarios'].append(charla["msg"])
-
-                    # Construir decision_mt para el lado del usuario y SIMULAR la 2ª mitad con el motor.
-                    user_is_local = bool(mi_equipo and local and mi_equipo.id == local.id)
-                    if user_is_local:
-                        decision_mt = {"atk_l": charla["atk"], "def_l": charla["def"]}
-                    else:
-                        decision_mt = {"atk_v": charla["atk"], "def_v": charla["def"]}
+            if user_eq is not None:
+                res = _menu_tactico(screen, estado, user_eq, user_alin, mouse_pos, click_pos,
+                                    "MEDIO TIEMPO — FORMACIÓN / TÁCTICA / DIRECCIÓN")
+                if res == 'reanudar':
+                    estado['sim_comentarios'].append(
+                        f"DT: {user_eq.estilo_dt} en {user_alin.formacion}. ¡A la segunda mitad!")
                     try:
                         from alpha_football.engine import simular_rango
-                        _gl2, _gv2, ev2 = simular_rango(local, visitante, 46, 90, mult=decision_mt)
+                        _gl2, _gv2, ev2 = simular_rango(local, visitante, 46, 90)
                         estado['sim_eventos'].extend(ev2)
                     except Exception as e_2t:
                         logger.error(f"Error al simular la segunda mitad: {e_2t}")
-
-                    # Reanudar la revelación minuto a minuto desde el 46
                     estado['sim_estado'] = 'segundo_tiempo'
                     estado['sim_last_tick'] = pygame.time.get_ticks()
-                
-        # C. Pantalla Finalizada
+            else:
+                # Sin equipo controlable (caso raro): simular la 2ª mitad y continuar.
+                try:
+                    from alpha_football.engine import simular_rango
+                    _gl2, _gv2, ev2 = simular_rango(local, visitante, 46, 90)
+                    estado['sim_eventos'].extend(ev2)
+                except Exception:
+                    pass
+                estado['sim_estado'] = 'segundo_tiempo'
+                estado['sim_last_tick'] = pygame.time.get_ticks()
+
+        # D. Pantalla Finalizada
         elif sim_state == 'finalizado':
+            # v0.7: definición por penales (eliminatoria de copa del usuario que terminó en empate).
+            es_bracket_copa = (match_mode == 'copa' and estado.get('partido_copa_dict') is None)
+            if es_bracket_copa and user_eq is not None and goles_l == goles_v and not estado.get('sim_penales_resuelto'):
+                cobradores = _menu_penales(screen, estado, user_eq, mouse_pos, click_pos)
+                if cobradores is not None:
+                    try:
+                        from alpha_football.engine import tanda_penales_jugadores
+                        rival_eq = visitante if user_eq.id == local.id else local
+                        rivales_pen = sorted(getattr(rival_eq, 'jugadores', []),
+                                             key=lambda j: getattr(j, 'penales', 0), reverse=True)[:5]
+                        gana_user, marcador = tanda_penales_jugadores(cobradores, rivales_pen)
+                        estado['sim_penales_resuelto'] = True
+                        estado['sim_penales_marcador'] = marcador
+                        estado['sim_penales_gana_user'] = gana_user
+                        estado.pop('sim_penales_sel', None)
+                        estado['sim_comentarios'].append(f"¡Definición por penales {marcador}!")
+                    except Exception as e_pen:
+                        logger.error(f"Error en la tanda de penales: {e_pen}")
+                        estado['sim_penales_resuelto'] = True
+                return None  # mientras se eligen cobradores no se dibuja el panel final
+
             # Fase 3: aplicar el desarrollo de los jugadores del usuario UNA sola vez al terminar.
             if not estado.get('sim_desarrollo_done'):
                 estado['sim_desarrollo_done'] = True
@@ -894,8 +1163,8 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                     # Fase 6: amistoso sin consecuencias; limpiar y volver al menú.
                     for k in ('sim_resultado', 'sim_eventos', 'sim_desarrollo', 'sim_desarrollo_done',
                               'sim_minuto', 'sim_goles_l', 'sim_goles_v', 'sim_comentarios',
-                              'sim_eventos_procesados', 'sim_estado', 'match_mode',
-                              'amis_local', 'amis_visitante', 'amistoso_liga'):
+                              'sim_eventos_procesados', 'sim_estado', 'match_mode', 'sim_tactico_abierto',
+                              'sim_sub_out', 'amis_local', 'amis_visitante', 'amistoso_liga'):
                         estado.pop(k, None)
                     return "menu"
                 if match_mode == 'copa':
@@ -915,12 +1184,11 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                             fase_data['jugado'] = True
                             
                             if goles_l == goles_v:
-                                if random.random() < 0.55:
-                                    fase_data['avanza'] = 'user'
-                                    fase_data['penales'] = '5-4'
-                                else:
-                                    fase_data['avanza'] = 'rival'
-                                    fase_data['penales'] = '4-5'
+                                # v0.7: usar el resultado de la tanda elegida por el usuario.
+                                gana_user = estado.get('sim_penales_gana_user', random.random() < 0.55)
+                                fase_data['avanza'] = 'user' if gana_user else 'rival'
+                                fase_data['penales'] = estado.get('sim_penales_marcador',
+                                                                  '5-4' if gana_user else '4-5')
                             else:
                                 if goles_l > goles_v:
                                     fase_data['avanza'] = 'user'
@@ -929,7 +1197,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                                     
                             # Si el usuario avanza, mover la copa a la siguiente fase
                             if fase_data['avanza'] == 'user':
-                                fases = ['octavos', 'cuartos', 'semis', 'final']
+                                fases = ['cuartos', 'semis', 'final']
                                 if fase_actual in fases:
                                     curr_idx = fases.index(fase_actual)
                                     if curr_idx < len(fases) - 1:
@@ -955,40 +1223,20 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                     estado.pop('partido_visitante_obj', None)
                     estado.pop('partido_copa_dict', None)
                     estado.pop('partido_copa_bracket_fase', None)
+                    estado.pop('sim_penales_resuelto', None)
+                    estado.pop('sim_penales_marcador', None)
+                    estado.pop('sim_penales_gana_user', None)
+                    estado.pop('sim_penales_sel', None)
+                    estado.pop('sim_tactico_abierto', None)
 
                     return "copa_screen"
                 else:
-                    # Guardamos los goles oficiales de liga
-                    partido.goles_local = goles_l
-                    partido.goles_visitante = goles_v
-                    partido.jugado = True
-                    
-                    # Simular los otros partidos de la jornada
-                    simular_otros_partidos(liga, liga.jornada_actual)
-                    
-                    # Recuento de la tabla a partir de todos los partidos jugados
-                    actualizar_estadisticas_liga(liga)
-                    
-                    # Avanzar jornada
-                    if liga.jornada_actual < liga.num_jornadas:
-                        liga.jornada_actual += 1
-                    else:
-                        logger.info("Fin de temporada alcanzado.")
-
-                    # Fase 4: posible oferta de la IA por un jugador nuestro (si el mercado está abierto)
-                    try:
-                        from alpha_football import market
-                        if mi_equipo:
-                            rivales = [e for e in liga.equipos if e.id != mi_equipo.id]
-                            oferta_ia = market.crear_oferta_ui(
-                                mi_equipo, rivales, liga.jornada_actual, liga.num_jornadas
-                            )
-                            if oferta_ia:
-                                estado.setdefault('ofertas_recibidas', []).append(oferta_ia)
-                    except Exception as e_of:
-                        logger.error(f"Error al generar oferta de la IA tras la jornada: {e_of}")
+                    # Cierre de la jornada de liga (helper reutilizado por la sim instantánea).
+                    finalizar_jornada_liga(estado, liga, mi_equipo, partido, goles_l, goles_v)
 
                     # Limpiar variables de simulación de este partido
+                    estado.pop('sim_tactico_abierto', None)
+                    estado.pop('sim_sub_out', None)
                     estado.pop('sim_resultado', None)
                     estado.pop('sim_eventos', None)
                     estado.pop('sim_desarrollo', None)
