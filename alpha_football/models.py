@@ -60,6 +60,10 @@ class Jugador:
     progreso_desarrollo: float = 0.0   # acumulador oculto; al llegar a 1.0 sube OVR
     valor: int = 0                     # valor de mercado recalculado tras cada partido
     edad: int = 25
+    # v0.8.x: techo de OVR del jugador ("potencial final"). Si 0 = "aún sin calcular"
+    # (se deriva perezosamente con `desarrollo.calcular_potencial` cuando hace falta).
+    # El desarrollo por partido y el pasivo por temporada NUNCA dejan que el OVR lo supere.
+    potencial: int = 0
     # --- v0.7: atributo de penales y estadística de vallas invictas ---
     penales: int = 0                   # habilidad para cobrar penales (0 = derivar de tecnica/mental)
     porterias_cero: int = 0            # vallas invictas (clean sheets) para la tabla de porteros
@@ -174,6 +178,10 @@ class Jugador:
             progreso_desarrollo = float(datos.get("progreso_desarrollo", 0.0))
             valor = int(datos.get("valor", 0))
             edad = int(datos.get("edad", 25))
+            # v0.8.x: potencial (techo de OVR). 0 = "sin calcular" → se derivará perezoso
+            # en `asignar_valores_iniciales` o al aplicar el primer desarrollo. Tolerante:
+            # saves viejos sin la clave cargan con 0 sin romper.
+            potencial = int(datos.get("potencial", 0))
             # v0.7: penales (si falta, se deriva de técnica/mental) y vallas invictas.
             penales = int(datos.get("penales", 0)) or ((tecnica + mental) // 2)
             porterias_cero = int(datos.get("porterias_cero", 0))
@@ -202,7 +210,8 @@ class Jugador:
                 valor=valor,
                 edad=edad,
                 penales=penales,
-                porterias_cero=porterias_cero
+                porterias_cero=porterias_cero,
+                potencial=potencial
             )
         except Exception as e:
             logger.warning(f"Excepción al reconstruir Jugador: {e}. Usando fallback.")

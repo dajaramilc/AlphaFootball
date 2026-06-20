@@ -122,7 +122,7 @@ def desarrollar_plantilla_post_partido(
         # MED/DEL mantienen su progresión rápida (goles/asistencias).
         inc = 0.0
         if j.posicion in ("POR", "DEF"):
-            inc += 0.04  # base plana: cualquier partido suma algo
+            inc += 0.08  # base plana: cualquier partido suma algo
             if clean_sheet:
                 inc += 0.20  # portería a cero: recompensa fuerte
                 if j.posicion == "POR":
@@ -140,16 +140,21 @@ def desarrollar_plantilla_post_partido(
                 inc += 0.14
         # Bonus por regularidad: un buen promedio histórico también hace subir el valor/OVR.
         if j.promedio_nota >= 7.0:
-            inc += 0.04
+            inc += 0.05
         j.progreso_desarrollo += inc
 
-        # Subidas de OVR: cada 1.0 de progreso -> +1 a 3 atributos base al azar
+        # Subidas de OVR: cada 1.0 de progreso -> +1 a 3 atributos base al azar.
+        # v0.8.x: respetar el techo de potencial. Si el jugador ya está en su techo,
+        # el progreso se consume silenciosamente (la "gran temporada" no rompe el límite).
         subio = False
+        _pot_actual = _potencial_perezoso(j, azar)
         while j.progreso_desarrollo >= 1.0:
             j.progreso_desarrollo = round(j.progreso_desarrollo - 1.0, 4)
-            for attr in azar.sample(ATRIBUTOS_BASE, 3):
-                setattr(j, attr, min(99, getattr(j, attr) + 1))
-            subio = True
+            if j.overall < _pot_actual:
+                for attr in azar.sample(ATRIBUTOS_BASE, 3):
+                    setattr(j, attr, min(99, getattr(j, attr) + 1))
+                subio = True
+            # si ya está en el techo: se consume el progreso sin subir OVR
 
         # Recalcular valor de mercado (OVR^2 * 1000 * factor_edad)
         if calcular_valor is not None:
@@ -193,14 +198,70 @@ def _delta_ovr_por_edad(edad: int, rng: random.Random) -> int:
     if edad <= 20:
         return rng.choice([1, 2, 2])      # cantera en plena subida
     if edad <= 23:
-        return rng.choice([0, 1, 1])      # joven que sigue creciendo
+        return rng.choice([0, 1, 2])      # joven que sigue creciendo
     if edad <= 27:
         return rng.choice([0, 0, 1])      # pico, casi estable
     if edad <= 30:
         return rng.choice([-1, 0, 0])     # leve inicio de declive
     if edad <= 32:
         return rng.choice([-1, -1, 0])    # declive
-    return rng.choice([-2, -1, -1])       # veterano en caída
+    return rng.choice([-1, -1, -2])       # veterano en caída
+
+
+def _potencial_perezoso(jugador: Any, _azar: random.Random) -> int:
+    """
+    Devuelve el potencial del jugador; si todavía no estaba calculado (`potencial == 0`),
+    lo calcula y lo guarda. Usa un RNG propio sembrado con el id del jugador para que
+    el resultado sea estable entre llamadas y entre módulos.
+    Fallback permisivo: si algo falla, devuelve 99 (no acotar el crecimiento).
+    """
+    try:
+        pot = int(getattr(jugador, "potencial", 0) or 0)
+        if pot > 0:
+            return pot
+        ovr = int(getattr(jugador, "overall", 50))
+        edad = int(getattr(jugador, "edad", 25))
+        # RNG sembrado con el id del jugador (no consume el azar principal)
+        rng_id = random.Random(int(getattr(jugador, "id", 0)) or 0)
+        pot = calcular_potencial(ovr, edad, rng_id)
+        setattr(jugador, "potencial", pot)
+        return pot
+    except Exception:
+        return 99
+
+
+def calcular_potencial(overall: int, edad: int, rng: random.Random) -> int:
+    """
+    Potencial final (techo de OVR) generoso: el bono sobre el OVR actual depende de la
+    edad (jóvenes tienen techo MUY arriba; veteranos casi igual a su OVR actual).
+    El resultado se acota a [overall+1, 99] para que SIEMPRE sea mayor que el OVR de
+    partida y nunca supere el techo absoluto del motor. Determinista si se pasa un rng
+    con semilla fija.
+    Ejemplos pedidos por Diego:
+      20/80  → 90-92
+      24/85  → 89-91
+      27/80  → 83-85
+    """
+    if edad <= 18:
+        bono = 14
+    elif edad <= 20:
+        bono = 11
+    elif edad <= 22:
+        bono = 8
+    elif edad <= 24:
+        bono = 5
+    elif edad <= 26:
+        bono = 4
+    elif edad <= 28:
+        bono = 4
+    elif edad <= 30:
+        bono = 3
+    elif edad <= 32:
+        bono = 2
+    else:
+        bono = 1     # 33 o más
+    jitter = rng.randint(-1, 1)
+    return max(overall + 1, min(99, overall + bono + jitter))
 
 
 def progresar_pasivo(equipo: Any, anios: int = 1, rng: Optional[random.Random] = None) -> None:
@@ -210,6 +271,16 @@ def progresar_pasivo(equipo: Any, anios: int = 1, rng: Optional[random.Random] =
     Para cada jugador y por cada año: `edad += 1` y se mueve el OVR según la curva
     (sumando/restando el delta a los 5 atributos base, acotados a [10, 99], de modo
     que el promedio cambie ese delta). Recalcula el valor de mercado al final.
+
+    v0.8.x: integra la regla de veterano + temporada destacada.
+      - Si el jugador rindió muy bien esta temporada (`promedio_nota >= 7.3`),
+        un jugador de hasta 33 años puede SUBIR +1 (acotado por su potencial) y
+        se le sube el techo `potencial` en 1-2 puntos.
+        Un veterano de 34+ con gran temporada NO BAJA esa temporada.
+      - Si rindió sólido (`promedio_nota >= 6.8`) y tiene ≤33, se mantiene.
+      - Resto: curva por edad normal, también acotada por el techo.
+    Sin `promedio_nota` (ligas/pools de fondo) se aplica la curva por edad tal cual,
+    sin invocar la regla destacada.
 
     Determinista si se pasa un `rng` con semilla fija (se usa así para envejecer las
     otras ligas y los pools internacionales de forma reproducible según la temporada).
@@ -226,7 +297,41 @@ def progresar_pasivo(equipo: Any, anios: int = 1, rng: Optional[random.Random] =
     for j in equipo.jugadores:
         for _ in range(pasos):
             edad = int(getattr(j, "edad", 25))
+            # Resolver techo (perezozo: si potencial==0 lo calcula y guarda)
+            _pot_actual = _potencial_perezoso(j, azar)
+
+            # Delta por la curva base de carrera
             delta = _delta_ovr_por_edad(edad, azar)
+
+            # Regla de veterano + temporada destacada. Solo aplica cuando el jugador
+            # realmente rindió esta temporada (promedio_nota > 0). Las ligas/pools de
+            # fondo (sin promedio_nota) siguen su curva normal.
+            _nota = float(getattr(j, "promedio_nota", 0) or 0)
+            if _nota >= 7.3:
+                if edad <= 33:
+                    # Gran temporada + edad de crecimiento: puede subir +1 (nunca baja)
+                    delta = max(delta, 1)
+                else:
+                    # Veterano top: se mantiene, no cae por edad
+                    delta = max(delta, 0)
+                # Subir también el techo para reflejar la irrupción (independiente de edad)
+                try:
+                    _pot_actual = min(
+                        99,
+                        int(getattr(j, "potencial", 0) or 0) + azar.choice([1, 2])
+                    )
+                    setattr(j, "potencial", _pot_actual)
+                except Exception:
+                    pass
+            elif _nota >= 6.8 and edad <= 33:
+                # Temporada sólida: no cae, pero tampoco crece por encima de la curva
+                delta = max(delta, 0)
+
+            # v0.8.x: nunca crecer por encima del potencial. Si delta cruza el techo,
+            # recortar. Si igual no entra, queda en 0.
+            if delta > 0 and j.overall + delta > _pot_actual:
+                delta = max(0, _pot_actual - j.overall)
+
             if delta != 0:
                 for attr in ATRIBUTOS_BASE:
                     setattr(j, attr, max(10, min(99, getattr(j, attr) + delta)))

@@ -68,6 +68,48 @@ def fuerza_liga(tipo: str) -> int:
     """Devuelve la 'fuerza' (tope OVR) de una liga; 78 por defecto."""
     return FUERZA_LIGA.get(str(tipo or ""), 78)
 
+
+# --- v0.8.x: Poblado masivo de valor (y potencial) al construir/cargar la liga -----
+#
+# `Jugador.valor` arranca en 0 y SOLO se recalculaba al jugar, vender o rotar temporada
+# → cualquier jugador recién cargado mostraba `Valor $0` en la UI aunque su `calcular_valor`
+# diese un número realista. Esto rompía la coherencia de las ofertas del IA
+# ("$201M por Nico Billiams · Valor $0"). El helper `asignar_valores_iniciales` se llama
+# desde `menu.load_league_teams` y desde `_aplicar_estado_cargado` (carga de save) para
+# garantizar que TODO jugador activo tenga un valor coherente desde el turno 0. También
+# aprovecha para sembrar `potencial` (techo de OVR), vía `desarrollo.calcular_potencial`.
+# Idempotente: reasignar no duplica ni corrompe.
+
+def asignar_valores_iniciales(liga: Any) -> None:
+    """
+    Puebla `valor` y `potencial` en todos los jugadores de la liga.
+    Pensado para invocarse una sola vez por carga de liga / save.
+    """
+    try:
+        # Import perezoso: desarrollo.py también importa market, así evitamos ciclo.
+        try:
+            from alpha_football.desarrollo import calcular_potencial
+        except Exception:
+            calcular_potencial = None  # type: ignore
+        for equipo in getattr(liga, "equipos", []) or []:
+            for j in getattr(equipo, "jugadores", []) or []:
+                try:
+                    setattr(j, "valor", calcular_valor(j))
+                except Exception as e_v:
+                    logger.debug(f"No se pudo calcular valor inicial de {getattr(j, 'nombre', '?')}: {e_v}")
+                # Sembrar potencial si todavía no tiene uno (0 = "sin calcular")
+                if calcular_potencial is not None and not getattr(j, "potencial", 0):
+                    try:
+                        ovr = _campo(j, "overall", 50)
+                        edad = _campo(j, "edad", 25)
+                        # RNG sembrado con el id del jugador → estable entre llamadas
+                        rng_id = int(getattr(j, "id", 0)) or 0
+                        setattr(j, "potencial", calcular_potencial(ovr, edad, random.Random(rng_id)))
+                    except Exception as e_pot:
+                        logger.debug(f"No se pudo calcular potencial de {getattr(j, 'nombre', '?')}: {e_pot}")
+    except Exception as e:
+        logger.error(f"Error en asignar_valores_iniciales: {e}")
+
 # --- Lectura y escritura resiliente de campos ---------------------------------
 
 def _campo(entidad: Any, clave: str, por_defecto: Any) -> Any:
@@ -565,6 +607,12 @@ def crear_oferta_ui(mi_equipo: Any, rivales: list, jornada: int, num_jornadas: i
                 recent_ids.pop(0)
 
         valor = getattr(objetivo, "valor", 0) or calcular_valor(objetivo)
+        # Coherencia: persistir el valor calculado en el propio jugador para que la
+        # tarjeta de oferta muestre el mismo valor base que el monto (sin "Valor $0").
+        try:
+            setattr(objetivo, "valor", valor)
+        except Exception:
+            pass
         monto = int(valor * azar.uniform(0.95, 1.5))
         rivales_ok = [r for r in rivales if getattr(r, "balance", 0) >= monto] or list(rivales)
         if not rivales_ok:
@@ -756,6 +804,12 @@ def crear_oferta_exterior(mi_equipo: Any, estado: Any,
             return None
         comprador = azar.choice(clubes)
         valor = getattr(objetivo, "valor", 0) or calcular_valor(objetivo)
+        # Coherencia: persistir el valor calculado en el propio jugador para que la
+        # tarjeta de oferta muestre el mismo valor base que el monto (sin "Valor $0").
+        try:
+            setattr(objetivo, "valor", valor)
+        except Exception:
+            pass
         monto = int(valor * azar.uniform(1.3, 2.2))
         return {"jugador": objetivo, "comprador": comprador, "monto": monto, "exterior": True}
     except Exception as e:

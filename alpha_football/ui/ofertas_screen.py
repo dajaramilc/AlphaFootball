@@ -28,6 +28,18 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
+# v0.8.x: import tolerante de `calcular_valor` para mostrar el valor real cuando el
+# campo guardado del jugador sigue en 0 (p.ej. un jugador que nunca jugó).
+try:
+    from alpha_football.market import calcular_valor
+except Exception:
+    def calcular_valor(_jugador):
+        """Fallback local si `market` no se puede importar."""
+        try:
+            return max(50_000, int(_jugador.overall) * 1000)
+        except Exception:
+            return 50_000
+
 
 def _aceptar(estado: dict, of: dict) -> None:
     """Acepta una oferta: traspasa el jugador, cobra y trae un reemplazo SOLO si la plantilla cae por debajo de 15."""
@@ -102,7 +114,10 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             draw_text(screen, etiqueta, (card.x + 15, card.y + 8), size='sm', color=col_et)
             if jug and comp:
                 draw_text(screen, f"{comp.nombre[:26]} ofrece ${monto:,}", (card.x + 15, card.y + 32), size='md', color='verde')
-                draw_text(screen, f"por {jug.nombre_completo}  ·  {jug.posicion}  ·  OVR {jug.overall}  ·  Valor ${getattr(jug, 'valor', 0):,}",
+                # v0.8.x: si el `valor` guardado es 0, mostramos el calculado on-the-fly
+                # para no imprimir "Valor $0" junto a un monto de $200M.
+                _valor_mostrar = getattr(jug, 'valor', 0) or calcular_valor(jug)
+                draw_text(screen, f"por {jug.nombre_completo}  ·  {jug.posicion}  ·  OVR {jug.overall}  ·  Valor ${_valor_mostrar:,}",
                           (card.x + 15, card.y + 54), size='sm', color='blanco')
             rect_acc = pygame.Rect(card.right - 320, card.y + 20, 140, 40)
             rect_rej = pygame.Rect(card.right - 165, card.y + 20, 140, 40)

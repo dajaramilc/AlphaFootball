@@ -79,6 +79,21 @@ def load_league_teams(league_id: str):
                     equipos=lista_equipos_construidos,
                     num_jornadas=config_liga['num_jornadas']
                 )
+                # v0.8.9: la base editada es la PRINCIPAL del juego, así que la rama editada
+                # debe quedar igual de completa que la fresca: plantillas mínimas y, sobre todo,
+                # valor + potencial poblados (la editada se guarda con valor/potencial en 0 →
+                # sin esto reaparecía el bug "Valor $0" y el potencial salía igual al OVR).
+                # NO se re-escalan presupuestos: la editada ya los trae escalados.
+                try:
+                    from alpha_football.plantilla import expandir_liga
+                    expandir_liga(liga_cargada, 20)
+                except Exception as e_exp_ed:
+                    logger.warning(f"No se pudo expandir la liga editada '{league_id}': {e_exp_ed}")
+                try:
+                    from alpha_football.market import asignar_valores_iniciales
+                    asignar_valores_iniciales(liga_cargada)
+                except Exception as e_asg_ed:
+                    logger.warning(f"No se pudieron asignar valores/potenciales a la liga editada '{league_id}': {e_asg_ed}")
                 logger.info(f"Liga '{league_id}' cargada exitosamente desde la base de datos editada por el usuario.")
                 return liga_cargada
         except Exception as error_carga_json:
@@ -114,6 +129,13 @@ def load_league_teams(league_id: str):
                 escalar_presupuestos(liga_obj)
             except Exception as e_bud:
                 logger.warning(f"No se pudieron escalar presupuestos de '{league_id}': {e_bud}")
+            # v0.8.x: poblar `valor` y `potencial` de todos los jugadores antes de devolver,
+            # para que ningún jugador quede en "Valor $0" en la UI (mercado, ofertas, etc).
+            try:
+                from alpha_football.market import asignar_valores_iniciales
+                asignar_valores_iniciales(liga_obj)
+            except Exception as e_asg:
+                logger.warning(f"No se pudieron asignar valores/potenciales iniciales de '{league_id}': {e_asg}")
             return liga_obj
         else:
             raise ValueError("El cargador de liga retornó un objeto nulo.")
@@ -706,6 +728,16 @@ def _aplicar_estado_cargado(estado: dict, loaded) -> bool:
                 expandir_liga(liga, 20, 32)  # Plantilla incompleta -> mín. 20, tope 32
         except Exception as error_expansion_carga:
             logger.warning(f"No se pudo expandir plantillas al cargar save: {error_expansion_carga}")
+
+        # v0.8.x: rellenar `valor` y `potencial` al cargar save. Los saves viejos o los
+        # jugadores que no han jugado nunca tenían `valor=0`, mostrando "Valor $0" en
+        # la UI. Se recalcula con la fórmula real al cargar.
+        try:
+            if liga:
+                from alpha_football.market import asignar_valores_iniciales
+                asignar_valores_iniciales(liga)
+        except Exception as e_asg_save:
+            logger.warning(f"No se pudieron asignar valores/potenciales al cargar save: {e_asg_save}")
 
         slot = estado.get('slot_activo')  # preservar si ya venía marcado
         estado.clear()

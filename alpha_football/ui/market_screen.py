@@ -379,9 +379,11 @@ def render(screen, estado: dict) -> str | None:
         tab = estado['market_tab']
         
         if tab == 'Libres':
-            # Obtener agentes libres correspondientes a esta jornada
-            # Si no están cargados en el estado, los generamos y guardamos
-            if 'free_agents_list' not in estado:
+            # Obtener agentes libres correspondientes a esta jornada.
+            # v0.8.x: regenerar si la lista cacheada está vacía para evitar que
+            # una jornada quede "pegada" en [] (antes: si la lista venía vacía por
+            # un fallo puntual, la UI mostraba la pestaña vacía el resto del día).
+            if not estado.get('free_agents_list'):
                 try:
                     estado['free_agents_list'] = get_free_agents(jornada)
                 except Exception:

@@ -51,6 +51,40 @@ def _backfill_internacionales(db: dict) -> None:
         logger.error(f"Error al inicializar equipos internacionales en editor: {e_intl}")
 
 
+def _backfill_potenciales(db: dict) -> None:
+    """
+    v0.8.9: siembra el `potencial` (techo de OVR) de cada jugador de la DB del editor que
+    todavía no lo tenga (0/ausente). La base del editor se arma desde `to_dict()` (sin pasar
+    por `market.asignar_valores_iniciales`), así que sin esto TODOS quedarían en 0 y el campo
+    "Potencial" del editor mostraría siempre el OVR. Solo siembra donde falta → respeta los
+    potenciales editados a mano. RNG sembrado por id → coincide con el que vería la carrera.
+    """
+    try:
+        import random
+        from alpha_football.desarrollo import calcular_potencial
+    except Exception as e_imp:
+        logger.error(f"No se pudo importar calcular_potencial para el editor: {e_imp}")
+        return
+    for equipos in db.values():
+        if not isinstance(equipos, list):
+            continue
+        for equipo in equipos:
+            for j in equipo.get('jugadores', []):
+                try:
+                    if j.get('potencial'):
+                        continue
+                    ovr = int(j.get('overall') or 0)
+                    if not ovr:
+                        attrs = [j.get('ataque'), j.get('defensa'), j.get('fisico'),
+                                 j.get('tecnica'), j.get('mental')]
+                        attrs = [int(a) for a in attrs if a is not None]
+                        ovr = (sum(attrs) // len(attrs)) if attrs else 70
+                    edad = int(j.get('edad', 25) or 25)
+                    j['potencial'] = calcular_potencial(ovr, edad, random.Random(int(j.get('id', 0) or 0)))
+                except Exception as e_pot:
+                    logger.debug(f"No se pudo sembrar potencial de {j.get('nombre', '?')}: {e_pot}")
+
+
 def cargar_base_datos_inicial(estado: dict) -> dict:
     """Carga la base de datos editada desde JSON si existe, o la inicializa desde los módulos base."""
     if 'edited_db' in estado:
@@ -62,6 +96,7 @@ def cargar_base_datos_inicial(estado: dict) -> dict:
             with open(ruta_db, "r", encoding="utf-8") as f:
                 db = json.load(f)
                 _backfill_internacionales(db)  # v0.8.8: añadir int'l si faltan
+                _backfill_potenciales(db)      # v0.8.9: sembrar potencial donde falte
                 estado['edited_db'] = db
                 return db
         except Exception as e:
@@ -95,6 +130,7 @@ def cargar_base_datos_inicial(estado: dict) -> dict:
 
     # v0.8.8: añadir los equipos internacionales (Libertadores / Champions) editables.
     _backfill_internacionales(db)
+    _backfill_potenciales(db)  # v0.8.9: sembrar potencial donde falte
 
     estado['edited_db'] = db
     return db
@@ -189,6 +225,12 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                         elif jugador_sel and campo_activo == 'player_age':
                             val_str = str(jugador_sel.get('edad', 25))[:-1]
                             jugador_sel['edad'] = int(val_str) if val_str else 0
+                        elif jugador_sel and campo_activo == 'player_potencial':
+                            # v0.8.x: techo de OVR editable. Al borrar dígitos vamos
+                            # dejando el valor sin el último carácter; el clamp de coherencia
+                            # (>= OVR) se aplica al TECLEAR (rama de dígitos) y al guardar.
+                            val_str = str(jugador_sel.get('potencial', 0) or 0)[:-1]
+                            jugador_sel['potencial'] = int(val_str) if val_str else 0
                     else:
                         char = event.unicode
                         # Filtros de caracteres
@@ -219,6 +261,16 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                                 val_str = str(jugador_sel.get('edad', 25))
                                 if len(val_str) < 2:
                                     jugador_sel['edad'] = int(val_str + char)
+                        elif jugador_sel and campo_activo == 'player_potencial':
+                            # v0.8.x: techo de OVR (1-3 dígitos, clamp [0, 99], nunca por
+                            # debajo del OVR actual — un techo menor al OVR no tiene sentido).
+                            if char.isdigit():
+                                val_str = str(jugador_sel.get('potencial', 0) or 0)
+                                if len(val_str) < 3:
+                                    raw = int(val_str + char) if val_str != '0' else int(char)
+                                    ovr_actual = int(jugador_sel.get('overall', 70) or 70)
+                                    # Clamp: [ovr_actual, 99] para que el techo SIEMPRE sea > OVR
+                                    jugador_sel['potencial'] = max(ovr_actual, min(99, raw))
 
         # Dibujar fondo base
         draw_gradient_bg(screen)
@@ -523,12 +575,26 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     pygame.draw.rect(screen, (30, 40, 70) if hov_rsg else (10, 14, 26), rsg_rect)
                     pygame.draw.rect(screen, (0, 191, 255), rsg_rect, width=1)
                     draw_text(screen, rsg.upper(), (542, drop_y + 5), size='sm', color='blanco')
-                    
+
                     if click_pos and rsg_rect.collidepoint(click_pos):
                         jugador_sel['rasgo'] = None if rsg == "ninguno" else rsg
                         estado['edit_dropdown_activo'] = None
-                        
+
                     drop_y += 30
+
+            # v0.8.x: Potencial (techo de OVR). Input numérico editable a mano, junto al Rasgo.
+            # Si el dict viene sin la clave (0) mostramos el OVR como base sensata en vez de "0".
+            draw_text(screen, "Potencial (máx. 99):", (860, 335), size='sm', color='blanco')
+            _pot_display = jugador_sel.get('potencial') or jugador_sel.get('overall', 70) or 70
+            inp_play_pot = pygame.Rect(860, 360, 140, 36)
+            is_play_pot_act = (estado.get('edit_input_activo') == 'player_potencial')
+            pygame.draw.rect(screen, (10, 14, 26) if is_play_pot_act else (20, 26, 46), inp_play_pot, border_radius=6)
+            pygame.draw.rect(screen, (0, 255, 136) if is_play_pot_act else (0, 191, 255), inp_play_pot, width=1, border_radius=6)
+            draw_text(screen, str(_pot_display), (872, 368), size='md', color='blanco')
+
+            if click_pos and inp_play_pot.collidepoint(click_pos):
+                estado['edit_input_activo'] = 'player_potencial'
+                estado['edit_dropdown_activo'] = None
 
         # --- PANEL DE ACCIONES INFERIORES: EXPORTAR, IMPORTAR, GUARDAR (X=510, Y=430) ---
         actions_y = 430
