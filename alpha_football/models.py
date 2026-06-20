@@ -543,6 +543,15 @@ class EstadoJuego:
     copa_grupos_standings: dict[str, list[Any]] = field(default_factory=dict)
     copa_bracket_otros: dict[str, Any] = field(default_factory=dict)
 
+    # v0.8.7.5: estado de clasificación del usuario a la copa internacional.
+    # Persistirlos evita que, tras un save/load, el historial muestre "Fase de grupos"
+    # en lugar de "No clasificado" cuando el usuario no clasificó: el flag se perdía y
+    # `copa_user_en_copa` caía al default True en el resumen de temporada.
+    copa_clasificado: Optional[bool] = None
+    copa_user_en_copa: Optional[bool] = None
+    copa_clasificado_motivo: str = ""
+    copa_mejor_fase_temp: Optional[str] = None
+
     def to_dict(self) -> dict[str, Any]:
         try:
             alin_dict = None
@@ -616,7 +625,11 @@ class EstadoJuego:
             "copa_tab": self.copa_tab,
             "copa_grupos": self.copa_grupos,
             "copa_grupos_standings": grupos_standings_dict,
-            "copa_bracket_otros": self.copa_bracket_otros
+            "copa_bracket_otros": self.copa_bracket_otros,
+            "copa_clasificado": self.copa_clasificado,
+            "copa_user_en_copa": self.copa_user_en_copa,
+            "copa_clasificado_motivo": self.copa_clasificado_motivo,
+            "copa_mejor_fase_temp": self.copa_mejor_fase_temp
         }
 
     @classmethod
@@ -724,7 +737,11 @@ class EstadoJuego:
                 copa_tab=datos.get("copa_tab"),
                 copa_grupos=datos.get("copa_grupos", {}),
                 copa_grupos_standings=copa_grupos_standings,
-                copa_bracket_otros=datos.get("copa_bracket_otros", {})
+                copa_bracket_otros=datos.get("copa_bracket_otros", {}),
+                copa_clasificado=datos.get("copa_clasificado"),
+                copa_user_en_copa=datos.get("copa_user_en_copa"),
+                copa_clasificado_motivo=str(datos.get("copa_clasificado_motivo", "")),
+                copa_mejor_fase_temp=datos.get("copa_mejor_fase_temp")
             )
         except Exception as e:
             logger.critical(f"Error crítico al deserializar EstadoJuego: {e}. Retornando estado vacío.")

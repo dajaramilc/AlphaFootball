@@ -151,7 +151,11 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                         "copa_tab": estado.get("copa_tab"),
                         "copa_grupos": estado.get("copa_grupos", {}),
                         "copa_grupos_standings": estado.get("copa_grupos_standings", {}),
-                        "copa_bracket_otros": estado.get("copa_bracket_otros", {})
+                        "copa_bracket_otros": estado.get("copa_bracket_otros", {}),
+                        "copa_clasificado": estado.get("copa_clasificado"),
+                        "copa_user_en_copa": estado.get("copa_user_en_copa"),
+                        "copa_clasificado_motivo": estado.get("copa_clasificado_motivo", ""),
+                        "copa_mejor_fase_temp": estado.get("copa_mejor_fase_temp")
                     }
                     estado_juego = EstadoJuego.from_dict(datos_estado)
                     

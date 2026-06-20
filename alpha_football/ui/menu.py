@@ -732,7 +732,20 @@ def _aplicar_estado_cargado(estado: dict, loaded) -> bool:
             estado['copa_grupos'] = dict(getattr(loaded, 'copa_grupos', {}))
             estado['copa_grupos_standings'] = dict(getattr(loaded, 'copa_grupos_standings', {}))
             estado['copa_bracket_otros'] = dict(getattr(loaded, 'copa_bracket_otros', {}))
-        
+
+        # v0.8.7.5: restaurar estado de clasificación a copa. Solo se setea si el save
+        # lo trae (no es None); los saves viejos sin este dato dejan la clave ausente y
+        # los consumidores caen al default True (clasificado), preservando su comportamiento.
+        if getattr(loaded, 'copa_user_en_copa', None) is not None:
+            estado['copa_user_en_copa'] = loaded.copa_user_en_copa
+        if getattr(loaded, 'copa_clasificado', None) is not None:
+            estado['copa_clasificado'] = loaded.copa_clasificado
+        _motivo_cargado = getattr(loaded, 'copa_clasificado_motivo', '') or ''
+        if _motivo_cargado:
+            estado['copa_clasificado_motivo'] = _motivo_cargado
+        if getattr(loaded, 'copa_mejor_fase_temp', None) is not None:
+            estado['copa_mejor_fase_temp'] = loaded.copa_mejor_fase_temp
+
         if slot:
             estado['slot_activo'] = slot
         if loaded.alineacion_activa:

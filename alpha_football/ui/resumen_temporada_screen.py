@@ -221,7 +221,14 @@ def avanzar_nueva_temporada(estado: dict) -> None:
                     "formacion": str(alin.formacion)
                 } if alin else None,
                 "dt_nombre": estado.get("dt_nombre", ""),
-                "dt_nacionalidad": estado.get("dt_nacionalidad", "")
+                "dt_nacionalidad": estado.get("dt_nacionalidad", ""),
+                # v0.8.7.5: persistir clasificación a copa de la NUEVA temporada (recién
+                # calculada arriba) para que al recargar este autosave el historial
+                # muestre "No clasificado" si el usuario no clasificó.
+                "copa_clasificado": estado.get("copa_clasificado"),
+                "copa_user_en_copa": estado.get("copa_user_en_copa"),
+                "copa_clasificado_motivo": estado.get("copa_clasificado_motivo", ""),
+                "copa_mejor_fase_temp": estado.get("copa_mejor_fase_temp")
             }
             estado_juego = EstadoJuego.from_dict(datos_estado)
             slot = estado.get('slot_activo', 1)

@@ -1,6 +1,6 @@
-# ALPHA FOOTBALL — Contexto de Proyecto (v0.8.7.4)
+# ALPHA FOOTBALL — Contexto de Proyecto (v0.8.7.5)
 **Última actualización:** 2026-06-19
-**Sesión actual:** v0.8.7 — Tarea 1 (penales con secuencia ronda a ronda en resultado de simulación), Tarea 2 (formación y AUTO ONCE NO consumen cambios — solo el swap titular↔banco manual cuenta, tope 5), Tarea 3 (clasificación a copa: T1 = top 3 por OVR, T2+ = top 3 por puntos), Tarea 4 (modo espectador de copa cuando el user no clasifica: copa visible con overlay "SIMULAR COPA ENTERA" + toast de campeón), Tarea 5 (fix del bug vivo de `avanzar_fase_bracket` con bracket placeholder + backtrack inteligente + anti-bucle).
+**Sesión actual:** v0.8.7.5 — 2 fixes pedidos por Diego: (1) VER ALINEACIÓN RIVAL en carrera abría DIRECCIÓN DE EQUIPO (modo edición) cuando el user jugaba de visitante, porque el handler fijaba siempre `team_equipo_objetivo = visitante` (que ES el user de visitante) → `view_mode` quedaba False; ahora elige el oponente real. (2) El historial mostraba "Fase de grupos" en vez de "No clasificado" tras un save/load porque los flags de clasificación a copa (`copa_user_en_copa` etc.) NO se persistían → ahora se guardan/restauran en el esquema del save.
 
 ---
 
@@ -936,9 +936,48 @@ Smoke headless (`SDL_VIDEODRIVER=dummy`) — 17/17 OK:
 
 ---
 
+## Bitácora — v0.8.7.5 (sesión 2026-06-19, 2 fixes pedidos por Diego)
+
+Diego reportó 2 bugs en vivo:
+1. **VER ALINEACIÓN RIVAL** (solo en modo carrera, no amistoso) abría la pantalla DIRECCIÓN TÁCTICA DE EQUIPO (modo edición del propio once) en vez del visor de la alineación rival.
+2. En el **HISTORIAL CARRERA**, una temporada en la que el user NO clasificó a la copa aparecía como "Fase de grupos" en vez de "No clasificado".
+
+### Causa raíz
+
+**Bug 1** — `prepartido_screen.py`: el handler de "VER ALINEACIÓN RIVAL" fijaba siempre `estado['team_equipo_objetivo'] = visitante`. En liga/copa el user juega de local o de visitante según el fixture; cuando jugaba de **visitante**, ese `visitante` ES su propio equipo, así que en `team_screen` `view_mode = (team_objetivo is not mi_equipo)` daba **False** → caía al modo edición. En amistoso no pasaba porque el user siempre es `amis_local`.
+
+**Bug 2** — persistencia: `resumen_temporada_screen.py` ya mostraba "No clasificado" cuando `copa_user_en_copa` era False, PERO ese flag (junto con `copa_clasificado`, `copa_clasificado_motivo`, `copa_mejor_fase_temp`) **no se guardaba en el save ni se restauraba al cargar**. Como el juego autoguarda al inicio de cada temporada ("T{n} J1"), al recargar el flag desaparecía y `estado.get('copa_user_en_copa', True)` caía al default `True` → el historial derivaba "Fase de grupos".
+
+### Cambios
+
+**1) `alpha_football/ui/prepartido_screen.py`** — handler "VER ALINEACIÓN RIVAL" (L490+): calcula el equipo que el user controla (`amis_local` en amistoso, `mi_equipo` en carrera) y elige como objetivo el OTRO equipo (`local if user_es_visitante else visitante`). Así funciona juegue de local o de visitante.
+
+**2) Persistencia de flags de clasificación a copa** (4 archivos):
+- `alpha_football/models.py` — `EstadoJuego`: 4 campos nuevos (`copa_clasificado`, `copa_user_en_copa`, `copa_clasificado_motivo`, `copa_mejor_fase_temp`) + serialización en `to_dict`/`from_dict`.
+- `main.py`, `alpha_football/ui/save_slots_screen.py`, `alpha_football/ui/resumen_temporada_screen.py` — los 3 dicts de guardado incluyen los 4 campos. (El autosave de fin de temporada NO tenía campos de copa; ahora persiste la clasificación de la NUEVA temporada recién calculada.)
+- `alpha_football/ui/menu.py` (carga): restaura los flags **solo si el save los trae** (no None); saves viejos quedan con la clave ausente → consumidores caen al default True (clasificado), sin romper partidas existentes.
+
+### Verificación
+- Sintaxis OK en los 5 archivos (`ast.parse`).
+- Lógica de selección de rival: 3 escenarios (user local, user visitante, amistoso) devuelven el rival correcto.
+- Roundtrip save→load: `copa_user_en_copa=False` se conserva; save viejo sin la clave → None (default True).
+
+### Archivos modificados
+- `alpha_football/ui/prepartido_screen.py` — selección de rival real en VER ALINEACIÓN RIVAL
+- `alpha_football/models.py` — 4 campos nuevos + to_dict/from_dict
+- `main.py`, `alpha_football/ui/save_slots_screen.py`, `alpha_football/ui/resumen_temporada_screen.py` — dicts de guardado
+- `alpha_football/ui/menu.py` — restauración en carga
+- `context.md` — bitácora v0.8.7.5
+
+### Lo que queda (validación en vivo)
+1. Carrera, jornada como **visitante** → click "VER ALINEACIÓN RIVAL" → debe mostrar el VISOR del rival (no DIRECCIÓN DE EQUIPO).
+2. Carrera sin clasificar a copa → guardar/salir → cargar → terminar la temporada → HISTORIAL debe mostrar "No clasificado".
+
+---
+
 ## 🔴 ESTADO ACTUAL — Para que claude continue
 
-**Versión:** v0.8.7.4 (recién aplicado por claude, pendiente validación en vivo de Diego)
+**Versión:** v0.8.7.5 (recién aplicado por claude, pendiente validación en vivo de Diego)
 
 **Última corrida:** Diego ejecutó `python main.py` 2026-06-19 02:42-02:48 (sobre v0.8.4, no v0.8.5 ni v0.8.6 ni v0.8.7). En este momento:
 - v0.8.5 cubre los bugs críticos (partido en vivo, copa reparada, amistoso aislado, modal borrar slot).
@@ -947,8 +986,9 @@ Smoke headless (`SDL_VIDEODRIVER=dummy`) — 17/17 OK:
 - v0.8.7.1 cierra el bug del contador "Copas Internacionales" en `career_screen` (chequeaba `'campeon'` ASCII contra `'Campeón'` con acento).
 - v0.8.7.2 reemplaza MODO ESPECTADOR por NO CLASIFICADO + VER, agrega copa en background (`simular_copa_fondo`), y DT/presupuesto en slots de Cargar/Guardar.
 - v0.8.7.3 corrige el bug "Campeón" en historial cuando el user no clasificó: `resumen_temporada_screen` ahora chequea `copa_user_en_copa` antes de derivar `mejor_fase`.
-- **v0.8.7.4** consolida 3 fixes: VER ALINEACIÓN RIVAL en carrera, OVR visitante invertido, badge clasificados copa.
-- 17/17 tests del smoke headless pasan. Falta que Diego pruebe en vivo (5 puntos arriba).
+- v0.8.7.4 consolida 3 fixes: VER ALINEACIÓN RIVAL en carrera, OVR visitante invertido, badge clasificados copa.
+- **v0.8.7.5** arregla 2 bugs: (1) VER ALINEACIÓN RIVAL abría DIRECCIÓN DE EQUIPO cuando el user jugaba de visitante (handler ahora elige el oponente real); (2) historial mostraba "Fase de grupos" en vez de "No clasificado" tras save/load porque los flags de clasificación a copa no se persistían (ahora se guardan/restauran).
+- Smoke headless previo (17/17) sigue válido + verificación puntual de v0.8.7.5 (rival real, roundtrip save/load). Falta que Diego pruebe en vivo.
 
 ### Cómo está firmado cada cambio (autor)
 - v0.4–v0.5: base original (Diego/Opus).
@@ -967,7 +1007,8 @@ Smoke headless (`SDL_VIDEODRIVER=dummy`) — 17/17 OK:
 - v0.8.7.1: fix contador "Copas Internacionales" (acento ó ≠ o) en `career_screen` (claude, 2026-06-19).
 - v0.8.7.2: copa en background (NO CLASIFICADO + VER), DT/presupuesto en slots, hook en finalizar_jornada_liga (claude, 2026-06-19).
 - v0.8.7.3: fix "Campeón" en historial cuando user no clasificó (claude, 2026-06-19).
-- **v0.8.7.4: VER ALINEACIÓN RIVAL fix + OVR visitante fix + badge clasificados copa (claude, 2026-06-19).**
+- v0.8.7.4: VER ALINEACIÓN RIVAL fix + OVR visitante fix + badge clasificados copa (claude, 2026-06-19).
+- **v0.8.7.5: VER ALINEACIÓN RIVAL elige el oponente real (user de visitante) + persistencia de flags de clasificación a copa en el save (fix "Fase de grupos" → "No clasificado" tras load) (claude, 2026-06-19).**
 
 ### Lo que falta (próximas sesiones)
 

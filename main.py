@@ -166,7 +166,11 @@ def guardar_al_salir(estado: dict) -> None:
             "copa_tab": estado.get("copa_tab"),
             "copa_grupos": estado.get("copa_grupos", {}),
             "copa_grupos_standings": estado.get("copa_grupos_standings", {}),
-            "copa_bracket_otros": estado.get("copa_bracket_otros", {})
+            "copa_bracket_otros": estado.get("copa_bracket_otros", {}),
+            "copa_clasificado": estado.get("copa_clasificado"),
+            "copa_user_en_copa": estado.get("copa_user_en_copa"),
+            "copa_clasificado_motivo": estado.get("copa_clasificado_motivo", ""),
+            "copa_mejor_fase_temp": estado.get("copa_mejor_fase_temp")
         }
 
         estado_juego = EstadoJuego.from_dict(datos_estado)
@@ -238,12 +242,12 @@ def procesar_eventos_volumen(estado: dict, eventos_frame: list) -> list:
                     nuevo_volumen = min(1.0, audio.CURRENT_VOLUME + 0.1)
                     audio.set_volume(nuevo_volumen)
                     eventos_a_eliminar.append(evento)
-                elif evento.key == pygame.K_s and (evento.mod & pygame.KMOD_SHIFT):
-                    # Mayús+S: cambia de pista aleatoriamente (misma lógica que el fin de pista).
+                elif evento.key == pygame.K_s and (evento.mod & (pygame.KMOD_SHIFT | pygame.KMOD_CTRL)):
+                    # Shift+S o Ctrl+S: cambia de pista de forma segura de una en una.
                     try:
                         audio.next_track()
                     except Exception as e_skip:
-                        logger.debug(f"No se pudo cambiar de pista con Mayús+S: {e_skip}")
+                        logger.debug(f"No se pudo cambiar de pista con el atajo: {e_skip}")
                     eventos_a_eliminar.append(evento)
 
         except Exception as error_evento:

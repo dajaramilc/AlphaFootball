@@ -58,6 +58,11 @@ def init_audio() -> None:
         if not os.path.exists(MUSIC_DIR):
             os.makedirs(MUSIC_DIR)
             
+        # Configurar la ruta de FFmpeg y convertir audios no compatibles (.webm, .opus)
+        ffmpeg_exe = _configurar_ffmpeg_path()
+        if ffmpeg_exe:
+            _convertir_audios_existentes(ffmpeg_exe)
+            
         _actualizar_playlist()
         
         # Iniciar hilo secundario de descarga solo una vez para no duplicar descargas
@@ -67,6 +72,179 @@ def init_audio() -> None:
             hilo_descarga.start()
     except Exception as e:
         logger.error(f"Error al inicializar el audio: {e}. El juego correra en silencio de forma resiliente.")
+
+
+def _intentar_instalar_imageio_ffmpeg() -> bool:
+    """
+    Intenta instalar la librería de python imageio-ffmpeg usando pip de forma automática.
+    Retorna True si tiene éxito, de lo contrario False.
+    """
+    try:
+        logger.info("Intentando instalar imageio-ffmpeg usando pip de forma automatica...")
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "imageio-ffmpeg"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True
+        )
+        logger.info("imageio-ffmpeg instalado exitosamente via pip.")
+        return True
+    except Exception as error_inst:
+        logger.error(f"No se pudo instalar imageio-ffmpeg mediante subprocess: {error_inst}")
+        return False
+
+
+def _configurar_ffmpeg_path() -> Optional[str]:
+    """
+    Intenta importar imageio-ffmpeg y configurar la ruta de su ejecutable ffmpeg.
+    Copia el ejecutable a MUSIC_DIR/ffmpeg.exe para que yt-dlp y subprocess puedan encontrarlo
+    bajo el nombre estándar. Agrega la carpeta de música a la variable de entorno PATH.
+    Retorna la ruta al ejecutable ffmpeg.exe si se configuró con éxito, de lo contrario None.
+    """
+    try:
+        import imageio_ffmpeg
+    except ImportError:
+        if _intentar_instalar_imageio_ffmpeg():
+            try:
+                import imageio_ffmpeg
+            except ImportError as e_reimport:
+                logger.error(f"Error al volver a importar imageio-ffmpeg tras instalacion: {e_reimport}")
+                return None
+        else:
+            logger.error("No se pudo obtener imageio-ffmpeg. No habra conversion automatica de audio.")
+            return None
+
+    try:
+        orig_ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        if orig_ffmpeg_exe and os.path.exists(orig_ffmpeg_exe):
+            dest_ffmpeg_exe = os.path.normpath(os.path.join(MUSIC_DIR, "ffmpeg.exe"))
+            
+            # Si no existe en el destino, o el tamaño difiere, lo copiamos para renombrarlo a ffmpeg.exe
+            if not os.path.exists(dest_ffmpeg_exe) or os.path.getsize(dest_ffmpeg_exe) != os.path.getsize(orig_ffmpeg_exe):
+                import shutil
+                logger.info(f"Copiando FFmpeg a {dest_ffmpeg_exe}...")
+                os.makedirs(MUSIC_DIR, exist_ok=True)
+                shutil.copy2(orig_ffmpeg_exe, dest_ffmpeg_exe)
+                logger.info("FFmpeg copiado con exito.")
+                
+            # Agregar la carpeta de música al PATH de forma temporal
+            path_env = os.environ.get("PATH", "")
+            if MUSIC_DIR not in path_env:
+                os.environ["PATH"] = MUSIC_DIR + os.pathsep + path_env
+            logger.info(f"Ruta de FFmpeg configurada en PATH: {MUSIC_DIR}")
+            return dest_ffmpeg_exe
+    except Exception as e:
+        logger.error(f"Error al configurar la ruta de ffmpeg: {e}")
+        # Solución alternativa: buscar si existe ffmpeg en el PATH del sistema
+        try:
+            resultado = subprocess.run(["ffmpeg", "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if resultado.returncode == 0:
+                logger.info("FFmpeg ya esta disponible globalmente en el sistema.")
+                return "ffmpeg"
+        except Exception:
+            pass
+    return None
+
+
+def _convertir_archivo_a_mp3(ruta_origen: str, ffmpeg_exe: str) -> bool:
+    """
+    Intenta convertir un archivo de audio (como .webm o .opus) a formato .mp3 usando ffmpeg.
+    Si la conversión tiene éxito, elimina el archivo original y retorna True.
+    """
+    base, _ = os.path.splitext(ruta_origen)
+    ruta_destino = base + ".mp3"
+    
+    try:
+        # Comando para convertir con ffmpeg
+        comando = [ffmpeg_exe, "-y", "-i", ruta_origen, "-ab", "192k", ruta_destino]
+        logger.info(f"Convirtiendo archivo: {ruta_origen} -> {ruta_destino}")
+        
+        # Ejecutar con timeout de 60 segundos
+        resultado = subprocess.run(
+            comando,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+            timeout=60
+        )
+        
+        if resultado.returncode == 0 and os.path.exists(ruta_destino):
+            # Intentar eliminar el archivo original con reintentos
+            for intento in range(3):
+                try:
+                    os.remove(ruta_origen)
+                    logger.info(f"Eliminado archivo original: {ruta_origen}")
+                    break
+                except Exception as e_del:
+                    logger.warning(f"Intento {intento+1} de eliminar {ruta_origen} fallo: {e_del}")
+                    import time
+                    time.sleep(0.5)
+            return True
+        else:
+            logger.error(f"Fallo en el retorno del comando de conversion para {ruta_origen}")
+            return False
+            
+    except subprocess.TimeoutExpired as e_time:
+        logger.error(f"Timeout al convertir {ruta_origen} a MP3: {e_time}")
+        return False
+    except Exception as e:
+        logger.error(f"Error al convertir {ruta_origen} a MP3: {e}")
+        # Solución alternativa: intentar conversion simplificada sin especificar bitrate
+        try:
+            logger.info(f"Intentando conversion simplificada para {ruta_origen}")
+            comando_simple = [ffmpeg_exe, "-y", "-i", ruta_origen, ruta_destino]
+            resultado_simple = subprocess.run(
+                comando_simple,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True,
+                timeout=30
+            )
+            if resultado_simple.returncode == 0 and os.path.exists(ruta_destino):
+                try:
+                    os.remove(ruta_origen)
+                except Exception:
+                    pass
+                return True
+        except Exception as e_simple:
+            logger.error(f"Fallo reintento de conversion simplificada para {ruta_origen}: {e_simple}")
+        return False
+
+
+def _convertir_audios_existentes(ffmpeg_exe: str) -> None:
+    """
+    Escanea la carpeta de música en busca de archivos no compatibles directamente (.webm, .opus)
+    y los convierte a .mp3 de forma asíncrona para no congelar la carga inicial del juego.
+    """
+    def _worker():
+        try:
+            if not os.path.exists(MUSIC_DIR):
+                return
+            
+            ext_no_reproducibles = (".webm", ".opus")
+            archivos_a_convertir = [
+                os.path.normpath(os.path.join(MUSIC_DIR, f))
+                for f in os.listdir(MUSIC_DIR)
+                if f.lower().endswith(ext_no_reproducibles)
+            ]
+            
+            if archivos_a_convertir:
+                logger.info(f"Se encontraron {len(archivos_a_convertir)} archivos en formato crudo para convertir.")
+                hubo_cambios = False
+                for ruta in archivos_a_convertir:
+                    exito = _convertir_archivo_a_mp3(ruta, ffmpeg_exe)
+                    if exito:
+                        hubo_cambios = True
+                
+                if hubo_cambios:
+                    # Actualizar la playlist una vez finalizadas las conversiones
+                    _actualizar_playlist()
+        except Exception as e:
+            logger.error(f"Error en el hilo de conversion de audios existentes: {e}")
+
+    # Ejecutar en un hilo separado
+    threading.Thread(target=_worker, daemon=True).start()
+
 
 
 def _actualizar_playlist() -> None:
@@ -467,16 +645,15 @@ def start_music() -> None:
 
 _LAST_PLAYED_TRACK: str | None = None
 
-# v0.8.3 (F2): cola de canciones. Mantiene un set de las canciones ya reproducidas
-# en el ciclo actual; cuando se han reproducido TODAS, se resetea y empieza un
-# nuevo ciclo. Al cambiar manualmente (next_track / Mayús+S) también se resetea.
-_HISTORIAL_CICLO: set[str] = set()
+# v0.8.6: cola de canciones. Mantiene una lista de las canciones ya reproducidas
+# para evitar repeticiones hasta que suenen todas las demás.
+_HISTORIAL_CICLO: list[str] = []
 
 
 def reset_cola_musica() -> None:
-    """Limpia el historial del ciclo actual (v0.8.3). Llamar tras cambios manuales."""
+    """Limpia el historial de la cola de música. Llamar para reiniciar el ciclo."""
     global _HISTORIAL_CICLO
-    _HISTORIAL_CICLO = set()
+    _HISTORIAL_CICLO = []
 
 # "Sonando ahora": nombre legible de la pista actual y bandera de que cambió la canción,
 # para que la UI muestre un aviso breve abajo y luego lo oculte sola.
@@ -535,32 +712,45 @@ def hay_cancion_nueva() -> bool:
 def _reproducir_siguiente() -> None:
     """Carga y reproduce la siguiente pista disponible en la playlist.
 
-    v0.8.3 (F2): ya no es 100% aleatoria — mantiene un set _HISTORIAL_CICLO con las
-    canciones ya reproducidas en este ciclo. Cuando se han reproducido TODAS, resetea
-    el set y empieza un nuevo ciclo. Así garantiza que el oyente escuche todas las
-    canciones antes de que alguna se repita.
+    v0.8.6: Mantiene una cola _HISTORIAL_CICLO (lista) de las últimas canciones
+    reproducidas. Evita que cualquier pista se repita hasta haber reproducido todas
+    las demás disponibles en la playlist (desplazamiento tipo cola de tamaño N-1).
+    Esto persiste incluso si el usuario cambia de canción manualmente.
     """
-    global PLAYLIST, _LAST_PLAYED_TRACK, _CURRENT_TRACK_NAME, _TRACK_CHANGED
+    global PLAYLIST, _LAST_PLAYED_TRACK, _CURRENT_TRACK_NAME, _TRACK_CHANGED, _HISTORIAL_CICLO
     try:
         if not IS_PLAYING or not PLAYLIST:
             return
 
-        # Resetear el ciclo si ya se han reproducido todas las canciones
-        if len(_HISTORIAL_CICLO) >= len(PLAYLIST):
-            _HISTORIAL_CICLO.clear()
+        # Filtrar el historial para conservar solo pistas que existen actualmente en la playlist
+        pistas_validas_historial = [p for p in _HISTORIAL_CICLO if p in PLAYLIST]
 
-        # Candidatas = canciones NO reproducidas aún en este ciclo.
-        # Si solo queda 1 (la que se está reproduciendo ahora), la excluimos también
-        # para no repetir la misma consecutivamente.
-        candidatas = [p for p in PLAYLIST
-                       if p not in _HISTORIAL_CICLO and p != _LAST_PLAYED_TRACK]
+        # El límite del historial es len(PLAYLIST) - 1. Así, la última canción reproducida
+        # no podrá volver a sonar hasta que suenen todas las demás.
+        limite_historial = max(0, len(PLAYLIST) - 1)
+
+        # Si supera el límite, removemos las más antiguas (frente de la cola)
+        if len(pistas_validas_historial) > limite_historial:
+            pistas_validas_historial = pistas_validas_historial[-limite_historial:]
+
+        # Candidatas = canciones de la playlist que NO están en la cola del historial
+        candidatas = [p for p in PLAYLIST if p not in pistas_validas_historial]
+        
+        # Fallback de seguridad en caso de inconsistencia
         if not candidatas:
-            # Caso degenerado: solo 1 canción o todas recién reproducidas.
-            candidatas = list(PLAYLIST)
+            candidatas = [p for p in PLAYLIST if p != _LAST_PLAYED_TRACK]
+            if not candidatas:
+                candidatas = list(PLAYLIST)
 
         pista = random.choice(candidatas)
         _LAST_PLAYED_TRACK = pista
-        _HISTORIAL_CICLO.add(pista)
+        
+        # Agregar a la cola de historial y aplicar límite
+        pistas_validas_historial.append(pista)
+        if len(pistas_validas_historial) > limite_historial:
+            pistas_validas_historial = pistas_validas_historial[-limite_historial:]
+            
+        _HISTORIAL_CICLO = pistas_validas_historial
 
         if os.path.exists(pista):
             pygame.mixer.music.load(pista)
@@ -577,7 +767,8 @@ def _reproducir_siguiente() -> None:
                 PLAYLIST.remove(pista)
             except ValueError:
                 pass
-            _HISTORIAL_CICLO.discard(pista)  # v0.8.3: no contar pistas inválidas
+            # Filtrar la pista inexistente del historial
+            _HISTORIAL_CICLO = [p for p in _HISTORIAL_CICLO if p != pista]
             _reproducir_siguiente()
     except Exception as e:
         logger.error(f"Error al cargar/reproducir pista: {e}. Intentando con la siguiente pista de forma resiliente.")
@@ -592,14 +783,14 @@ def check_music_event(event_type: int) -> None:
 def next_track() -> None:
     """Pasa manualmente a la siguiente pista de música.
 
-    v0.8.3 (F2): al hacer cambio manual, se resetea el ciclo para que el orden
-    sea fresco a partir de la elección del usuario (si el usuario salta a "track 3"
-    el ciclo empieza de nuevo desde ahí).
+    v0.8.6: Al hacer cambio manual, ya no se limpia la cola de ciclo, de forma que el
+    historial persiste y se evitan repeticiones hasta que suenen todas las demás pistas.
     """
     try:
-        # v0.8.3: cambio manual = resetear ciclo
-        reset_cola_musica()
+        # Se elimina reset_cola_musica() para evitar reiniciar el historial ante un cambio manual
         if pygame.mixer.get_init():
+            # Desactivar temporalmente el evento de fin de canción para evitar el doble avance (bug de Pygame)
+            pygame.mixer.music.set_endevent()
             pygame.mixer.music.stop()
             _reproducir_siguiente()
     except Exception as e:
@@ -647,6 +838,8 @@ def eliminar_pista(ruta: str) -> None:
             # En Windows, si el mixer tiene cargado el archivo, está bloqueado.
             # Forzamos una parada, descargamos la pista cargada y borramos.
             if pygame.mixer.get_init():
+                # Desactivar temporalmente el evento de fin para evitar avance doble al parar la música
+                pygame.mixer.music.set_endevent()
                 pygame.mixer.music.stop()
                 pygame.mixer.music.unload()
             if os.path.exists(norm_ruta):

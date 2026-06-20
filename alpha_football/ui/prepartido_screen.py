@@ -488,8 +488,20 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 estado['team_modo_prepartido'] = True
                 return "team_screen"
             elif btn_ver_rival.collidepoint(click_pos) and rival_disponible:
-                # v0.8.3 (F1): abrir team_screen en modo visor del rival
-                estado['team_equipo_objetivo'] = visitante
+                # v0.8.3 (F1): abrir team_screen en modo visor del rival.
+                # v0.8.7.5 FIX: el rival es el OPONENTE del equipo que dirige el usuario,
+                # no siempre el "visitante". En liga/copa el user juega de local o de
+                # visitante según el fixture; si juega de visitante, ese "visitante" ES
+                # su propio equipo y abrir team_screen con él dispara el modo EDICIÓN
+                # (DIRECCIÓN DE EQUIPO) en vez del visor (view_mode queda en False).
+                # Elegimos el equipo que el usuario NO controla.
+                controlado = estado.get('amis_local') if match_mode == 'amistoso' else mi_equipo
+                user_es_visitante = bool(
+                    controlado is visitante
+                    or (getattr(controlado, 'id', None) is not None
+                        and getattr(controlado, 'id', None) == getattr(visitante, 'id', None))
+                )
+                estado['team_equipo_objetivo'] = local if user_es_visitante else visitante
                 # v0.8.7.4: marcar contexto igual que el botón DIRECCIÓN DE EQUIPO,
                 # para que team_screen no caiga al menú si liga/mi_equipo están stale.
                 estado['team_contexto'] = 'amistoso' if match_mode == 'amistoso' else 'carrera'
