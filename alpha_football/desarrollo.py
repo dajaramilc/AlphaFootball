@@ -179,3 +179,69 @@ def desarrollar_plantilla_post_partido(
         logger.debug(f"No se pudo actualizar familiaridad táctica: {e_fam}")
 
     return reporte
+
+
+# --- v0.8.8: desarrollo PASIVO por temporada (envejecimiento + curva de edad) ────────
+#
+# El desarrollo por partido (arriba) solo toca a los equipos que juegan: el del usuario,
+# sus rivales de liga y los de copa. Las OTRAS 4 ligas no se simulan, y NADIE envejecía.
+# `progresar_pasivo` cierra eso: aplica una temporada (o varias) de envejecimiento y
+# deriva el OVR según la edad. Pura y testeable (acepta rng con semilla).
+
+def _delta_ovr_por_edad(edad: int, rng: random.Random) -> int:
+    """Cambio neto de OVR para UNA temporada según la edad (curva de carrera)."""
+    if edad <= 20:
+        return rng.choice([1, 2, 2])      # cantera en plena subida
+    if edad <= 23:
+        return rng.choice([0, 1, 1])      # joven que sigue creciendo
+    if edad <= 27:
+        return rng.choice([0, 0, 1])      # pico, casi estable
+    if edad <= 30:
+        return rng.choice([-1, 0, 0])     # leve inicio de declive
+    if edad <= 32:
+        return rng.choice([-1, -1, 0])    # declive
+    return rng.choice([-2, -1, -1])       # veterano en caída
+
+
+def progresar_pasivo(equipo: Any, anios: int = 1, rng: Optional[random.Random] = None) -> None:
+    """
+    Aplica `anios` temporadas de envejecimiento + drift de OVR a toda la plantilla.
+
+    Para cada jugador y por cada año: `edad += 1` y se mueve el OVR según la curva
+    (sumando/restando el delta a los 5 atributos base, acotados a [10, 99], de modo
+    que el promedio cambie ese delta). Recalcula el valor de mercado al final.
+
+    Determinista si se pasa un `rng` con semilla fija (se usa así para envejecer las
+    otras ligas y los pools internacionales de forma reproducible según la temporada).
+    """
+    azar = rng or random.Random()
+    if equipo is None or not getattr(equipo, "jugadores", None):
+        return
+    try:
+        from alpha_football.market import calcular_valor
+    except Exception:
+        calcular_valor = None  # type: ignore
+
+    pasos = max(0, int(anios))
+    for j in equipo.jugadores:
+        for _ in range(pasos):
+            edad = int(getattr(j, "edad", 25))
+            delta = _delta_ovr_por_edad(edad, azar)
+            if delta != 0:
+                for attr in ATRIBUTOS_BASE:
+                    setattr(j, attr, max(10, min(99, getattr(j, attr) + delta)))
+            j.edad = edad + 1
+        if calcular_valor is not None:
+            try:
+                j.valor = calcular_valor(j)
+            except Exception as e_val:
+                logger.debug(f"No se pudo recalcular valor pasivo de {getattr(j, 'nombre', '?')}: {e_val}")
+
+
+def progresar_liga_pasivo(liga: Any, anios: int = 1, rng: Optional[random.Random] = None) -> None:
+    """Envejece de una pasada todos los equipos de una liga (fail-soft)."""
+    try:
+        for equipo in getattr(liga, "equipos", []) or []:
+            progresar_pasivo(equipo, anios, rng)
+    except Exception as e_liga:
+        logger.error(f"Error al progresar pasivamente la liga: {e_liga}")

@@ -36,21 +36,37 @@ ESTILOS_TACTICOS = ["anchelottismo", "guardiolismo", "flickismo", "cruyffismo", 
 RASGOS_JUGADOR = ["ninguno", "regateador", "pulmon_de_hierro", "rustico", "lider"]
 POSICIONES = ["POR", "DEF", "MED", "DEL"]
 
+def _backfill_internacionales(db: dict) -> None:
+    """
+    v0.8.8: asegura que la DB del editor tenga las "ligas" internacionales editables
+    ('libertadores' y 'champions'). Útil para bases editadas viejas que no las traían.
+    """
+    try:
+        from alpha_football.data.internacional import get_pool_libertadores, get_pool_champions
+        if not db.get('libertadores'):
+            db['libertadores'] = [eq.to_dict() for eq in get_pool_libertadores()]
+        if not db.get('champions'):
+            db['champions'] = [eq.to_dict() for eq in get_pool_champions()]
+    except Exception as e_intl:
+        logger.error(f"Error al inicializar equipos internacionales en editor: {e_intl}")
+
+
 def cargar_base_datos_inicial(estado: dict) -> dict:
     """Carga la base de datos editada desde JSON si existe, o la inicializa desde los módulos base."""
     if 'edited_db' in estado:
         return estado['edited_db']
-        
+
     ruta_db = "alpha_football_edited_db.json"
     if os.path.exists(ruta_db):
         try:
             with open(ruta_db, "r", encoding="utf-8") as f:
                 db = json.load(f)
+                _backfill_internacionales(db)  # v0.8.8: añadir int'l si faltan
                 estado['edited_db'] = db
                 return db
         except Exception as e:
             logger.error(f"Error al cargar base de datos editada: {e}")
-            
+
     # Inicializar desde los datos base del juego
     db = {}
     ligas_ids = ['premier', 'laliga', 'betplay', 'brasil', 'argentina']
@@ -76,7 +92,10 @@ def cargar_base_datos_inicial(estado: dict) -> dict:
             db[lid] = [eq.to_dict() for eq in liga.equipos]
         except Exception as e:
             logger.error(f"Error al cargar liga {lid} en editor: {e}")
-            
+
+    # v0.8.8: añadir los equipos internacionales (Libertadores / Champions) editables.
+    _backfill_internacionales(db)
+
     estado['edited_db'] = db
     return db
 
@@ -212,23 +231,24 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         col1_rect = pygame.Rect(40, 100, 450, 500)
         draw_panel(screen, col1_rect)
         
-        # Selectores de Liga
-        ligas_tabs = ['premier', 'laliga', 'betplay', 'brasil', 'argentina']
-        tab_names = {'premier': 'PREM', 'laliga': 'ESP', 'betplay': 'COL', 'brasil': 'BRA', 'argentina': 'ARG'}
+        # Selectores de Liga (v0.8.8: +LIB y UCL para editar equipos internacionales)
+        ligas_tabs = ['premier', 'laliga', 'betplay', 'brasil', 'argentina', 'libertadores', 'champions']
+        tab_names = {'premier': 'PREM', 'laliga': 'ESP', 'betplay': 'COL', 'brasil': 'BRA',
+                     'argentina': 'ARG', 'libertadores': 'LIB', 'champions': 'UCL'}
         tab_x = 55
-        tab_w = 75
+        tab_w = 55
         for l_id in ligas_tabs:
             tab_rect = pygame.Rect(tab_x, 115, tab_w, 30)
             is_active = (l_id == liga_sel)
             is_hover = tab_rect.collidepoint(mouse_pos)
-            
+
             c_bg = (0, 191, 255) if is_active else ((20, 26, 46) if is_hover else (10, 14, 26))
             c_border = (255, 215, 0) if is_active else (0, 191, 255)
-            
+
             pygame.draw.rect(screen, c_bg, tab_rect, border_radius=4)
             pygame.draw.rect(screen, c_border, tab_rect, width=1, border_radius=4)
-            draw_text(screen, tab_names[l_id], (tab_rect.x + 18, tab_rect.y + 6), size='sm', color='bg' if is_active else 'blanco')
-            
+            draw_text(screen, tab_names[l_id], (tab_rect.x + 10, tab_rect.y + 6), size='sm', color='bg' if is_active else 'blanco')
+
             if click_pos and tab_rect.collidepoint(click_pos):
                 estado['edit_liga_sel'] = l_id
                 estado['edit_equipo_idx'] = 0
@@ -236,8 +256,8 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 estado['edit_squad_offset'] = 0
                 estado['edit_teams_offset'] = 0
                 estado['edit_input_activo'] = None
-                
-            tab_x += tab_w + 5
+
+            tab_x += tab_w + 4
             
         # Lista de Equipos (Scrollable, 5 visibles)
         draw_text(screen, "EQUIPOS", (55, 155), size='sm', color='dorado')

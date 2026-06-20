@@ -105,25 +105,39 @@ def obtener_equipos_de_liga(tipo_liga: str, estado: dict) -> list:
                     else:
                         res.append(eq)
                 return res
+    equipos_fresh = []
     try:
         if tipo_liga == 'premier':
             from alpha_football.data import premier
-            return premier.get_liga().equipos
+            equipos_fresh = premier.get_liga().equipos
         elif tipo_liga == 'laliga':
             from alpha_football.data import laliga
-            return laliga.get_liga().equipos
+            equipos_fresh = laliga.get_liga().equipos
         elif tipo_liga == 'betplay':
             from alpha_football.data import betplay
-            return betplay.get_liga().equipos
+            equipos_fresh = betplay.get_liga().equipos
         elif tipo_liga == 'brasil':
             from alpha_football.data import brasil
-            return brasil.get_liga().equipos
+            equipos_fresh = brasil.get_liga().equipos
         elif tipo_liga == 'argentina':
             from alpha_football.data import argentina
-            return argentina.get_liga().equipos
+            equipos_fresh = argentina.get_liga().equipos
     except Exception as e:
         logger.error(f"Error al cargar liga de datos para {tipo_liga}: {e}")
-    return []
+        return []
+    # v0.8.8: estos equipos son copias frescas (NO la liga persistida del usuario), así
+    # que aplicamos el envejecimiento pasivo por temporada de forma determinista para que
+    # su rating en la copa refleje las temporadas transcurridas.
+    try:
+        anios = max(0, int(estado.get('temporada', 1)) - 1)
+        if anios > 0 and equipos_fresh:
+            from alpha_football.desarrollo import progresar_pasivo
+            rng = random.Random(hash((tipo_liga, anios)) & 0xFFFFFFFF)
+            for eq in equipos_fresh:
+                progresar_pasivo(eq, anios, rng)
+    except Exception as e_age:
+        logger.error(f"Error al envejecer liga '{tipo_liga}' para copa: {e_age}")
+    return equipos_fresh
 
 def generar_fixture_grupo(t: list[str]) -> list[dict]:
     """Genera fixture a 3 jornadas para un grupo de 4 equipos."""
@@ -258,6 +272,145 @@ def obtener_match_usuario_bracket(estado: dict, fase: str) -> dict:
     return {}
 
 
+# ── v0.8.8: invariantes de integridad de la copa ──────────────────────────────
+# Causa raíz de los bugs reportados: las fases se desbloqueaban por umbrales
+# INDEPENDIENTES de jornada de liga, sin verificar que la fase anterior terminó
+# realmente ni que el bracket estuviera bien sembrado. Estos helpers cierran eso.
+
+_PLACEHOLDERS_EQUIPO = ('', '?', '—', '-')
+
+
+def _equipo_valido(nombre) -> bool:
+    """Un nombre de equipo es válido si es string real (no placeholder)."""
+    return isinstance(nombre, str) and nombre.strip() not in _PLACEHOLDERS_EQUIPO
+
+
+def _match_valido(m) -> bool:
+    """Un cruce es válido si local/visitante son equipos reales y distintos."""
+    if not isinstance(m, dict):
+        return False
+    loc, vis = m.get('local'), m.get('visitante')
+    return _equipo_valido(loc) and _equipo_valido(vis) and loc != vis
+
+
+def _grupos_completos(estado: dict) -> bool:
+    """True si TODOS los partidos de la fase de grupos están jugados."""
+    partidos = estado.get('copa_grupo_partidos') or []
+    if not partidos:
+        return False
+    return all(p.get('jugado', False) for p in partidos)
+
+
+def _bracket_fase_valida(estado: dict, fase: str) -> bool:
+    """
+    True si la fase del bracket está completamente sembrada: el match 'featured'
+    (copa_bracket[fase]) y todos los de copa_bracket_otros[fase] tienen equipos
+    reales y sin duplicados a lo largo de la fase.
+    """
+    bd = estado.get('copa_bracket') or {}
+    bo = estado.get('copa_bracket_otros') or {}
+    featured = bd.get(fase)
+    otros = bo.get(fase) or []
+    matches = []
+    if isinstance(featured, dict) and isinstance(featured.get('local'), str):
+        matches.append(featured)
+    matches.extend(m for m in otros if isinstance(m, dict))
+    if not matches:
+        return False
+    vistos = set()
+    for m in matches:
+        if not _match_valido(m):
+            return False
+        for nombre in (m.get('local'), m.get('visitante')):
+            if nombre in vistos:
+                return False  # equipo duplicado dentro de la fase
+            vistos.add(nombre)
+    return True
+
+
+def _fase_completamente_jugada(estado: dict, fase: str) -> bool:
+    """True si todos los cruces de la fase (featured + otros) están jugados con ganador."""
+    bd = estado.get('copa_bracket') or {}
+    bo = estado.get('copa_bracket_otros') or {}
+    featured = bd.get(fase)
+    otros = bo.get(fase) or []
+    matches = []
+    if isinstance(featured, dict) and isinstance(featured.get('local'), str):
+        matches.append(featured)
+    matches.extend(m for m in otros if isinstance(m, dict))
+    if not matches:
+        return False
+    return all(
+        m.get('jugado') and (m.get('avanza') not in (None, '', '?'))
+        for m in matches
+    )
+
+
+def _fase_anterior_completa(estado: dict, fase: str) -> bool:
+    """
+    True si la fase previa a `fase` ya terminó (precondición para desbloquearla):
+    cuartos -> grupos completos; semis -> cuartos (featured) jugado;
+    final -> semis (featured) jugado. Para 'grupos' siempre True.
+    """
+    if fase == 'cuartos':
+        return _grupos_completos(estado)
+    bd = estado.get('copa_bracket') or {}
+    if fase == 'semis':
+        return bool((bd.get('cuartos') or {}).get('jugado'))
+    if fase == 'final':
+        return bool((bd.get('semis') or {}).get('jugado'))
+    return True
+
+
+def cargar_pools_internacionales(estado: dict, copa_tipo: str) -> list:
+    """
+    v0.8.8: devuelve los clubes internacionales (Champions o Libertadores) frescos,
+    PREFIRIENDO la base de datos editada por el usuario (claves 'champions'/'libertadores'
+    en alpha_football_edited_db.json, igual que menu.load_league_teams hace con las ligas).
+    Aplica además el envejecimiento pasivo por temporada (determinista) para que el
+    rating refleje la temporada actual sin inflar el guardado.
+    """
+    es_champions = (copa_tipo == 'Champions')
+    clave_db = 'champions' if es_champions else 'libertadores'
+    equipos = []
+    # 1. Intentar desde la base editada
+    try:
+        import os
+        import json
+        ruta = "alpha_football_edited_db.json"
+        if os.path.exists(ruta):
+            with open(ruta, "r", encoding="utf-8") as f:
+                db = json.load(f)
+            if clave_db in db and db[clave_db]:
+                from alpha_football.models import Equipo
+                for d in db[clave_db]:
+                    try:
+                        equipos.append(Equipo.from_dict(d))
+                    except Exception as e_eq:
+                        logger.warning(f"No se pudo reconstruir club internacional editado: {e_eq}")
+    except Exception as e_db:
+        logger.error(f"Error al leer pools internacionales editados: {e_db}")
+    # 2. Fallback a las plantillas por defecto (copias frescas)
+    if not equipos:
+        try:
+            from alpha_football.data.internacional import get_pool_champions, get_pool_libertadores
+            equipos = get_pool_champions() if es_champions else get_pool_libertadores()
+        except Exception as e_pool:
+            logger.error(f"Error al cargar pools internacionales por defecto: {e_pool}")
+            equipos = []
+    # 3. Envejecer pasivamente según la temporada (determinista por tipo+temporada)
+    try:
+        anios = max(0, int(estado.get('temporada', 1)) - 1)
+        if anios > 0 and equipos:
+            from alpha_football.desarrollo import progresar_pasivo
+            rng = random.Random(hash((clave_db, anios)) & 0xFFFFFFFF)
+            for eq in equipos:
+                progresar_pasivo(eq, anios, rng)
+    except Exception as e_age:
+        logger.error(f"Error al envejecer pools internacionales: {e_age}")
+    return equipos
+
+
 def _asegurar_bracket_normalizado(estado: dict) -> None:
     """
     v0.8.2: si el estado de la copa está en una fase de eliminatorias y
@@ -315,6 +468,12 @@ def avanzar_fase_bracket(estado: dict) -> None:
         
         # 1. De Grupos a Cuartos
         if fase_actual == 'grupos':
+            # v0.8.8: NO sembrar cuartos si la fase de grupos no terminó del todo.
+            # Esta es la causa raíz del bug "jugar cuartos sin simular los grupos":
+            # antes se avanzaba mirando solo `fase_actual`, sin verificar los partidos.
+            if not _grupos_completos(estado):
+                logger.warning("avanzar_fase_bracket: grupos incompletos; no se siembra cuartos.")
+                return
             recalcular_standings_copa(estado)
             grupos_st = estado.get('copa_grupos_standings', {})
             if not grupos_st:
@@ -399,6 +558,13 @@ def avanzar_fase_bracket(estado: dict) -> None:
             if not isinstance(q1, dict) or not isinstance(q1.get('local'), str) or not q1.get('local'):
                 logger.warning("avanzar_fase_bracket(cuartos): bracket de cuartos inválido, saltando")
                 return
+            # v0.8.8: simular también el featured (si el user no lo juega) y exigir que
+            # TODOS los cuartos estén jugados y válidos antes de sembrar semis. Así no se
+            # propagan equipos '?'/vacíos hacia adelante (bug del bracket en espectador).
+            _simular_featured_si_no_user(estado, 'cuartos')
+            if not _bracket_fase_valida(estado, 'cuartos') or not _fase_completamente_jugada(estado, 'cuartos'):
+                logger.warning("avanzar_fase_bracket(cuartos): cuartos incompletos/inválidos; no se siembran semis.")
+                return
             q_otros = estado['copa_bracket_otros'].get('cuartos', [])
             grupos = estado.get('copa_grupos', {})
             
@@ -468,6 +634,11 @@ def avanzar_fase_bracket(estado: dict) -> None:
             # no podemos construir la final. Salimos silenciosamente.
             if not isinstance(s1, dict) or not isinstance(s1.get('local'), str) or not s1.get('local'):
                 logger.warning("avanzar_fase_bracket(semis): bracket de semis inválido, saltando")
+                return
+            # v0.8.8: mismas garantías que en cuartos antes de construir la final.
+            _simular_featured_si_no_user(estado, 'semis')
+            if not _bracket_fase_valida(estado, 'semis') or not _fase_completamente_jugada(estado, 'semis'):
+                logger.warning("avanzar_fase_bracket(semis): semis incompletas/inválidas; no se construye final.")
                 return
             s_otros = estado['copa_bracket_otros'].get('semis', [])
             s2 = s_otros[0] if len(s_otros) > 0 else {'local': '?', 'visitante': '?', 'goles_l': '-', 'goles_v': '-', 'jugado': False}
@@ -1001,17 +1172,16 @@ def inicializar_copa_si_falta(estado: dict) -> None:
             # 3 clasificados de LaLiga + 3 de Premier; el resto, banco europeo (POOL_CHAMPIONS).
             _agregar(_clasificados(obtener_equipos_de_liga('laliga', estado)))
             _agregar(_clasificados(obtener_equipos_de_liga('premier', estado)))
-            from alpha_football.data.internacional import POOL_CHAMPIONS
-            banco = [e for e in POOL_CHAMPIONS if e.nombre != mi_equipo.nombre]
+            # v0.8.8: banco europeo con plantillas reales (y respetando edits del usuario).
+            banco = [e for e in cargar_pools_internacionales(estado, 'Champions') if e.nombre != mi_equipo.nombre]
             random.shuffle(banco)
             _agregar(banco)
         else:
-            # 3 clasificados de Brasil + 3 de Argentina; el resto, banco LATAM (BetPlay + POOL_LIBERTADORES).
+            # 3 clasificados de Brasil + 3 de Argentina; el resto, banco LATAM (BetPlay + pool real).
             _agregar(_clasificados(obtener_equipos_de_liga('brasil', estado)))
             _agregar(_clasificados(obtener_equipos_de_liga('argentina', estado)))
-            from alpha_football.data.internacional import POOL_LIBERTADORES
             banco = [e for e in obtener_equipos_de_liga('betplay', estado) if e.nombre != mi_equipo.nombre]
-            banco += [e for e in POOL_LIBERTADORES if e.nombre != mi_equipo.nombre]
+            banco += [e for e in cargar_pools_internacionales(estado, 'Libertadores') if e.nombre != mi_equipo.nombre]
             random.shuffle(banco)
             _agregar(banco)
 
@@ -1159,7 +1329,12 @@ def obtener_partido_copa_pendiente(estado: dict) -> tuple[Optional[str], Optiona
                     
         elif fase_actual in ['cuartos', 'semis', 'final']:
             limite_fase = limites.get(fase_actual, 99)
-            if jornada_actual >= limite_fase:
+            # v0.8.8: además del umbral de jornada, exigir que la fase ANTERIOR haya
+            # terminado y que el bracket de esta fase esté bien sembrado. Sin esto se
+            # podía jugar (p.ej.) cuartos sin haber completado los grupos.
+            if (jornada_actual >= limite_fase
+                    and _fase_anterior_completa(estado, fase_actual)
+                    and _bracket_fase_valida(estado, fase_actual)):
                 fase_data = estado['copa_bracket'].get(fase_actual)
                 if fase_data and not fase_data.get('jugado'):
                     user_sigue_vivo = True
@@ -1168,7 +1343,7 @@ def obtener_partido_copa_pendiente(estado: dict) -> tuple[Optional[str], Optiona
                         user_sigue_vivo = ((_bracket.get('cuartos') or {}).get('avanza') == 'user')
                     elif fase_actual == 'final':
                         user_sigue_vivo = ((_bracket.get('semis') or {}).get('avanza') == 'user')
-                    
+
                     if user_sigue_vivo:
                         return f"Copa {fase_actual.capitalize()}", fase_data
                         
@@ -1943,13 +2118,17 @@ def render(screen, estado: dict) -> str | None:
                 draw_text(screen, f"Bloqueado: Juega la Jornada {jornada_copa_limite} de Liga para desbloquear.", (710, 620), size='sm', color='rojo')
         elif fase_actual in ['cuartos', 'semis', 'final']:
             limite_fase = limites.get(fase_actual, 99)
-            if jornada_actual >= limite_fase:
+            # v0.8.8: gating secuencial — la fase previa debe estar completa y el bracket válido.
+            _fase_ok = (jornada_actual >= limite_fase
+                        and _fase_anterior_completa(estado, fase_actual)
+                        and _bracket_fase_valida(estado, fase_actual))
+            if _fase_ok:
                 fase_data = estado['copa_bracket'].get(fase_actual)
                 user_sigue_vivo = True
                 _bracket = estado.get('copa_bracket') or {}
                 if fase_actual == 'semis': user_sigue_vivo = ((_bracket.get('cuartos') or {}).get('avanza') == 'user')
                 elif fase_actual == 'final': user_sigue_vivo = ((_bracket.get('semis') or {}).get('avanza') == 'user')
-                
+
                 if user_sigue_vivo and fase_data and not fase_data.get('jugado'):
                     tiene_partido_pendiente = True
                     _fase = str(fase_actual) if fase_actual else ''

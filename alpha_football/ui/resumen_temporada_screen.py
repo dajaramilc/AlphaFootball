@@ -189,6 +189,16 @@ def avanzar_nueva_temporada(estado: dict) -> None:
                 j.lesion_partidos = 0
                 j.partidos_sancion = 0
 
+        # 3b. v0.8.8: desarrollo pasivo de fin de temporada — TODA la liga del usuario
+        # envejece (+1 año) y su OVR deriva según la edad (jóvenes suben, veteranos bajan).
+        # Las otras ligas y los pools internacionales envejecen de forma determinista al
+        # cargarse para la copa (ver copa_screen.obtener_equipos_de_liga / cargar_pools_internacionales).
+        try:
+            from alpha_football.desarrollo import progresar_liga_pasivo
+            progresar_liga_pasivo(liga, 1)
+        except Exception as e_dev_pasivo:
+            logger.error(f"Error en desarrollo pasivo de fin de temporada: {e_dev_pasivo}")
+
         # 4. Limpiar el calendario de partidos para obligar a regenerar un fixture nuevo
         liga.calendario = []
         liga.jornada_actual = 1

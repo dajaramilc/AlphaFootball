@@ -1,6 +1,6 @@
-# ALPHA FOOTBALL — Contexto de Proyecto (v0.8.7.5)
+# ALPHA FOOTBALL — Contexto de Proyecto (v0.8.8)
 **Última actualización:** 2026-06-19
-**Sesión actual:** v0.8.7.5 — 2 fixes pedidos por Diego: (1) VER ALINEACIÓN RIVAL en carrera abría DIRECCIÓN DE EQUIPO (modo edición) cuando el user jugaba de visitante, porque el handler fijaba siempre `team_equipo_objetivo = visitante` (que ES el user de visitante) → `view_mode` quedaba False; ahora elige el oponente real. (2) El historial mostraba "Fase de grupos" en vez de "No clasificado" tras un save/load porque los flags de clasificación a copa (`copa_user_en_copa` etc.) NO se persistían → ahora se guardan/restauran en el esquema del save.
+**Sesión actual:** v0.8.8 — 5 pedidos de Diego (con /plan): (1) **integridad de copa** — las fases avanzaban por umbrales independientes de jornada sin verificar la fase previa; ahora gating secuencial + validación de bracket (no más cuartos sin grupos, ni bracket roto en espectador). (2) **desarrollo pasivo + envejecimiento** — nadie envejecía y las otras 4 ligas nunca evolucionaban; ahora `progresar_pasivo` (edad +1 + drift de OVR por edad) en el rollover de tu liga y determinista por temporada para otras ligas/internacionales. (3+5) **equipos internacionales reales** — `data/internacional.py` reescrito con plantillas reales parodiadas (18 clubes), OVR fiel automático, sin relleno. (4) **editar internacionales** — pestañas LIB/UCL en el editor + la copa respeta los edits.
 
 ---
 
@@ -975,9 +975,64 @@ Diego reportó 2 bugs en vivo:
 
 ---
 
+## Bitácora — v0.8.8 (sesión 2026-06-19, 5 pedidos con /plan)
+
+Diego pidió (investigando antes con /plan) 5 cosas:
+1. Asegurar integridad de datos de la copa internacional (se podía jugar cuartos sin simular los grupos en J8; y al entrar de espectador al final de temporada los brackets se buggeaban desde cuartos).
+2. Que los jugadores de OTRAS ligas también tengan desarrollo.
+3. Que los equipos de copa internacional tengan rating fiel.
+4. Que en modo edición se puedan editar los equipos internacionales.
+5. Que los jugadores de equipos internacionales sean reales, no de relleno.
+
+### Decisiones (AskUserQuestion) — todas opción recomendada
+- (#2) **Desarrollo pasivo por temporada** (no simular las otras ligas): edad +1 + drift de OVR por edad.
+- (#3+#5) **Plantillas reales autoradas** para los 18 clubes internacionales.
+- (#1) **Endurecer + tests** (sin reescribir la máquina de estados de la copa).
+
+### Causa raíz (#1)
+La lógica VIVA de la copa está toda en `ui/copa_screen.py` (`alpha_football/copa.py` es **código muerto**, nadie lo importa). Las fases se desbloqueaban por umbrales INDEPENDIENTES de jornada de liga (`cuartos≥0.7N`, `semis≥0.85N`, `final=N`) sin verificar que la fase previa terminó, con varios caminos solapados de avance/normalización. De ahí ambos síntomas.
+
+### Cambios
+**1) `ui/copa_screen.py` — gating secuencial + validación de bracket:**
+- Helpers nuevos: `_grupos_completos`, `_bracket_fase_valida` (sin equipos vacíos/`?`/`—` ni duplicados), `_fase_completamente_jugada`, `_fase_anterior_completa`.
+- `avanzar_fase_bracket`: rechaza grupos→cuartos si los grupos no están completos; rechaza cuartos→semis y semis→final si la fase no está toda jugada/válida; simula el match *featured* IA antes de avanzar (espectador).
+- Gating de "JUGAR …" en `render` y `obtener_partido_copa_pendiente`: además del umbral exige fase previa completa + bracket válido.
+
+**2) Desarrollo pasivo (`desarrollo.py` + hooks):** `progresar_pasivo(equipo, anios, rng)` y `progresar_liga_pasivo(liga, ...)` (curva de edad: ≤20 sube fuerte, pico 24-27, declive 31+; recalcula `valor`). Hooks: `resumen_temporada_screen.avanzar_nueva_temporada` (tu liga, +1 año en el rollover) y `copa_screen.obtener_equipos_de_liga` / `cargar_pools_internacionales` (otras ligas + pools, envejecimiento determinista por `temporada-1` sobre copias frescas → refleja la temporada sin inflar el save).
+
+**3+5) `data/internacional.py` reescrito:** `DATOS_LIBERTADORES` (10) + `DATOS_CHAMPIONS` (8) con plantillas reales parodiadas (OVR/edad fieles, ~15-17 jug). `_atributos_exactos` garantiza promedio == OVR. Factories `get_pool_libertadores()/get_pool_champions()` devuelven COPIAS FRESCAS (para que el aging no se acumule). Se conserva `_generar_jugadores_equipo` (relleno ficticio que aún usa copa_screen). OVR de equipo queda fiel solo (Champions ~78-83, Libertadores ~70-71).
+
+**4) `ui/edit_screen.py`:** pestañas **LIB** y **UCL** + claves `libertadores`/`champions` en la DB del editor (con `_backfill_internacionales` para DBs editadas viejas). La copa prefiere los edits vía `copa_screen.cargar_pools_internacionales` (lee `alpha_football_edited_db.json`, igual que `menu.load_league_teams` con las ligas).
+
+### Verificación (headless, 8/8)
+- `python tests/test_desarrollo_pasivo.py` (4 OK): joven sube, veterano baja, determinismo, liga+valor.
+- `python tests/test_copa_integridad.py` (4 OK): no cuartos sin grupos, avance secuencial válido, espectador con campeón válido, usuario eliminado sin partido.
+- Smoke: import de las 13 pantallas + `main`; editor DB con 7 claves; loader envejece (Kane 31/89 → T5 35/85); **flujo completo del usuario** cuartos→semis→final→campeón sin bloqueos.
+
+### Archivos modificados
+- `alpha_football/desarrollo.py` — `progresar_pasivo` / `progresar_liga_pasivo` / `_delta_ovr_por_edad`
+- `alpha_football/data/internacional.py` — reescrito (plantillas reales + factories)
+- `alpha_football/ui/copa_screen.py` — helpers integridad, gating secuencial, loader internacional, aging otras ligas
+- `alpha_football/ui/edit_screen.py` — pestañas/claves internacionales + backfill
+- `alpha_football/ui/resumen_temporada_screen.py` — hook de desarrollo pasivo en rollover
+- `tests/test_copa_integridad.py`, `tests/test_desarrollo_pasivo.py` — nuevos
+- `context.md` — bitácora v0.8.8
+
+### Lo que queda (validación en vivo)
+1. Carrera: avanzar jornadas SIN entrar a copa → no debe ofrecer cuartos hasta completar grupos; bracket sin `?`/vacíos.
+2. No clasificar → entrar a copa al final → simula entera con campeón válido (sin bug en cuartos+).
+3. Fin de temporada → cambian edades/OVR (propios y rivales).
+4. Pestaña Copa: nombres internacionales reales + OVR fiel.
+5. Modo edición: editar internacional → guardar → nueva carrera lo refleja.
+
+### Compatibilidad
+Saves viejos cargan igual; el aging de otras ligas/internacionales es determinista por `temporada` (no cambia el formato de guardado). `alpha_football/copa.py` queda como código muerto (no tocado).
+
+---
+
 ## 🔴 ESTADO ACTUAL — Para que claude continue
 
-**Versión:** v0.8.7.5 (recién aplicado por claude, pendiente validación en vivo de Diego)
+**Versión:** v0.8.8 (recién aplicado por claude, pendiente validación en vivo de Diego)
 
 **Última corrida:** Diego ejecutó `python main.py` 2026-06-19 02:42-02:48 (sobre v0.8.4, no v0.8.5 ni v0.8.6 ni v0.8.7). En este momento:
 - v0.8.5 cubre los bugs críticos (partido en vivo, copa reparada, amistoso aislado, modal borrar slot).
@@ -1008,7 +1063,8 @@ Diego reportó 2 bugs en vivo:
 - v0.8.7.2: copa en background (NO CLASIFICADO + VER), DT/presupuesto en slots, hook en finalizar_jornada_liga (claude, 2026-06-19).
 - v0.8.7.3: fix "Campeón" en historial cuando user no clasificó (claude, 2026-06-19).
 - v0.8.7.4: VER ALINEACIÓN RIVAL fix + OVR visitante fix + badge clasificados copa (claude, 2026-06-19).
-- **v0.8.7.5: VER ALINEACIÓN RIVAL elige el oponente real (user de visitante) + persistencia de flags de clasificación a copa en el save (fix "Fase de grupos" → "No clasificado" tras load) (claude, 2026-06-19).**
+- v0.8.7.5: VER ALINEACIÓN RIVAL elige el oponente real (user de visitante) + persistencia de flags de clasificación a copa en el save (fix "Fase de grupos" → "No clasificado" tras load) (claude, 2026-06-19).
+- **v0.8.8: integridad de copa (gating secuencial + validación de bracket), desarrollo pasivo + envejecimiento, equipos internacionales reales (data/internacional.py reescrito), editar internacionales en el editor + tests headless (claude, 2026-06-19).**
 
 ### Lo que falta (próximas sesiones)
 
