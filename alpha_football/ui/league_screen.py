@@ -329,14 +329,36 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         segunda = estado.get('segunda_division') or {}
         liga_tipo = getattr(liga, 'tipo', '')
         liga_vista = liga  # Por defecto, la del user
-        if liga_view == 2 and liga_tipo in segunda and segunda[liga_tipo] is not None:
-            liga_vista = segunda[liga_tipo]
+        if liga_view == 2:
+            if liga_tipo in segunda and segunda[liga_tipo] is not None:
+                liga_vista = segunda[liga_tipo]
+            else:
+                # No hay 2ª cargada -> volver a 1ª
+                estado['liga_view'] = 1
+                liga_view = 1
             # Inicializar calendario de la 2ª división si está vacío
             try:
                 if not getattr(liga_vista, 'calendario', None):
                     inicializar_calendario_liga(liga_vista)
             except Exception:
                 pass
+        elif liga_view == 1:
+            # Si el user está en 2ª pero quiere ver 1ª, cargar 1ª on-demand
+            if estado.get('liga_usuario_division') == 2:
+                try:
+                    from alpha_football.ui.menu import load_league_teams
+                    liga_1a_on_demand = load_league_teams(liga_tipo)
+                    if liga_1a_on_demand:
+                        liga_1a_on_demand.division = 1
+                        # Cachear en estado para no recargar cada frame
+                        estado['_liga_1a_cache'] = liga_1a_on_demand
+                        liga_vista = liga_1a_on_demand
+                        if not getattr(liga_vista, 'calendario', None):
+                            inicializar_calendario_liga(liga_vista)
+                except Exception:
+                    pass
+            elif estado.get('_liga_1a_cache') is not None:
+                liga_vista = estado['_liga_1a_cache']
 
         # v2.3.1 (FIX BUG CRITICO): mouse_pos y click_pos se capturan AQUI para
         # que esten disponibles antes de cualquier uso (toggle 1a/2a, banner de
@@ -434,11 +456,16 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             logger.error(f"Error al dibujar cabecera principal: {str(e_header)}")
 
         # v2.3 (Fase 11): toggle 1ª⇄2ª División en la cabecera.
-        # Por defecto muestra la división del usuario; click cambia.
+        # Muestra el toggle siempre que exista al menos UNA de las dos divisiones
+        # para el país del usuario (carga on-demand si hace falta).
         segunda = estado.get('segunda_division') or {}
         liga_tipo = getattr(liga, 'tipo', '')
         liga_view = estado.get('liga_view', estado.get('liga_usuario_division', 1))
-        if liga_tipo in segunda and segunda[liga_tipo] is not None:
+        # Verificar si hay 2ª división disponible para este país
+        tiene_segunda = (liga_tipo in segunda and segunda[liga_tipo] is not None)
+        # Si el usuario está en 2ª, siempre hay toggle (para ver 1ª)
+        mostrar_toggle = tiene_segunda or (estado.get('liga_usuario_division') == 2)
+        if mostrar_toggle:
             toggle_rect = pygame.Rect(SCREEN_W - 240, 22, 220, 44)
             toggle_hover = toggle_rect.collidepoint(mouse_pos)
             label_toggle = f"VER {'2ª' if liga_view == 1 else '1ª'} DIVISIÓN"

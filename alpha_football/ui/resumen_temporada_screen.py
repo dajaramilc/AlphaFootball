@@ -614,14 +614,12 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         draw_button(screen, btn_avanzar, texto_sig_temp, hover_av)
 
         if click_pos and btn_avanzar.collidepoint(click_pos):
-            # v2.3.3: si hay datos de promo/releg (1ª division con 2ª cargada),
-            # mostrar la pantalla de promocion/relegacion ANTES del resumen.
-            if estado.get('promo_releg_data'):
-                # El swap ya se hizo dentro de avanzar_nueva_temporada? No — todavía no.
-                # Hacemos el swap acá y luego redirigimos a promo_releg_screen.
-                avanzar_nueva_temporada(estado)
-                return "promo_releg_screen"
+            # v2.3.4: primero ejecutar el swap, luego ver si hay datos de promo/releg.
+            # El swap (avanzar_nueva_temporada) es quien CREA promo_releg_data, así que
+            # debemos llamarlo ANTES de verificar el flag.
             avanzar_nueva_temporada(estado)
+            if estado.get('promo_releg_data'):
+                return "promo_releg_screen"
             return "league_screen"
 
         return None

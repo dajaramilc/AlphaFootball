@@ -1136,7 +1136,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                         estado.pop('team_modo_prepartido', None)
                     return ret_screen
 
-            # 2. Clic en un renglón de la lista de la plantilla (PES 2013: swap con campo o toggle)
+            # 2. Clic en la lista de la plantilla (PES 2013: swap 1:1 con campo, o toggle)
             elif rect_lista.collidepoint(click_pos):
                 try:
                     rel_y = click_pos[1] - rect_lista.y - encabezado_h
@@ -1150,25 +1150,21 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                             else:
                                 sel = estado.get('team_seleccion')
                                 if sel is not None:
-                                    # PES 2013: hay un jugador seleccionado en el campo => SWAP
+                                    # PES 2013: hay un jugador SELECCIONADO en el campo => SWAP 1:1
+                                    # reemplazamos exactamente ESE índice en titulares con el clickeado
                                     if 0 <= sel < len(jugadores_titulares_ord):
-                                        slot_idx = sel
-                                        if slot_idx < len(posiciones_campo):
-                                            # El jugador seleccionado (en campo) sale, el nuevo entra
-                                            _sel_idx_real = campo_clicks[slot_idx][3]  # idx en equipo
-                                            if _sel_idx_real >= 0 and _sel_idx_real < len(mi_equipo.jugadores):
-                                                # Swap: quitar seleccionado, meter clickeado
-                                                if _sel_idx_real in titulares:
-                                                    titulares.remove(_sel_idx_real)
-                                                if click_idx not in titulares:
-                                                    titulares.append(click_idx)
-                                                    estado['team_flash_msg'] = f"Swap: {jugador.apellido} ↔ entra al campo"
-                                                else:
-                                                    estado['team_flash_msg'] = "Ese jugador ya es titular"
-                                                estado['team_flash_timer'] = 1.5
-                                                estado['team_seleccion'] = None
+                                        _sel_idx_real = campo_clicks[sel][3]
+                                        if _sel_idx_real >= 0 and _sel_idx_real in titulares:
+                                            idx_pos = titulares.index(_sel_idx_real)
+                                            # Swap directo en el slot: el nuevo reemplaza al anterior
+                                            titulares[idx_pos] = click_idx
+                                            estado['team_flash_msg'] = f"Swap: {jugador.apellido} ⇄ {campo_clicks[sel][2].apellido}"
+                                            estado['team_flash_timer'] = 1.5
+                                            estado['team_seleccion'] = None
+                                        else:
+                                            estado['team_seleccion'] = None
                                 else:
-                                    # PES 2013: sin selección previa => toggle clásico
+                                    # Sin selección previa => toggle clásico (agregar/quitar titular)
                                     if click_idx in titulares:
                                         if len(titulares) > 1:
                                             titulares.remove(click_idx)
@@ -1178,7 +1174,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                                         if len(titulares) < 11:
                                             titulares.append(click_idx)
                                         else:
-                                            estado['team_flash_msg'] = "Ya tienes 11 titulares. Quita uno primero."
+                                            estado['team_flash_msg'] = "Ya tienes 11 titulares. Selecciona uno en el campo para swapear."
                                             estado['team_flash_timer'] = 2.0
                 except Exception as e_click_row:
                     logger.error(f"Error al alternar jugador en lista: {e_click_row}")
