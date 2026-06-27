@@ -114,6 +114,14 @@ def render(screen, estado: dict):
                                 except Exception as e_del:
                                     logger.error(f"Fallo al eliminar pista: {e_del}")
                             break
+            elif event.type == pygame.KEYDOWN:
+                # v2.3.3: teclado global en playlist. Esc vuelve, ←→ pagina.
+                if event.key == pygame.K_ESCAPE:
+                    estado['opt_view'] = 'main'
+                elif event.key == pygame.K_LEFT and total_paginas > 1:
+                    estado['playlist_page'] = max(0, pagina - 1)
+                elif event.key == pygame.K_RIGHT and total_paginas > 1:
+                    estado['playlist_page'] = min(total_paginas - 1, pagina + 1)
 
         # Dibujo Playlist
         draw_gradient_bg(screen)
@@ -194,11 +202,31 @@ def render(screen, estado: dict):
                     _iniciar_descarga(audio, estado['opt_url'])
                     estado['opt_url'] = ""
             elif rect_playlist.collidepoint(cp):
+                if audio:
+                    _iniciar_descarga(audio, estado['opt_url'])
+                    estado['opt_url'] = ""
+            elif rect_playlist.collidepoint(cp):
                 estado['opt_view'] = 'playlist'
                 estado['playlist_page'] = 0
             elif rect_volver.collidepoint(cp):
                 _persistir(audio, estado)
                 return estado.get('options_return', 'menu')
+        elif event.type == pygame.KEYDOWN:
+            # v2.3.3: atajos de teclado globales en opciones.
+            # Esc vuelve al menu. - y + ajustan volumen. m = mute. Enter = pegar resultado #1.
+            if event.key == pygame.K_ESCAPE:
+                _persistir(audio, estado)
+                return estado.get('options_return', 'menu')
+            elif event.key == pygame.K_MINUS and audio:
+                audio.set_volume(max(0.0, volumen - 0.1)); _persistir(audio, estado)
+            elif event.key == pygame.K_EQUALS and audio:
+                audio.set_volume(min(1.0, volumen + 0.1)); _persistir(audio, estado)
+            elif event.key == pygame.K_m and audio:
+                if volumen > 0.0:
+                    estado['last_non_zero_volume'] = volumen; audio.set_volume(0.0)
+                else:
+                    audio.set_volume(estado.get('last_non_zero_volume', 0.5))
+                _persistir(audio, estado)
         elif event.type == pygame.KEYDOWN and estado['opt_input_activo']:
             es_ctrl = bool(event.mod & pygame.KMOD_CTRL)
             if es_ctrl and event.key == pygame.K_v:

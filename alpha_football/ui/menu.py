@@ -32,6 +32,26 @@ LIGAS_DISPONIBLES = [
     {'id': 'argentina', 'name': 'Liga Argentina (Argentina)'}
 ]
 
+# v2.3 (Fase 9): selector por PAÍS (no por liga). Cada país tiene 2 divisiones.
+# El flow es: País → División (1ª / 2ª) → Equipo.
+PAISES_DISPONIBLES = [
+    {'codigo': 'colombia',   'nombre': 'Colombia',   'liga_id': 'betplay',   'emoji': 'CO'},
+    {'codigo': 'espana',     'nombre': 'España',     'liga_id': 'laliga',    'emoji': 'ES'},
+    {'codigo': 'inglaterra', 'nombre': 'Inglaterra', 'liga_id': 'premier',   'emoji': 'EN'},
+    {'codigo': 'brasil',     'nombre': 'Brasil',     'liga_id': 'brasil',    'emoji': 'BR'},
+    {'codigo': 'argentina',  'nombre': 'Argentina',  'liga_id': 'argentina', 'emoji': 'AR'},
+]
+
+# Mapeo de países a nombres de liga (usado por las pantallas de selección de país
+# y división para mostrar el subtítulo de cada país).
+CONFIGURACION_LIGAS = {
+    'betplay':   {'nombre': 'Liga BetPlay Dimayor Parodia', 'num_jornadas': 14},
+    'laliga':    {'nombre': 'LaLiga EA Sports Parodia',     'num_jornadas': 10},
+    'premier':   {'nombre': 'Premier League Parodia',        'num_jornadas': 10},
+    'brasil':    {'nombre': 'Brasileirao Parodia',            'num_jornadas': 10},
+    'argentina': {'nombre': 'Liga Profesional Argentina Parodia', 'num_jornadas': 10},
+}
+
 # v0.7: nacionalidades sugeridas para el alta del DT (además del campo de texto libre).
 NACIONALIDADES = [
     "Colombia", "Argentina", "España", "Brasil", "Inglaterra",
@@ -64,13 +84,6 @@ def load_league_teams(league_id: str):
                         logger.warning(f"No se pudo reconstruir un equipo individual desde JSON: {error_equipo}. Omitiendo equipo.")
                 
                 # Mapeo de nombres oficiales y jornadas predeterminadas por liga
-                CONFIGURACION_LIGAS = {
-                    'betplay': {'nombre': "Liga BetPlay Dimayor Parodia", 'num_jornadas': 14},
-                    'laliga': {'nombre': "LaLiga EA Sports Parodia", 'num_jornadas': 10},
-                    'premier': {'nombre': "Premier League Parodia", 'num_jornadas': 10},
-                    'brasil': {'nombre': "Brasileirao Parodia", 'num_jornadas': 10},
-                    'argentina': {'nombre': "Liga Profesional Argentina Parodia", 'num_jornadas': 10}
-                }
                 config_liga = CONFIGURACION_LIGAS.get(league_id, {'nombre': f"Liga {league_id.upper()} Parodia", 'num_jornadas': 10})
                 
                 liga_cargada = Liga(
@@ -86,7 +99,7 @@ def load_league_teams(league_id: str):
                 # NO se re-escalan presupuestos: la editada ya los trae escalados.
                 try:
                     from alpha_football.plantilla import expandir_liga
-                    expandir_liga(liga_cargada, 20)
+                    expandir_liga(liga_cargada, 25, 40)
                 except Exception as e_exp_ed:
                     logger.warning(f"No se pudo expandir la liga editada '{league_id}': {e_exp_ed}")
                 try:
@@ -120,7 +133,7 @@ def load_league_teams(league_id: str):
             # +5 suplentes por equipo (aplica a liga, carrera y amistoso, que pasan por aquí).
             try:
                 from alpha_football.plantilla import expandir_liga
-                expandir_liga(liga_obj, 20)  # 20 jugadores base por equipo (cap 32)
+                expandir_liga(liga_obj, 25, 40)  # v2.3: 25 jugadores por equipo (cap 40)
             except Exception as e_suplentes:
                 logger.warning(f"No se pudieron agregar suplentes a la liga '{league_id}': {e_suplentes}")
             # v0.7.1: escalar presupuestos para que el mercado sea jugable con valores realistas.
@@ -193,6 +206,50 @@ def load_league_teams(league_id: str):
         except Exception as e_build:
             logger.critical(f"Fallo crítico al construir liga fallback: {e_build}")
             return None
+
+
+def load_division_teams(country_id: str, division: int):
+    """
+    v2.3 (Fase 9): carga la liga del país seleccionado, sea 1ª o 2ª división.
+    - division=1: usa load_league_teams (flujo actual, sin cambios).
+    - division=2: importa el módulo data/segunda_<country_id>.py y aplica
+      las mismas pós-procesados que load_league_teams.
+    Retorna el objeto Liga o None si falla.
+    """
+    # v2.3.1 (FIX CRÍTICO): traducir código de país a ID de liga.
+    # PAISES_DISPONIBLES usa 'colombia'/'espana'/'inglaterra' pero los
+    # módulos se llaman data/{betplay,laliga,premier,brasil,argentina}.py.
+    pais = next((p for p in PAISES_DISPONIBLES if p['codigo'] == country_id), None)
+    liga_id = pais['liga_id'] if pais else country_id
+    if division == 1:
+        return load_league_teams(liga_id)
+    if division == 2:
+        try:
+            mod = __import__(
+                f'alpha_football.data.segunda_{liga_id}',
+                fromlist=['get_liga']
+            )
+            liga_obj = mod.get_liga()
+            if liga_obj is None:
+                raise ValueError("El módulo de 2ª división retornó None.")
+            # Mismas pós-procesados que load_league_teams
+            try:
+                from alpha_football.plantilla import expandir_liga
+                expandir_liga(liga_obj, 25, 40)
+            except Exception as e_exp:
+                logger.warning(f"No se pudo expandir plantilla 2ª {liga_id}: {e_exp}")
+            try:
+                from alpha_football.market import escalar_presupuestos, asignar_valores_iniciales
+                escalar_presupuestos(liga_obj)
+                asignar_valores_iniciales(liga_obj)
+            except Exception as e_mkt:
+                logger.warning(f"No se pudo escalar/asignar valores 2ª {liga_id}: {e_mkt}")
+            logger.info(f"2ª división de {liga_id} cargada: {len(liga_obj.equipos)} equipos")
+            return liga_obj
+        except Exception as e:
+            logger.error(f"Error al cargar 2ª división de {liga_id}: {e}")
+            return None
+    return None
 
 
 def _dibujar_balon_decorativo(screen: pygame.Surface, cx: int, cy: int, radio: int, angulo: float):
@@ -725,7 +782,7 @@ def _aplicar_estado_cargado(estado: dict, loaded) -> bool:
         try:
             from alpha_football.plantilla import expandir_liga
             if liga:
-                expandir_liga(liga, 20, 32)  # Plantilla incompleta -> mín. 20, tope 32
+                expandir_liga(liga, 25, 40)  # v2.3: 25 jugadores base, tope 40
         except Exception as error_expansion_carga:
             logger.warning(f"No se pudo expandir plantillas al cargar save: {error_expansion_carga}")
 
@@ -777,6 +834,36 @@ def _aplicar_estado_cargado(estado: dict, loaded) -> bool:
             estado['copa_clasificado_motivo'] = _motivo_cargado
         if getattr(loaded, 'copa_mejor_fase_temp', None) is not None:
             estado['copa_mejor_fase_temp'] = loaded.copa_mejor_fase_temp
+
+        # v2.3 (Fase 8): restaurar división del usuario (1 o 2) para saber en qué
+        # división quedó el user tras el último swap de promoción/relegación.
+        estado['liga_usuario_division'] = int(getattr(loaded, 'liga_usuario_division', 1) or 1)
+
+        # v2.3 (Fase 8): compatibilidad con saves viejos sin 2ª división.
+        # Cargamos las 5 ligas de 2ª división on-demand (no las serializamos
+        # para evitar saves enormes). Si el save las trae, las respetamos.
+        try:
+            segunda_cargada = getattr(loaded, 'segunda_division', None) or {}
+            if isinstance(segunda_cargada, dict) and len(segunda_cargada) == 5:
+                estado['segunda_division'] = segunda_cargada
+                logger.info("2ª división restaurada desde save (5 ligas).")
+            else:
+                # Save viejo: cargar las 5 desde los módulos
+                segunda_nueva = {}
+                for tipo in ('betplay', 'laliga', 'premier', 'brasil', 'argentina'):
+                    try:
+                        mod = __import__(
+                            f'alpha_football.data.segunda_{tipo}',
+                            fromlist=['get_liga']
+                        )
+                        segunda_nueva[tipo] = mod.get_liga()
+                    except Exception as e_mod:
+                        logger.warning(f"No se pudo cargar 2ª división {tipo}: {e_mod}")
+                estado['segunda_division'] = segunda_nueva
+                logger.info(f"2ª división cargada on-demand: {list(segunda_nueva.keys())}")
+        except Exception as e_segunda:
+            logger.error(f"Error cargando 2ª división on-demand: {e_segunda}")
+            estado['segunda_division'] = {}
 
         if slot:
             estado['slot_activo'] = slot
@@ -872,16 +959,16 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         # Lógica de clics
         if click_pos:
             if btn_nueva_rect.collidepoint(click_pos):
-                estado['menu_step'] = 'select_league'
+                estado['menu_step'] = 'select_country'
             elif btn_cargar_rect.collidepoint(click_pos):
                 estado['menu_step'] = 'load_slots'   # Fase 2: selector de slots
             elif btn_amistoso_rect.collidepoint(click_pos):
-                # Fase 6: arrancamos eligiendo la liga del equipo LOCAL. La del visitante
-                # se elige aparte, así se pueden cruzar equipos de ligas diferentes.
+                # v2.3 (Fase 9): País → División → Equipo. Igual que nueva partida pero
+                # con flag de amistoso.
                 estado['amis_local'] = None
                 estado['amis_visitante'] = None
                 estado['amis_phase'] = 'local'
-                estado['menu_step'] = 'amistoso_league'
+                estado['menu_step'] = 'amistoso_country'
             elif btn_editor_rect.collidepoint(click_pos):
                 estado['current_screen'] = 'edit_screen'
                 return 'edit_screen'
@@ -900,41 +987,137 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             else:
                 draw_text(screen, estado['menu_error'], (100, 505), size='md', color='rojo')
 
-    # --- SELECCIÓN DE LIGA (ALINEADO A LA IZQUIERDA) ---
-    elif estado['menu_step'] == 'select_league':
+    # --- SELECCIÓN DE PAÍS (v2.3 / Fase 9) ---
+    elif estado['menu_step'] == 'select_country':
         # Mostrar cabecera del logo y título alineados a la izquierda
         _dibujar_logo_principal(screen, 100, 80, estado)
-        draw_text(screen, "SELECCIONA UNA LIGA", (100, 195), size='lg', color='verde')
+        draw_text(screen, "SELECCIONA UN PAÍS", (100, 195), size='lg', color='verde')
+        draw_text(screen, "Cada país tiene 1ª y 2ª División. Elige dónde empezar.",
+                  (100, 235), size='sm', color='azul')
+        # Hint de teclado (nuevo en esta tanda)
+        draw_text(screen, "[↑ ↓ Enter = elegir país · Esc = volver]",
+                  (100, 660), size='sm', color='azul')
 
-        start_y = 250
-        btn_w, btn_h = 400, 52
-        spacing_y = 12
-        
-        volver_rect = pygame.Rect(100, 600, 200, 50)
+        # v2.3 (Fase 9 bugfix): botones más compactos y posicionados para que
+        # quepan los 5 países sin solaparse con el botón VOLVER ni con el header.
+        start_y = 280
+        btn_w, btn_h = 380, 56
+        spacing_y = 8
+
+        # Inicializar el índice de país resaltado por teclado (persistente)
+        if 'pais_keyboard_idx' not in estado:
+            estado['pais_keyboard_idx'] = 0
+
+        # Resaltado por teclado: tiene prioridad sobre el hover del mouse.
+        # ↑/↓ mueven el índice, Enter selecciona, Esc vuelve.
+        for ev in key_events:
+            if ev.key == pygame.K_UP:
+                estado['pais_keyboard_idx'] = (estado['pais_keyboard_idx'] - 1) % len(PAISES_DISPONIBLES)
+            elif ev.key == pygame.K_DOWN:
+                estado['pais_keyboard_idx'] = (estado['pais_keyboard_idx'] + 1) % len(PAISES_DISPONIBLES)
+            elif ev.key == pygame.K_RETURN or ev.key == pygame.K_SPACE:
+                # Simula click en el país resaltado por teclado
+                idx = estado['pais_keyboard_idx']
+                if 0 <= idx < len(PAISES_DISPONIBLES):
+                    pais = PAISES_DISPONIBLES[idx]
+                    estado['selected_country_id'] = pais['codigo']
+                    estado['selected_league_id'] = pais['liga_id']
+                    estado['menu_step'] = 'select_division'
+            elif ev.key == pygame.K_ESCAPE:
+                estado['menu_step'] = 'main'
+            # rueda del mouse para navegar
+            elif ev.type == pygame.MOUSEWHEEL:
+                if ev.y > 0:
+                    estado['pais_keyboard_idx'] = (estado['pais_keyboard_idx'] - 1) % len(PAISES_DISPONIBLES)
+                elif ev.y < 0:
+                    estado['pais_keyboard_idx'] = (estado['pais_keyboard_idx'] + 1) % len(PAISES_DISPONIBLES)
+
+        volver_rect = pygame.Rect(540, 640, 200, 50)  # Esquina inferior derecha
         hover_volver = volver_rect.collidepoint(mouse_pos)
 
-        # Dibujar las ligas
-        for i, liga_data in enumerate(LIGAS_DISPONIBLES):
-            btn_rect = pygame.Rect(100, start_y + i * (btn_h + spacing_y), btn_w, btn_h)
-            hover_liga = btn_rect.collidepoint(mouse_pos)
-            _dibujar_boton_premium(screen, btn_rect, liga_data['name'], hover_liga)
+        # Dibujar los países (botones con emoji-pill + nombre grande)
+        hovered_pais = None
+        kb_idx = int(estado.get('pais_keyboard_idx', 0))
+        for i, pais in enumerate(PAISES_DISPONIBLES):
+            btn_rect = pygame.Rect(120, start_y + i * (btn_h + spacing_y), btn_w, btn_h)
+            hover = btn_rect.collidepoint(mouse_pos)
+            kb_selected = (i == kb_idx)
+            if hover or kb_selected:
+                hovered_pais = pais
+            try:
+                # Fondo del botón (hover o teclado tienen prioridad)
+                if kb_selected and not hover:
+                    bg = (50, 60, 100)  # azul-violeta para teclado
+                elif hover:
+                    bg = (30, 45, 75)
+                else:
+                    bg = (12, 18, 36)
+                pygame.draw.rect(screen, bg, btn_rect, border_radius=8)
+                # Borde (dorado si está resaltado por teclado, verde si es hover, azul normal)
+                if kb_selected and not hover:
+                    borde = COLORS.get('dorado', (255, 215, 0))
+                    borde_w = 3
+                elif hover:
+                    borde = COLORS.get('verde', (0, 255, 136))
+                    borde_w = 3
+                else:
+                    borde = COLORS.get('azul', (0, 191, 255))
+                    borde_w = 2
+                pygame.draw.rect(screen, borde, btn_rect, width=borde_w, border_radius=8)
+                # Pill del emoji a la izquierda
+                pill = pygame.Rect(btn_rect.x + 8, btn_rect.y + 6, 48, btn_rect.height - 12)
+                pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), pill, border_radius=6)
+                draw_text(screen, pais['emoji'], (pill.x + 8, pill.y + 12), size='md',
+                          color='azul', shadow=False)
+                # Indicador de selección por teclado
+                if kb_selected and not hover:
+                    draw_text(screen, "▶", (btn_rect.x + btn_rect.width - 30, btn_rect.y + 18),
+                              size='lg', color='dorado')
+            except Exception:
+                pass
+            # Nombre del país en grande
+            draw_text(screen, pais['nombre'].upper(),
+                      (btn_rect.x + 70, btn_rect.y + 8), size='lg',
+                      color='dorado' if (kb_selected and not hover) else ('verde' if hover else 'blanco'))
+            # Subtítulo: nombre de la liga
+            config = CONFIGURACION_LIGAS.get(pais['liga_id'], {})
+            draw_text(screen, config.get('nombre', pais['liga_id']),
+                      (btn_rect.x + 70, btn_rect.y + 36), size='sm', color='azul')
 
             if click_pos and btn_rect.collidepoint(click_pos):
-                estado['selected_league_id'] = liga_data['id']
-                liga_obj = load_league_teams(liga_data['id'])
-                if liga_obj:
-                    estado['selected_liga_obj'] = liga_obj
-                    estado['menu_step'] = 'select_team'
-                else:
-                    estado['menu_error'] = "Error al inicializar liga."
-                    estado['menu_error_ticks'] = pygame.time.get_ticks()
+                estado['selected_country_id'] = pais['codigo']
+                estado['selected_league_id'] = pais['liga_id']   # compat
+                estado['menu_step'] = 'select_division'
+
+        # Panel derecho con info del país hover
+        panel_rect = pygame.Rect(740, 280, 460, 290)
+        draw_panel(screen, panel_rect)
+        if hovered_pais:
+            try:
+                draw_text(screen, f"🌍 {hovered_pais['nombre'].upper()}", (760, 300),
+                          size='xl', color='dorado')
+                draw_text(screen, f"Liga: {CONFIGURACION_LIGAS.get(hovered_pais['liga_id'], {}).get('nombre', '')}",
+                          (760, 360), size='sm', color='verde')
+                draw_text(screen, f"1ª División: 8 equipos · 14 jornadas · Copa Internacional",
+                          (760, 395), size='sm', color='blanco')
+                draw_text(screen, f"2ª División: 6 equipos · 10 jornadas · Ascenso/Descenso",
+                          (760, 420), size='sm', color='blanco')
+                draw_text(screen, "Elige tu división en la siguiente pantalla.",
+                          (760, 470), size='md', color='dorado')
+            except Exception:
+                pass
+        else:
+            draw_text(screen, "INFORMACIÓN DEL PAÍS", (760, 300), size='lg', color='azul')
+            draw_text(screen, "Pasa el mouse sobre", (760, 360), size='md', color='blanco')
+            draw_text(screen, "un país para ver sus", (760, 390), size='md', color='blanco')
+            draw_text(screen, "ligas disponibles.", (760, 420), size='md', color='blanco')
 
         # Botón Volver
         _dibujar_boton_premium(screen, volver_rect, "VOLVER", hover_volver)
         if click_pos and volver_rect.collidepoint(click_pos):
             estado['menu_step'] = 'main'
 
-        # Panel de ambientación a la derecha para consistencia
+        # Panel de ambientación a la derecha
         _dibujar_panel_derecho(screen, estado)
 
         # Mostrar error si existe
@@ -944,6 +1127,126 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 estado.pop('menu_error_ticks', None)
             else:
                 draw_text(screen, estado['menu_error'], (100, 570), size='sm', color='rojo')
+
+    # --- SELECCIÓN DE DIVISIÓN (v2.3 / Fase 9) ---
+    elif estado['menu_step'] == 'select_division':
+        # Cabecera con país elegido
+        _dibujar_logo_principal(screen, 100, 80, estado)
+        draw_text(screen, "SELECCIONA LA DIVISIÓN", (100, 195), size='lg', color='verde')
+        pais = next((p for p in PAISES_DISPONIBLES
+                     if p['codigo'] == estado.get('selected_country_id')), None)
+        if pais:
+            draw_text(screen, f"País: [{pais['emoji']}] {pais['nombre'].upper()}",
+                      (100, 235), size='md', color='dorado')
+        # Hint de teclado
+        draw_text(screen, "[↑ ↓ Enter = elegir · Esc = volver]",
+                  (100, 660), size='sm', color='azul')
+
+        # v2.3 (Fase 9 bugfix): botón VOLVER reubicado para no chocar
+        # con los botones de división y visible a la derecha.
+        volver_rect = pygame.Rect(540, 640, 200, 50)
+        hover_volver = volver_rect.collidepoint(mouse_pos)
+
+        # Resaltado por teclado: el índice activo se persiste en estado.
+        if 'division_keyboard_idx' not in estado:
+            estado['division_keyboard_idx'] = 0
+
+        # 2 botones grandes centrados
+        btn_w, btn_h = 540, 110
+        cx = SCREEN_W // 2
+        btn_1a = pygame.Rect(cx - btn_w // 2, 290, btn_w, btn_h)
+        btn_2a = pygame.Rect(cx - btn_w // 2, 420, btn_w, btn_h)
+
+        # Procesar teclado: ↑↓ mueve el índice, Enter selecciona, Esc vuelve.
+        for ev in key_events:
+            if ev.key == pygame.K_UP or ev.key == pygame.K_DOWN:
+                estado['division_keyboard_idx'] = 1 - int(estado.get('division_keyboard_idx', 0))
+            elif ev.key == pygame.K_RETURN or ev.key == pygame.K_SPACE:
+                # Simula click en 1ª o 2ª según el índice
+                idx = int(estado.get('division_keyboard_idx', 0))
+                estado['selected_division'] = idx + 1
+                liga_obj = load_division_teams(estado.get('selected_country_id'), idx + 1)
+                if liga_obj:
+                    estado['selected_liga_obj'] = liga_obj
+                    if estado.get('amistoso_phase') in ('local', 'visitante'):
+                        estado['menu_step'] = 'amistoso_teams'
+                    else:
+                        estado['menu_step'] = 'select_team'
+                else:
+                    estado['menu_error'] = f"Error al cargar {'1ª' if idx == 0 else '2ª'} división."
+                    estado['menu_error_ticks'] = pygame.time.get_ticks()
+            elif ev.key == pygame.K_ESCAPE:
+                estado['menu_step'] = 'select_country'
+
+        # Teclado + hover del mouse: la selección por teclado se combina
+        # con la detección del mouse para el resaltado visual.
+        kb_idx = int(estado.get('division_keyboard_idx', 0))
+
+        def _draw_div_btn(rect, titulo, color_acc, hover, info_lines):
+            try:
+                pygame.draw.rect(screen, (12, 18, 36), rect, border_radius=10)
+                pygame.draw.rect(screen,
+                                 color_acc if hover else COLORS.get('azul', (0, 191, 255)),
+                                 rect, width=3, border_radius=10)
+            except Exception:
+                pass
+            draw_text(screen, titulo, (rect.x + 22, rect.y + 14), size='xl', color=color_acc)
+            for j, line in enumerate(info_lines):
+                draw_text(screen, line, (rect.x + 22, rect.y + 56 + j * 22),
+                          size='sm', color='blanco')
+
+        _draw_div_btn(
+            btn_1a, "1ª DIVISIÓN",
+            COLORS.get('verde', (0, 255, 136)),
+            btn_1a.collidepoint(mouse_pos) or (kb_idx == 0 and not click_pos),
+            [
+                "La elite del país. Juega la Copa Internacional.",
+                "8 equipos · 14 jornadas · Premios grandes",
+                "Solo top 3 clasifica a Copa. Riesgo de descenso.",
+            ]
+        )
+        _draw_div_btn(
+            btn_2a, "2ª DIVISIÓN",
+            COLORS.get('azul', (0, 191, 255)),
+            btn_2a.collidepoint(mouse_pos) or (kb_idx == 1 and not click_pos),
+            [
+                "El camino hacia la gloria. Ascenso/Descenso.",
+                "6 equipos · 10 jornadas · Premios duplicados",
+                "Top 2 sube a 1ª · Bottom 2 baja a 3ª (futuro).",
+            ]
+        )
+
+        if click_pos:
+            if btn_1a.collidepoint(click_pos):
+                estado['selected_division'] = 1
+                liga_obj = load_division_teams(estado.get('selected_country_id'), 1)
+                if liga_obj:
+                    estado['selected_liga_obj'] = liga_obj
+                    # Si estamos en amistoso, redirigir al step correcto
+                    if estado.get('amistoso_phase') in ('local', 'visitante'):
+                        estado['menu_step'] = 'amistoso_teams'
+                    else:
+                        estado['menu_step'] = 'select_team'
+                else:
+                    estado['menu_error'] = "Error al cargar 1ª división."
+                    estado['menu_error_ticks'] = pygame.time.get_ticks()
+            elif btn_2a.collidepoint(click_pos):
+                estado['selected_division'] = 2
+                liga_obj = load_division_teams(estado.get('selected_country_id'), 2)
+                if liga_obj:
+                    estado['selected_liga_obj'] = liga_obj
+                    if estado.get('amistoso_phase') in ('local', 'visitante'):
+                        estado['menu_step'] = 'amistoso_teams'
+                    else:
+                        estado['menu_step'] = 'select_team'
+                else:
+                    estado['menu_error'] = "Error al cargar 2ª división."
+                    estado['menu_error_ticks'] = pygame.time.get_ticks()
+
+        # Dibujar botón Volver con la nueva posición
+        _dibujar_boton_premium(screen, volver_rect, "VOLVER", hover_volver)
+        if click_pos and volver_rect.collidepoint(click_pos):
+            estado['menu_step'] = 'select_country'
 
     # --- SELECCIÓN DE EQUIPO ---
     elif estado['menu_step'] == 'select_team':
@@ -1024,7 +1327,8 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         hover_vol = volver_rect.collidepoint(mouse_pos)
         _dibujar_boton_premium(screen, volver_rect, "VOLVER", hover_vol)
         if click_pos and volver_rect.collidepoint(click_pos):
-            estado['menu_step'] = 'select_league'
+            # v2.3: volver a selección de división (no de país)
+            estado['menu_step'] = 'select_division'
 
     # --- ALTA DEL DT: NOMBRE + NACIONALIDAD (v0.7) ---
     elif estado['menu_step'] == 'dt_setup':
@@ -1103,6 +1407,10 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     if not equipo or not liga_obj:
                         logger.error("Falta pending_equipo o selected_liga_obj al confirmar DT")
                         return "menu"
+                    # v2.3.2 (FIX): capturar pais/division ANTES del clear() para que
+                    # no queden vacios despues.
+                    _pais_sel = estado.get('selected_country_id', '')
+                    _div_sel = int(estado.get('selected_division', 1) or 1)
                     # v0.8.3: LIMPIEZA TOTAL del estado antes de empezar una carrera nueva.
                     # Sin esto, ofertas/mercado/copa/audio/etc. de la partida anterior
                     # se filtraban a la nueva (ej. ofertas de un BetPlay aparecian en
@@ -1119,6 +1427,25 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     estado['fichajes_realizados'] = 0
                     estado['dt_nombre'] = dt_nombre_final
                     estado['dt_nacionalidad'] = nac_final
+                    # v2.3 (Fase 9): persistir país + división elegidos
+                    estado['selected_country_id'] = _pais_sel
+                    estado['selected_division'] = _div_sel
+                    estado['liga_usuario_division'] = _div_sel
+                    # v2.3: cargar las 5 ligas de 2ª división on-demand (necesarias para el swap
+                    # de promoción/relegación y para que la pantalla de liga las pueda mostrar).
+                    segunda_on_demand = {}
+                    for tipo in ('betplay', 'laliga', 'premier', 'brasil', 'argentina'):
+                        try:
+                            mod = __import__(
+                                f'alpha_football.data.segunda_{tipo}',
+                                fromlist=['get_liga']
+                            )
+                            segunda_on_demand[tipo] = mod.get_liga()
+                        except Exception as e_mod:
+                            logger.warning(f"No se pudo cargar 2ª división {tipo} en alta: {e_mod}")
+                    estado['segunda_division'] = segunda_on_demand
+                    # El equipo del user está en la división que eligió
+                    equipo.division = _div_sel
                     estado['current_screen'] = "league_screen"
                     # Defaults vacíos para evitar herencia de keys obsoletas
                     for _k in ('ofertas_recibidas', 'mercado', 'mercado_ofertas',
@@ -1179,8 +1506,11 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     estado['alineacion_activa'] = def_alin
                     equipo.alineacion_activa = def_alin
                     for k in ('menu_step', 'selected_league_id', 'selected_liga_obj', 'pending_equipo',
-                              'dt_focus', 'dt_nac_sel', 'dt_nac_custom', 'dt_name_focus'):
+                              'dt_focus', 'dt_nac_sel', 'dt_nac_custom', 'dt_name_focus',
+                              'amistoso_phase', 'amistoso_country_id', 'amistoso_division'):
                         estado.pop(k, None)
+                    # NOTA: 'selected_country_id' y 'selected_division' NO se popean aqui;
+                    # los seteamos antes del clear() y los conservamos para el save.
                     logger.info(f"Nueva carrera iniciada: liga={estado['liga'].tipo} equipo={equipo.nombre}")
                     return "league_screen"
                 except Exception as e_dt:
@@ -1291,32 +1621,180 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 elif btn_no.collidepoint(click_pos) or not modal_rect.collidepoint(click_pos):
                     estado.pop('confirmar_borrar_slot', None)
 
-    # --- PARTIDO AMISTOSO: ELEGIR LIGA (Fase 6) ---
-    # Se elige una liga por equipo: primero la del local y luego la del visitante,
-    # que puede ser DISTINTA, habilitando amistosos entre ligas diferentes.
-    elif estado['menu_step'] == 'amistoso_league':
-        _dibujar_logo_principal(screen, 100, 70, estado)
+    # --- PARTIDO AMISTOSO: ELEGIR PAÍS (v2.3 / Fase 9) ---
+    elif estado['menu_step'] == 'amistoso_country':
+        _dibujar_logo_principal(screen, 100, 80, estado)
         fase = estado.get('amis_phase', 'local')
         equipo_paso = "LOCAL" if fase == 'local' else "VISITANTE"
-        draw_text(screen, f"AMISTOSO — LIGA DEL EQUIPO {equipo_paso}", (100, 185), size='lg', color='verde')
+        draw_text(screen, f"AMISTOSO — PAÍS DEL EQUIPO {equipo_paso}", (100, 195), size='lg', color='verde')
         if fase == 'visitante' and estado.get('amis_local'):
-            draw_text(screen, f"Local: {estado['amis_local'].nombre}", (100, 225), size='sm', color='dorado')
-        for i, liga_data in enumerate(LIGAS_DISPONIBLES):
-            btn_rect = pygame.Rect(100, 260 + i * 62, 400, 52)
-            _dibujar_boton_premium(screen, btn_rect, liga_data['name'], btn_rect.collidepoint(mouse_pos))
+            draw_text(screen, f"Local: {estado['amis_local'].nombre}", (100, 235), size='sm', color='dorado')
+        # Hint teclado
+        draw_text(screen, "[↑ ↓ Enter = elegir · Esc = volver]",
+                  (100, 660), size='sm', color='azul')
+
+        # v2.3 (Fase 9 bugfix): botones compactos + VOLVER movido
+        start_y = 280
+        btn_w, btn_h = 380, 56
+        spacing_y = 8
+
+        if 'amistoso_pais_kb_idx' not in estado:
+            estado['amistoso_pais_kb_idx'] = 0
+
+        for ev in key_events:
+            if ev.key == pygame.K_UP:
+                estado['amistoso_pais_kb_idx'] = (estado['amistoso_pais_kb_idx'] - 1) % len(PAISES_DISPONIBLES)
+            elif ev.key == pygame.K_DOWN:
+                estado['amistoso_pais_kb_idx'] = (estado['amistoso_pais_kb_idx'] + 1) % len(PAISES_DISPONIBLES)
+            elif ev.key == pygame.K_RETURN or ev.key == pygame.K_SPACE:
+                idx = estado['amistoso_pais_kb_idx']
+                if 0 <= idx < len(PAISES_DISPONIBLES):
+                    pais = PAISES_DISPONIBLES[idx]
+                    estado['amistoso_country_id'] = pais['codigo']
+                    estado['menu_step'] = 'amistoso_division'
+            elif ev.key == pygame.K_ESCAPE:
+                estado['menu_step'] = 'main'
+
+        volver_rect = pygame.Rect(540, 640, 200, 50)
+        hover_volver = volver_rect.collidepoint(mouse_pos)
+
+        for i, pais in enumerate(PAISES_DISPONIBLES):
+            btn_rect = pygame.Rect(120, start_y + i * (btn_h + spacing_y), btn_w, btn_h)
+            hover = btn_rect.collidepoint(mouse_pos)
+            kb_selected = (i == estado.get('amistoso_pais_kb_idx', 0))
+            if hover or kb_selected:
+                pass
+            try:
+                if kb_selected and not hover:
+                    bg = (50, 60, 100)
+                elif hover:
+                    bg = (30, 45, 75)
+                else:
+                    bg = (12, 18, 36)
+                pygame.draw.rect(screen, bg, btn_rect, border_radius=8)
+                if kb_selected and not hover:
+                    borde = COLORS.get('dorado', (255, 215, 0))
+                    borde_w = 3
+                elif hover:
+                    borde = COLORS.get('verde', (0, 255, 136))
+                    borde_w = 3
+                else:
+                    borde = COLORS.get('azul', (0, 191, 255))
+                    borde_w = 2
+                pygame.draw.rect(screen, borde, btn_rect, width=borde_w, border_radius=8)
+                pill = pygame.Rect(btn_rect.x + 8, btn_rect.y + 6, 44, btn_h - 12)
+                pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), pill, border_radius=6)
+                draw_text(screen, pais['emoji'], (pill.x + 8, pill.y + 12), size='md',
+                          color='azul', shadow=False)
+            except Exception:
+                pass
+            draw_text(screen, pais['nombre'].upper(),
+                      (btn_rect.x + 64, btn_rect.y + 8), size='lg',
+                      color='dorado' if (kb_selected and not hover) else ('verde' if hover else 'blanco'))
             if click_pos and btn_rect.collidepoint(click_pos):
-                liga_obj = load_league_teams(liga_data['id'])
-                if liga_obj:
-                    # No se reinicia amis_local: si vamos por el visitante, el local se conserva.
-                    estado['amistoso_liga'] = liga_obj
-                    estado['menu_step'] = 'amistoso_teams'
-        volver_rect = pygame.Rect(100, 600, 200, 50)
-        _dibujar_boton_premium(screen, volver_rect, "VOLVER", volver_rect.collidepoint(mouse_pos))
+                estado['amistoso_country_id'] = pais['codigo']
+                estado['menu_step'] = 'amistoso_division'
+        # Botón Volver
+        _dibujar_boton_premium(screen, volver_rect, "VOLVER", hover_volver)
         if click_pos and volver_rect.collidepoint(click_pos):
             estado['menu_step'] = 'main'
         _dibujar_panel_derecho(screen, estado)
 
-    # --- PARTIDO AMISTOSO: ELEGIR LOS DOS EQUIPOS (Fase 6) ---
+    # --- PARTIDO AMISTOSO: ELEGIR DIVISIÓN (v2.3) ---
+    elif estado['menu_step'] == 'amistoso_division':
+        _dibujar_logo_principal(screen, 100, 80, estado)
+        fase = estado.get('amis_phase', 'local')
+        equipo_paso = "LOCAL" if fase == 'local' else "VISITANTE"
+        draw_text(screen, f"AMISTOSO — DIVISIÓN DEL EQUIPO {equipo_paso}", (100, 195), size='lg', color='verde')
+        if fase == 'visitante' and estado.get('amis_local'):
+            draw_text(screen, f"Local: {estado['amis_local'].nombre}", (100, 235), size='sm', color='dorado')
+        # Hint teclado
+        draw_text(screen, "[↑ ↓ Enter = elegir · Esc = volver]",
+                  (100, 660), size='sm', color='azul')
+
+        # v2.3 (Fase 9 bugfix): VOLVER movido para no chocar
+        volver_rect = pygame.Rect(540, 640, 200, 50)
+        hover_volver = volver_rect.collidepoint(mouse_pos)
+
+        # v2.3 (Fase 9 bugfix): botones más compactos (110 alto en vez de 120)
+        btn_w, btn_h = 440, 110
+        cx = SCREEN_W // 2
+        btn_1a = pygame.Rect(cx - btn_w // 2, 290, btn_w, btn_h)
+        btn_2a = pygame.Rect(cx - btn_w // 2, 410, btn_w, btn_h)
+
+        # Teclado: ↑↓ alterna 1ª/2ª, Enter selecciona, Esc vuelve.
+        if 'amistoso_div_kb_idx' not in estado:
+            estado['amistoso_div_kb_idx'] = 0
+        for ev in key_events:
+            if ev.key == pygame.K_UP or ev.key == pygame.K_DOWN:
+                estado['amistoso_div_kb_idx'] = 1 - int(estado.get('amistoso_div_kb_idx', 0))
+            elif ev.key == pygame.K_RETURN or ev.key == pygame.K_SPACE:
+                idx = int(estado.get('amistoso_div_kb_idx', 0))
+                estado['amistoso_division'] = idx + 1
+                liga_obj = load_division_teams(estado.get('amistoso_country_id'), idx + 1)
+                if liga_obj:
+                    estado['amistoso_liga'] = liga_obj
+                    estado['menu_step'] = 'amistoso_teams'
+                else:
+                    estado['menu_error'] = f"Error al cargar {'1ª' if idx == 0 else '2ª'} división."
+                    estado['menu_error_ticks'] = pygame.time.get_ticks()
+            elif ev.key == pygame.K_ESCAPE:
+                estado['menu_step'] = 'amistoso_country'
+
+        kb_idx = int(estado.get('amistoso_div_kb_idx', 0))
+
+        def _draw_amis_div(rect, titulo, color_acc, hover, info_lines):
+            try:
+                pygame.draw.rect(screen, (12, 18, 36), rect, border_radius=10)
+                pygame.draw.rect(screen,
+                                 color_acc if hover else COLORS.get('azul', (0, 191, 255)),
+                                 rect, width=3, border_radius=10)
+            except Exception:
+                pass
+            draw_text(screen, titulo, (rect.x + 22, rect.y + 14), size='xl', color=color_acc)
+            for j, line in enumerate(info_lines):
+                draw_text(screen, line, (rect.x + 22, rect.y + 56 + j * 22),
+                          size='sm', color='blanco')
+
+        _draw_amis_div(
+            btn_1a, "1ª DIVISIÓN",
+            COLORS.get('verde', (0, 255, 136)),
+            btn_1a.collidepoint(mouse_pos) or (kb_idx == 0 and not click_pos),
+            ["La elite. Los mejores equipos del país.", "8 equipos · 14 jornadas"]
+        )
+        _draw_amis_div(
+            btn_2a, "2ª DIVISIÓN",
+            COLORS.get('azul', (0, 191, 255)),
+            btn_2a.collidepoint(mouse_pos) or (kb_idx == 1 and not click_pos),
+            ["El ascenso/descenso. OVR más bajo.", "6 equipos · 10 jornadas"]
+        )
+
+        if click_pos:
+            if btn_1a.collidepoint(click_pos):
+                estado['amistoso_division'] = 1
+                liga_obj = load_division_teams(estado.get('amistoso_country_id'), 1)
+                if liga_obj:
+                    estado['amistoso_liga'] = liga_obj
+                    estado['menu_step'] = 'amistoso_teams'
+                else:
+                    estado['menu_error'] = "Error al cargar 1ª división."
+                    estado['menu_error_ticks'] = pygame.time.get_ticks()
+            elif btn_2a.collidepoint(click_pos):
+                estado['amistoso_division'] = 2
+                liga_obj = load_division_teams(estado.get('amistoso_country_id'), 2)
+                if liga_obj:
+                    estado['amistoso_liga'] = liga_obj
+                    estado['menu_step'] = 'amistoso_teams'
+                else:
+                    estado['menu_error'] = "Error al cargar 2ª división."
+                    estado['menu_error_ticks'] = pygame.time.get_ticks()
+
+        # Botón Volver con la nueva posición (esquina inferior derecha)
+        _dibujar_boton_premium(screen, volver_rect, "VOLVER", hover_volver)
+        if click_pos and volver_rect.collidepoint(click_pos):
+            estado['menu_step'] = 'amistoso_country'
+
+    # --- PARTIDO AMISTOSO: ELEGIR LOS DOS EQUIPOS (v2.3) ---
     elif estado['menu_step'] == 'amistoso_teams':
         _dibujar_logo_principal(screen, 100, 40, estado)
         fase = estado.get('amis_phase', 'local')
@@ -1336,10 +1814,10 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             _dibujar_boton_premium(screen, btn_rect, equipo.nombre, btn_rect.collidepoint(mouse_pos))
             if click_pos and btn_rect.collidepoint(click_pos):
                 if fase == 'local':
-                    # Elegido el local: ahora vamos a elegir la liga del VISITANTE (puede ser otra).
+                    # Elegido el local: ahora vamos a elegir el PAÍS del VISITANTE (puede ser otro).
                     estado['amis_local'] = equipo
                     estado['amis_phase'] = 'visitante'
-                    estado['menu_step'] = 'amistoso_league'
+                    estado['menu_step'] = 'amistoso_country'
                 elif local is not None and equipo.id != local.id:
                     # Visitante elegido: lanzar el prepartido (que luego va al amistoso).
                     estado['amis_visitante'] = equipo
@@ -1348,14 +1826,14 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     estado.pop('sim_resultado', None)
                     estado['menu_step'] = 'main'
                     return 'prepartido_screen'
-        # Botón para cambiar de liga sin perder el equipo ya elegido.
+        # Botón para cambiar de país sin perder el equipo ya elegido.
         otra_liga_rect = pygame.Rect(340, 600, 230, 50)
-        _dibujar_boton_premium(screen, otra_liga_rect, "OTRA LIGA", otra_liga_rect.collidepoint(mouse_pos))
+        _dibujar_boton_premium(screen, otra_liga_rect, "OTRO PAÍS", otra_liga_rect.collidepoint(mouse_pos))
         if click_pos and otra_liga_rect.collidepoint(click_pos):
-            estado['menu_step'] = 'amistoso_league'
+            estado['menu_step'] = 'amistoso_country'
         volver_rect = pygame.Rect(100, 600, 200, 50)
         _dibujar_boton_premium(screen, volver_rect, "VOLVER", volver_rect.collidepoint(mouse_pos))
         if click_pos and volver_rect.collidepoint(click_pos):
-            estado['menu_step'] = 'amistoso_league'
+            estado['menu_step'] = 'amistoso_division'
 
     return None

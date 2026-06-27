@@ -130,7 +130,7 @@ def inicializar_calendario_liga(liga: Any) -> None:
     try:
         if not liga or getattr(liga, "calendario", None):
             return
-        
+
         fixture = generar_fixture(liga.equipos)
         partidos = []
         for idx_jornada, jornada_partidos in enumerate(fixture, 1):
@@ -145,6 +145,91 @@ def inicializar_calendario_liga(liga: Any) -> None:
         logger.info(f"Calendario inicializado para la liga '{liga.nombre}' ({len(partidos)} partidos).")
     except Exception as error_cal:
         logger.error(f"Error al inicializar calendario de liga: {error_cal}")
+
+
+def simular_jornada_segunda_division(estado: dict) -> None:
+    """
+    v2.3 (Fase 7): simula la jornada actual de TODAS las 2ª divisiones en background
+    al finalizar cada jornada de liga del usuario. Mismo ritmo que 1ª división.
+    Si el calendario está vacío (primera vez o tras swap), se inicializa primero.
+
+    NO incluye partidos donde participa el equipo del usuario (si descendió): esos
+    los juega el user desde match_screen.
+    """
+    try:
+        segunda = estado.get('segunda_division') or {}
+        if not segunda:
+            return
+        mi_equipo = estado.get('mi_equipo')
+
+        from alpha_football import engine  # import perezoso para evitar ciclos
+
+        for tipo, liga_b in segunda.items():
+            try:
+                if not liga_b or len(getattr(liga_b, 'equipos', []) or []) < 2:
+                    continue
+                # Asegurar calendario (idempotente)
+                if not getattr(liga_b, 'calendario', None):
+                    inicializar_calendario_liga(liga_b)
+                jornada_actual = getattr(liga_b, 'jornada_actual', 1) or 1
+                # Si la liga de 2ª división ya terminó, no simular más
+                num_jornadas = getattr(liga_b, 'num_jornadas', 10) or 10
+                if jornada_actual > num_jornadas:
+                    continue
+                # Filtrar partidos de la jornada actual (no jugados y sin user)
+                partidos_j = [p for p in liga_b.calendario if p.jornada == jornada_actual and not p.jugado]
+                for p in partidos_j:
+                    # Si el user participa, lo salta (lo juega el user en su liga)
+                    if mi_equipo and (p.local_id == getattr(mi_equipo, 'id', None)
+                                       or p.visitante_id == getattr(mi_equipo, 'id', None)):
+                        continue
+                    local = next((e for e in liga_b.equipos if e.id == p.local_id), None)
+                    visitante = next((e for e in liga_b.equipos if e.id == p.visitante_id), None)
+                    if not local or not visitante:
+                        continue
+                    try:
+                        res = engine.simular_partido(local, visitante)
+                        p.goles_local = res.goles_local
+                        p.goles_visitante = res.goles_visitante
+                        p.jugado = True
+                        if hasattr(res, 'ganador') and res.ganador:
+                            p.ganador_id = local.id if res.ganador == local.nombre else visitante.id
+                        else:
+                            p.ganador_id = None
+                        # Actualizar estadísticas manualmente (engine no exporta helper)
+                        local.gf = getattr(local, 'gf', 0) + res.goles_local
+                        local.gc = getattr(local, 'gc', 0) + res.goles_visitante
+                        visitante.gf = getattr(visitante, 'gf', 0) + res.goles_visitante
+                        visitante.gc = getattr(visitante, 'gc', 0) + res.goles_local
+                        local.pj = getattr(local, 'pj', 0) + 1
+                        visitante.pj = getattr(visitante, 'pj', 0) + 1
+                        if res.goles_local > res.goles_visitante:
+                            local.puntos = getattr(local, 'puntos', 0) + 3
+                            local.pg = getattr(local, 'pg', 0) + 1
+                            visitante.pp = getattr(visitante, 'pp', 0) + 1
+                        elif res.goles_local < res.goles_visitante:
+                            visitante.puntos = getattr(visitante, 'puntos', 0) + 3
+                            visitante.pg = getattr(visitante, 'pg', 0) + 1
+                            local.pp = getattr(local, 'pp', 0) + 1
+                        else:
+                            local.puntos = getattr(local, 'puntos', 0) + 1
+                            visitante.puntos = getattr(visitante, 'puntos', 0) + 1
+                            local.pe = getattr(local, 'pe', 0) + 1
+                            visitante.pe = getattr(visitante, 'pe', 0) + 1
+                    except Exception as e_match:
+                        logger.error(f"Error simulando partido 2ª {tipo} j{jornada_actual}: {e_match}")
+                # Avanzar jornada si todos los partidos están jugados
+                if all(p.jugado for p in liga_b.calendario if p.jornada == jornada_actual):
+                    liga_b.jornada_actual = jornada_actual + 1
+                    # Si llegó al final, deja de avanzar
+                    if liga_b.jornada_actual > num_jornadas:
+                        liga_b.jornada_actual = num_jornadas
+                        logger.info(f"2ª división {tipo} terminó la temporada (jornada {num_jornadas})")
+            except Exception as e_liga:
+                logger.error(f"Error en simulación de 2ª división {tipo}: {e_liga}")
+    except Exception as e_gen:
+        logger.error(f"Error general en simular_jornada_segunda_division: {e_gen}")
+
 
 # --- Funciones de Dibujo Auxiliares ═══════════════════════════════════════════
 
@@ -232,15 +317,38 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         # Recuperar datos esenciales del estado de forma segura
         liga = estado.get('liga')
         mi_equipo = estado.get('mi_equipo')
-        
+
         # En caso de que no existan los datos clave, asignamos valores por defecto o salimos de forma segura
         if not liga or not mi_equipo:
             logger.error("Error resiliente: No hay liga o equipo cargado en el estado de liga.")
             return "menu"
-            
+
+        # v2.3 (Fase 11): decidir qué división mostrar. Por defecto la del usuario;
+        # si `liga_view == 2`, mostrar la 2ª división del mismo país (si existe).
+        liga_view = int(estado.get('liga_view', estado.get('liga_usuario_division', 1)) or 1)
+        segunda = estado.get('segunda_division') or {}
+        liga_tipo = getattr(liga, 'tipo', '')
+        liga_vista = liga  # Por defecto, la del user
+        if liga_view == 2 and liga_tipo in segunda and segunda[liga_tipo] is not None:
+            liga_vista = segunda[liga_tipo]
+            # Inicializar calendario de la 2ª división si está vacío
+            try:
+                if not getattr(liga_vista, 'calendario', None):
+                    inicializar_calendario_liga(liga_vista)
+            except Exception:
+                pass
+
+        # v2.3.1 (FIX BUG CRITICO): mouse_pos y click_pos se capturan AQUI para
+        # que esten disponibles antes de cualquier uso (toggle 1a/2a, banner de
+        # alerta de copa, etc). Antes se capturaban en linea 657 y el bloque del
+        # toggle (linea 431) reventaba con UnboundLocalError.
+        mouse_pos = pygame.mouse.get_pos()
+        click_pos = None
+        key_events = []
+
         # Aseguramos que la liga tenga su fixture inicializado de manera de no colgar la partida
         try:
-            inicializar_calendario_liga(liga)
+            inicializar_calendario_liga(liga_vista)
         except Exception as error_fixtures:
             logger.error(f"Error al inicializar fixtures de liga: {str(error_fixtures)}. Intentando continuar.")
         
@@ -251,15 +359,29 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         rect_hist_up = pygame.Rect(300 + 560 - 80, 510 + 4, 32, 28)
         rect_hist_down = pygame.Rect(300 + 560 - 42, 510 + 4, 32, 28)
         
-        jornada_actual = getattr(liga, "jornada_actual", 1)
-        partidos_jornada = [p for p in getattr(liga, "calendario", []) if p.jornada == jornada_actual]
-        
-        # Encontrar el partido de mi equipo
+        jornada_actual = getattr(liga_vista, "jornada_actual", 1)
+        partidos_jornada = [p for p in getattr(liga_vista, "calendario", []) if p.jornada == jornada_actual]
+
+        # v2.3.3 (FIX): el partido del usuario depende de la division que estamos VIENDO.
+        # - Si veo 1ª -> busco en liga.calendario (la del user en 1ª)
+        # - Si veo 2ª -> busco en liga_vista.calendario (la del user en 2ª)
+        # Antes siempre buscaba en liga.calendario, por eso veia "Sin rival programado"
+        # cuando el user estaba en 2ª división y miraba el calendario de la 2ª.
         partido_usuario = None
-        for p in partidos_jornada:
-            if p.local_id == mi_equipo.id or p.visitante_id == mi_equipo.id:
-                partido_usuario = p
-                break
+        if liga_view == 2:
+            for p in getattr(liga_vista, 'calendario', []):
+                if p.jornada == jornada_actual and (
+                    p.local_id == mi_equipo.id or p.visitante_id == mi_equipo.id
+                ):
+                    partido_usuario = p
+                    break
+        if partido_usuario is None:
+            for p in getattr(liga, 'calendario', []):
+                if p.jornada == getattr(liga, 'jornada_actual', 1) and (
+                    p.local_id == mi_equipo.id or p.visitante_id == mi_equipo.id
+                ):
+                    partido_usuario = p
+                    break
                 
         # 2. Dibujar fondo general y marcas de campo
         try:
@@ -310,6 +432,36 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             draw_text(screen, f"Temporada {estado.get('temporada', 1)}  |  Jornada {jornada_actual} de {getattr(liga, 'num_jornadas', 14)}", (300, 65), size='sm', color='azul')
         except Exception as e_header:
             logger.error(f"Error al dibujar cabecera principal: {str(e_header)}")
+
+        # v2.3 (Fase 11): toggle 1ª⇄2ª División en la cabecera.
+        # Por defecto muestra la división del usuario; click cambia.
+        segunda = estado.get('segunda_division') or {}
+        liga_tipo = getattr(liga, 'tipo', '')
+        liga_view = estado.get('liga_view', estado.get('liga_usuario_division', 1))
+        if liga_tipo in segunda and segunda[liga_tipo] is not None:
+            toggle_rect = pygame.Rect(SCREEN_W - 240, 22, 220, 44)
+            toggle_hover = toggle_rect.collidepoint(mouse_pos)
+            label_toggle = f"VER {'2ª' if liga_view == 1 else '1ª'} DIVISIÓN"
+            draw_styled_button(screen, toggle_rect, label_toggle, toggle_hover,
+                                 COLORS.get('dorado', (255, 215, 0)))
+            if click_pos and toggle_rect.collidepoint(click_pos):
+                # Alternar vista entre 1ª (estado['liga']) y 2ª (segunda_division[tipo])
+                if liga_view == 1:
+                    estado['liga_view'] = 2
+                    # No cambiamos estado['liga'] (la del user); solo un flag.
+                    # La pantalla lee liga_view para mostrar la tabla/calendario.
+                else:
+                    estado['liga_view'] = 1
+        # v2.3.3: Tecla V = toggle 1ª/2ª division (atajo de teclado).
+        try:
+            for ev in key_events:
+                if ev.key == pygame.K_v:
+                    if liga_view == 1:
+                        estado['liga_view'] = 2
+                    else:
+                        estado['liga_view'] = 1
+        except Exception:
+            pass
             
         # --- AVISO Y BLOQUEO DE JUEGOS INTERNACIONALES PENDIENTES ---
         tiene_copa_pendiente = False
@@ -356,7 +508,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                     except Exception as e_eq:
                         logger.error(f"Error al obtener atributos de equipo en ordenación: {e_eq}")
                         return (0, 0, 0)
-                equipos_ordenados = sorted(liga.equipos, key=clave_tabla, reverse=True)
+                equipos_ordenados = sorted(liga_vista.equipos, key=clave_tabla, reverse=True)
             except Exception as e_sort:
                 logger.error(f"Error al ordenar la tabla de posiciones: {e_sort}. Usando orden original de equipos como alternativa.")
                 equipos_ordenados = getattr(liga, "equipos", [])
@@ -372,18 +524,30 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             # Render de las filas
             start_y = 185
             row_height = 37
-            # v0.8.7.4: top 3 en verde (clasifican a Champions/Libertadores).
-            # En T1 la clasificación es por OVR (fija), en T2+ por puntos (provisional).
+            # v2.3.3 (FIX): colores segun la division que se esta VIENDO.
+            #  - 1ª division: top 3 verde (clasifican a Champions/Libertadores),
+            #                 bottom 2 rojo (descienden a 2ª).
+            #  - 2ª division: top 2 verde (ascienden a 1ª), sin descensos (no hay 3ª).
+            n_total = len(equipos_ordenados)
+            es_segunda = (liga_view == 2)
             for idx, eq in enumerate(equipos_ordenados, 1):
                 y_pos = start_y + (idx - 1) * row_height
-                
-                # Clasificación en colores (v0.8.7.4: top 3 verde, antes era top 2)
-                if idx <= 3:
-                    row_color = 'verde'
-                elif idx == len(equipos_ordenados):
-                    row_color = 'rojo'
+
+                # Colores segun division.
+                if es_segunda:
+                    # 2ª: top 2 sube, resto blanco (sin descensos).
+                    if idx <= 2:
+                        row_color = 'verde'
+                    else:
+                        row_color = 'blanco'
                 else:
-                    row_color = 'blanco'
+                    # 1ª: top 3 verde (clasifica a copa), bottom 2 rojo (desciende).
+                    if idx <= 3:
+                        row_color = 'verde'
+                    elif idx >= n_total - 1:
+                        row_color = 'rojo'
+                    else:
+                        row_color = 'blanco'
                     
                 # Si es el equipo del usuario, dibujamos un fondo destacado
                 if eq.id == mi_equipo.id:
@@ -475,7 +639,10 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         try:
             if partido_usuario:
                 oponente_id = partido_usuario.visitante_id if partido_usuario.local_id == mi_equipo.id else partido_usuario.local_id
-                oponente = next((e for e in liga.equipos if e.id == oponente_id), None)
+                # v2.3.3: el oponente se busca en la division que se esta VIENDO.
+                # Si veo 2ª, los equipos son los de la 2ª.
+                equipos_a_buscar = liga_vista.equipos if liga_view == 2 else liga.equipos
+                oponente = next((e for e in equipos_a_buscar if e.id == oponente_id), None)
                 
                 if oponente:
                     draw_text(screen, mi_equipo.nombre[:22], (900, 155), size='md', color='verde')
@@ -499,11 +666,13 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             draw_text(screen, "OTROS PARTIDOS DE LA FECHA", (900, 325), size='sm', color='dorado')
             
             oy = 360
+            # v2.3.3: los "otros partidos" son los de la division vista, no siempre liga.
+            equipos_a_buscar_otros = liga_vista.equipos if liga_view == 2 else liga.equipos
             for p in partidos_jornada:
                 if p == partido_usuario:
                     continue
-                loc = next((e for e in liga.equipos if e.id == p.local_id), None)
-                vis = next((e for e in liga.equipos if e.id == p.visitante_id), None)
+                loc = next((e for e in equipos_a_buscar_otros if e.id == p.local_id), None)
+                vis = next((e for e in equipos_a_buscar_otros if e.id == p.visitante_id), None)
                 
                 loc_name = loc.nombre[:14] if loc else f"Eq.{p.local_id}"
                 vis_name = vis.nombre[:14] if vis else f"Eq.{p.visitante_id}"
@@ -527,10 +696,24 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         btn_career = pygame.Rect(40, 512, 220, 44)
         btn_equipo = pygame.Rect(40, 568, 220, 44)
         btn_salir = pygame.Rect(40, 632, 220, 44)
-        
-        mouse_pos = pygame.mouse.get_pos()
-        click_pos = None
-        
+
+        # v2.3.3: lista ordenada de botones del sidebar para navegacion por teclado.
+        # ↑↓ mueve el foco, Enter dispara el handler del boton, Esc vuelve al menu.
+        sidebar_buttons = [
+            (btn_jugar, 'jugar'),
+            (btn_mercado, 'mercado'),
+            (btn_copa, 'copa'),
+            (btn_ofertas, 'ofertas'),
+            (btn_stats, 'stats'),
+            (btn_career, 'career'),
+            (btn_equipo, 'equipo'),
+            (btn_salir, 'salir'),
+        ]
+        if 'league_kbd_focus' not in estado:
+            estado['league_kbd_focus'] = 0
+
+        mouse_pos = pygame.mouse.get_pos()  # refresh por si el tamano cambio
+        # click_pos ya esta declarado arriba; refrescar con el evento actual.
         # Eventos
         try:
             for event in pygame.event.get():
@@ -548,8 +731,54 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                                        if p.jugado and (p.local_id == mi_equipo.id or p.visitante_id == mi_equipo.id)]
                             max_offset = max(0, len(jugados_wh) - 6)
                             estado['hist_scroll_offset'] = min(max_offset, estado.get('hist_scroll_offset', 0) + 1)
+                elif event.type == pygame.KEYDOWN:
+                    key_events.append(event)
         except Exception as e_events:
             logger.error(f"Error al procesar eventos en league_screen: {str(e_events)}")
+
+        # v2.3.3: Navegacion por teclado del sidebar. ↑↓ mueve el foco entre
+        # los 8 botones, Enter simula click en el boton enfocado.
+        try:
+            for ev in key_events:
+                if ev.key == pygame.K_UP:
+                    estado['league_kbd_focus'] = (int(estado.get('league_kbd_focus', 0)) - 1) % len(sidebar_buttons)
+                elif ev.key == pygame.K_DOWN:
+                    estado['league_kbd_focus'] = (int(estado.get('league_kbd_focus', 0)) + 1) % len(sidebar_buttons)
+                elif ev.key == pygame.K_RETURN or ev.key == pygame.K_SPACE:
+                    # Forzar click sintetico en el boton enfocado.
+                    idx = int(estado.get('league_kbd_focus', 0))
+                    if 0 <= idx < len(sidebar_buttons):
+                        rect, _name = sidebar_buttons[idx]
+                        click_pos = (rect.x + rect.width // 2, rect.y + rect.height // 2)
+                elif ev.key == pygame.K_j:
+                    click_pos = (btn_jugar.x + btn_jugar.width // 2, btn_jugar.y + btn_jugar.height // 2)
+                    estado['league_kbd_focus'] = 0
+                elif ev.key == pygame.K_m:
+                    click_pos = (btn_mercado.x + btn_mercado.width // 2, btn_mercado.y + btn_mercado.height // 2)
+                    estado['league_kbd_focus'] = 1
+                elif ev.key == pygame.K_c:
+                    # No pisar si hay Copa pendiente visible (texto)
+                    if not tiene_copa_pendiente:
+                        click_pos = (btn_copa.x + btn_copa.width // 2, btn_copa.y + btn_copa.height // 2)
+                        estado['league_kbd_focus'] = 2
+                elif ev.key == pygame.K_o:
+                    click_pos = (btn_ofertas.x + btn_ofertas.width // 2, btn_ofertas.y + btn_ofertas.height // 2)
+                    estado['league_kbd_focus'] = 3
+                elif ev.key == pygame.K_s:
+                    # 's' se reserva para Salir (last). Stats va con 't' (stats)
+                    click_pos = (btn_stats.x + btn_stats.width // 2, btn_stats.y + btn_stats.height // 2)
+                    estado['league_kbd_focus'] = 4
+                elif ev.key == pygame.K_h:
+                    click_pos = (btn_career.x + btn_career.width // 2, btn_career.y + btn_career.height // 2)
+                    estado['league_kbd_focus'] = 5
+                elif ev.key == pygame.K_e:
+                    click_pos = (btn_equipo.x + btn_equipo.width // 2, btn_equipo.y + btn_equipo.height // 2)
+                    estado['league_kbd_focus'] = 6
+                elif ev.key == pygame.K_ESCAPE:
+                    estado['current_screen'] = 'menu'
+                    return 'menu'
+        except Exception as e_kbd:
+            logger.error(f"Error en navegacion por teclado de league_screen: {e_kbd}")
             
         # Hover states (Si está bloqueado por copa, JUGAR JORNADA no tiene hover activo)
         hov_jugar = btn_jugar.collidepoint(mouse_pos) and not tiene_copa_pendiente
@@ -587,6 +816,19 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         draw_styled_button(screen, btn_career, "HISTORIAL CARRERA", hov_career, COLORS.get('azul', (0, 191, 255)))
         draw_styled_button(screen, btn_equipo, "DIRECCIÓN EQUIPO", hov_equipo, COLORS.get('azul', (0, 191, 255)))
         draw_styled_button(screen, btn_salir, "GUARDAR Y SALIR", hov_salir, COLORS.get('rojo', (255, 68, 68)))
+
+        # v2.3.3: indicador de foco por teclado (borde dorado brillante + flecha ▶)
+        # Se dibuja sobre el boton enfocado, igual de visible que el hover del mouse.
+        try:
+            kbd_idx = int(estado.get('league_kbd_focus', 0))
+            if 0 <= kbd_idx < len(sidebar_buttons):
+                kbd_rect, _kbd_name = sidebar_buttons[kbd_idx]
+                # Borde dorado brillante (3px) sobre el boton enfocado
+                pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), kbd_rect, width=3, border_radius=8)
+                # Indicador "▶" a la izquierda del boton
+                draw_text(screen, "▶", (kbd_rect.x - 22, kbd_rect.y + 14), size='lg', color='dorado')
+        except Exception:
+            pass
 
         # Badge con el número de ofertas pendientes
         _n_of = len(estado.get('ofertas_recibidas', []) or [])

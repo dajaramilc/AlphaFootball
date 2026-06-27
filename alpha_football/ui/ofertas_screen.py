@@ -79,11 +79,19 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
 
         mouse_pos = pygame.mouse.get_pos()
         click_pos = None
+        key_events = []
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return "menu"
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 click_pos = event.pos
+            elif event.type == pygame.KEYDOWN:
+                key_events.append(event)
+
+        # v2.3.3: navegacion por teclado. Estado del foco: 0 = volver, 1..2N = acciones
+        # (cada oferta tiene 2 botones: ACEPTAR, RECHAZAR).
+        if 'ofertas_kbd_focus' not in estado:
+            estado['ofertas_kbd_focus'] = 0  # default en VOLVER
 
         draw_gradient_bg(screen)
         draw_text(screen, "OFERTAS RECIBIDAS", (40, 25), size='xl', color='dorado')
@@ -91,12 +99,23 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                   (40, 70), size='sm', color='azul')
 
         btn_volver = pygame.Rect(40, 640, 200, 50)
-        draw_button(screen, btn_volver, "VOLVER", btn_volver.collidepoint(mouse_pos))
+        # v2.3.3: visualizacion del foco por teclado
+        _kbd_focus = int(estado.get('ofertas_kbd_focus', 0))
+        draw_button(screen, btn_volver, "VOLVER", btn_volver.collidepoint(mouse_pos) or _kbd_focus == 0)
+        if _kbd_focus == 0 and not btn_volver.collidepoint(mouse_pos):
+            pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), btn_volver, width=3, border_radius=8)
+            draw_text(screen, "▶", (btn_volver.x - 22, btn_volver.y + 18), size='lg', color='dorado')
 
         if not ofertas:
             draw_panel(screen, pygame.Rect(SCREEN_W // 2 - 280, 250, 560, 120))
             draw_text(screen, "No hay ofertas pendientes por tus jugadores.",
                       (SCREEN_W // 2 - 250, 300), size='md', color='blanco')
+            # Navegacion por teclado cuando no hay ofertas: solo VOLVER
+            for ev in key_events:
+                if ev.key == pygame.K_RETURN or ev.key == pygame.K_SPACE:
+                    return "league_screen"
+                elif ev.key == pygame.K_ESCAPE:
+                    return "league_screen"
             if click_pos and btn_volver.collidepoint(click_pos):
                 return "league_screen"
             return None
@@ -121,10 +140,76 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                           (card.x + 15, card.y + 54), size='sm', color='blanco')
             rect_acc = pygame.Rect(card.right - 320, card.y + 20, 140, 40)
             rect_rej = pygame.Rect(card.right - 165, card.y + 20, 140, 40)
-            draw_button(screen, rect_acc, "ACEPTAR", rect_acc.collidepoint(mouse_pos))
-            draw_button(screen, rect_rej, "RECHAZAR", rect_rej.collidepoint(mouse_pos))
+            # v2.3.3: visualizacion del foco por teclado sobre cada accion
+            _foco_accion = _kbd_focus == (i * 2 + 1)
+            _foco_rechazo = _kbd_focus == (i * 2 + 2)
+            draw_button(screen, rect_acc, "ACEPTAR", rect_acc.collidepoint(mouse_pos) or _foco_accion)
+            draw_button(screen, rect_rej, "RECHAZAR", rect_rej.collidepoint(mouse_pos) or _foco_rechazo)
+            if _foco_accion and not rect_acc.collidepoint(mouse_pos):
+                pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), rect_acc, width=3, border_radius=8)
+                draw_text(screen, "▶", (rect_acc.x - 22, rect_acc.y + 12), size='lg', color='dorado')
+            if _foco_rechazo and not rect_rej.collidepoint(mouse_pos):
+                pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), rect_rej, width=3, border_radius=8)
+                draw_text(screen, "▶", (rect_rej.x - 22, rect_rej.y + 12), size='lg', color='dorado')
             acciones.append((rect_acc, rect_rej, i))
             y += 88
+
+        # v2.3.3: navegacion por teclado. Foco va desde 0 (VOLVER) hasta 2*N (cada
+        # oferta tiene 2 acciones). ↑↓ entre filas, ←→ entre botones.
+        n_ofertas_visibles = len(acciones)
+        max_focus = max(0, 2 * n_ofertas_visibles)
+        for ev in key_events:
+            if ev.key == pygame.K_DOWN:
+                estado['ofertas_kbd_focus'] = (int(estado.get('ofertas_kbd_focus', 0)) + 1) % (max_focus + 1)
+            elif ev.key == pygame.K_UP:
+                estado['ofertas_kbd_focus'] = (int(estado.get('ofertas_kbd_focus', 0)) - 1) % (max_focus + 1)
+            elif ev.key == pygame.K_RIGHT:
+                # En la primera columna (ACEPTAR=impar) salta a la siguiente columna (RECHAZAR=par)
+                f = int(estado.get('ofertas_kbd_focus', 0))
+                if f == 0:
+                    estado['ofertas_kbd_focus'] = 1
+                elif f % 2 == 1 and (f + 1) <= max_focus:
+                    estado['ofertas_kbd_focus'] = f + 1
+            elif ev.key == pygame.K_LEFT:
+                f = int(estado.get('ofertas_kbd_focus', 0))
+                if f > 0 and f % 2 == 0:
+                    estado['ofertas_kbd_focus'] = f - 1
+            elif ev.key == pygame.K_RETURN or ev.key == pygame.K_SPACE:
+                # Simula click en el boton enfocado
+                f = int(estado.get('ofertas_kbd_focus', 0))
+                if f == 0:
+                    return "league_screen"
+                else:
+                    # f impar = ACEPTAR, f par = RECHAZAR (de la oferta (f-1)//2)
+                    idx = (f - 1) // 2
+                    es_aceptar = (f % 2 == 1)
+                    if 0 <= idx < len(acciones):
+                        if es_aceptar:
+                            if 0 <= idx < len(ofertas):
+                                _aceptar(estado, ofertas.pop(idx))
+                        else:
+                            if 0 <= idx < len(ofertas):
+                                ofertas.pop(idx)
+                        # Reset focus al siguiente item o a VOLVER si vacio
+                        estado['ofertas_kbd_focus'] = 0 if not ofertas else min(f, max_focus - 1)
+            elif ev.key == pygame.K_a:
+                # A = ACEPTAR la oferta enfocada
+                f = int(estado.get('ofertas_kbd_focus', 0))
+                if f >= 1:
+                    idx = (f - 1) // 2
+                    if 0 <= idx < len(ofertas):
+                        _aceptar(estado, ofertas.pop(idx))
+                        estado['ofertas_kbd_focus'] = 0 if not ofertas else min(f, max_focus - 1)
+            elif ev.key == pygame.K_r:
+                # R = RECHAZAR la oferta enfocada
+                f = int(estado.get('ofertas_kbd_focus', 0))
+                if f >= 1:
+                    idx = (f - 1) // 2
+                    if 0 <= idx < len(ofertas):
+                        ofertas.pop(idx)
+                        estado['ofertas_kbd_focus'] = 0 if not ofertas else min(f, max_focus - 1)
+            elif ev.key == pygame.K_ESCAPE:
+                return "league_screen"
 
         if click_pos:
             if btn_volver.collidepoint(click_pos):

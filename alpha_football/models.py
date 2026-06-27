@@ -233,6 +233,9 @@ class Equipo:
     # v0.7: nombre corto (anti-solapamiento en menús) y familiaridad táctica acumulada.
     nombre_corto: str = ""
     tactica_familiaridad: dict[str, float] = field(default_factory=dict)
+    # v2.3 (Fase 6): división actual del equipo (1 o 2). Se setea en el swap
+    # de promoción/relegación. Default 1 (1ª división) para retrocompatibilidad.
+    division: int = 1
 
     # Estadísticas de liga acumuladas
     puntos: int = 0
@@ -336,7 +339,9 @@ class Equipo:
                 pe=int(datos.get("pe", 0)),
                 pp=int(datos.get("pp", 0)),
                 gf=int(datos.get("gf", 0)),
-                gc=int(datos.get("gc", 0))
+                gc=int(datos.get("gc", 0)),
+                # v2.3: division default 1 (retrocompatible con saves viejos)
+                division=int(datos.get("division", 1)),
             )
         except Exception as e:
             logger.error(f"Error al reconstruir Equipo: {e}")
@@ -404,6 +409,9 @@ class Liga:
     tipo: str  # betplay, laliga, premier, brasil, argentina
     equipos: list[Equipo]
     num_jornadas: int
+    # v2.3 (Fase 3): división de la liga (1 = primera, 2 = segunda).
+    # Las ligas existentes quedan en division=1 por default (retrocompatible).
+    division: int = 1
     calendario: list[Partido] = field(default_factory=list)
     jornada_actual: int = 1
 
@@ -423,6 +431,8 @@ class Liga:
                 tipo=str(datos.get("tipo", "betplay")),
                 equipos=equipos,
                 num_jornadas=int(datos.get("num_jornadas", 14)),
+                # v2.3: division default 1 para retrocompatibilidad con saves viejos
+                division=int(datos.get("division", 1)),
                 calendario=calendario,
                 jornada_actual=int(datos.get("jornada_actual", 1))
             )
@@ -561,13 +571,23 @@ class EstadoJuego:
     copa_clasificado_motivo: str = ""
     copa_mejor_fase_temp: Optional[str] = None
 
+    # v2.3 (Fase 3): división actual del usuario (1 = primera, 2 = segunda).
+    # Persistido para que tras un save/load se restaure correctamente si el user
+    # descendió (1→2) o ascendió (2→1) en la temporada anterior.
+    liga_usuario_division: int = 1
+
+    # v2.3 (Fase 3): mapa de 2ª divisiones por tipo (betplay/laliga/premier/brasil/argentina).
+    # Se carga on-demand al iniciar partida o al cargar save viejo (Fase 8).
+    segunda_division: dict[str, Any] = field(default_factory=dict)
+
     def to_dict(self) -> dict[str, Any]:
         try:
             alin_dict = None
             if self.alineacion_activa:
                 alin_dict = {
                     "titulares": list(self.alineacion_activa.titulares),
-                    "formacion": str(self.alineacion_activa.formacion)
+                    "formacion": str(self.alineacion_activa.formacion),
+                    "convocados": list(self.alineacion_activa.convocados or []),
                 }
         except Exception as e_alin:
             logger.error(f"Error al serializar alineación activa: {e_alin}. Ignorando alineación.")
@@ -638,7 +658,13 @@ class EstadoJuego:
             "copa_clasificado": self.copa_clasificado,
             "copa_user_en_copa": self.copa_user_en_copa,
             "copa_clasificado_motivo": self.copa_clasificado_motivo,
-            "copa_mejor_fase_temp": self.copa_mejor_fase_temp
+            "copa_mejor_fase_temp": self.copa_mejor_fase_temp,
+            # v2.3: división actual del usuario (1 o 2)
+            "liga_usuario_division": self.liga_usuario_division,
+            # v2.3: segunda_division es un dict[tipo] -> dict (cada liga serializada).
+            # NO se serializa automáticamente para evitar saves enormes; se regenera
+            # on-demand desde los módulos data/segunda_*.py al cargar partida.
+            "segunda_division_keys": list(self.segunda_division.keys()) if self.segunda_division else [],
         }
 
     @classmethod
@@ -666,7 +692,8 @@ class EstadoJuego:
                 if alin_datos:
                     alineacion_activa = Alineacion(
                         titulares=list(alin_datos.get("titulares", [])),
-                        formacion=str(alin_datos.get("formacion", "4-3-3"))
+                        formacion=str(alin_datos.get("formacion", "4-3-3")),
+                        convocados=list(alin_datos.get("convocados", []) or []),
                     )
             except Exception as e_alin_load:
                 logger.error(f"Error recuperable al cargar alineación activa: {e_alin_load}. Usando alineación nula.")
@@ -750,7 +777,11 @@ class EstadoJuego:
                 copa_clasificado=datos.get("copa_clasificado"),
                 copa_user_en_copa=datos.get("copa_user_en_copa"),
                 copa_clasificado_motivo=str(datos.get("copa_clasificado_motivo", "")),
-                copa_mejor_fase_temp=datos.get("copa_mejor_fase_temp")
+                copa_mejor_fase_temp=datos.get("copa_mejor_fase_temp"),
+                # v2.3: división del usuario (default 1) + segunda_division se regenera
+                # on-demand desde los módulos data/segunda_*.py (ver menu.py).
+                liga_usuario_division=int(datos.get("liga_usuario_division", 1)),
+                segunda_division={},  # se pobla via Fase 8 (compatibilidad saves)
             )
         except Exception as e:
             logger.critical(f"Error crítico al deserializar EstadoJuego: {e}. Retornando estado vacío.")
@@ -790,8 +821,13 @@ class Alineacion:
     Alineación/Formación de los 11 titulares elegidos por el usuario.
     Guarda los índices de los jugadores dentro de la plantilla del equipo.
     """
-    titulares: list[int] = field(default_factory=list)   # Índices en equipo.jugadores
+    titulares: list[int] = field(default_factory=list)   # Índices en equipo.jugadores (11)
     formacion: str = "4-3-3"
+    # v2.3 (Fase 3 + Fase 9): 10 suplentes CONVOCADOS fijos (los que pueden entrar
+    # en el menú táctico del partido en vivo). El resto del equipo son RESERVAS y
+    # no aparecen ni en el banquillo. Retrocompatible: si la lista está vacía,
+    # se re-deriva automáticamente con `formaciones.auto_convocados`.
+    convocados: list[int] = field(default_factory=list)  # Índices en equipo.jugadores (10)
 
     def esta_completa(self) -> bool:
         """Determina si se han seleccionado exactamente 11 jugadores."""

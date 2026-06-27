@@ -1,5 +1,6 @@
-# ALPHA FOOTBALL — Contexto de Proyecto (v0.8.8)
+# ALPHA FOOTBALL — Contexto de Proyecto (v0.8.9)
 **Última actualización:** 2026-06-19
+**Sesión actual:** v0.8.9 — Plan guardado en `planes implementacion/2026-06-19-valor-potencial-agentes-libres.md` y aplicado al pie de la letra: (1) fix "Valor $0" en 3 capas (raíz con `asignar_valores_iniciales` + coherencia de ofertas + red de seguridad en `ofertas_screen`); (2) sistema de **Potencial final** generoso (campo nuevo en `Jugador`, `calcular_potencial` con curva por edad, techo respetado en desarrollo y progresión pasiva, regla de veterano + temporada destacada); (3) agentes libres en TODAS las jornadas con pool ampliado (11→22) y datos completos (valor+potencial+edad 28-35); (4) potencial editable en el editor; (5) limpieza de código muerto (`copa.py` y `events.py` borrados, verificado por grep). 28/28 tests OK.
 **Sesión actual:** v0.8.8 — 5 pedidos de Diego (con /plan): (1) **integridad de copa** — las fases avanzaban por umbrales independientes de jornada sin verificar la fase previa; ahora gating secuencial + validación de bracket (no más cuartos sin grupos, ni bracket roto en espectador). (2) **desarrollo pasivo + envejecimiento** — nadie envejecía y las otras 4 ligas nunca evolucionaban; ahora `progresar_pasivo` (edad +1 + drift de OVR por edad) en el rollover de tu liga y determinista por temporada para otras ligas/internacionales. (3+5) **equipos internacionales reales** — `data/internacional.py` reescrito con plantillas reales parodiadas (18 clubes), OVR fiel automático, sin relleno. (4) **editar internacionales** — pestañas LIB/UCL en el editor + la copa respeta los edits.
 
 ---
@@ -1030,9 +1031,148 @@ Saves viejos cargan igual; el aging de otras ligas/internacionales es determinis
 
 ---
 
+## Bitácora — v0.8.9 (sesión 2026-06-19, paquete Valor/Potencial/Agentes libres + limpieza)
+
+Plan completo en `planes implementacion/2026-06-19-valor-potencial-agentes-libres.md` (el propio plan fue creado y guardado en esta sesión, tal como pedía Diego en el §0). 5 secciones del plan + 1 limpieza. **28/28 tests OK**.
+
+### 1) Fix "Valor $0" (raíz + coherencia + red de seguridad)
+**Causa raíz:** `Jugador.valor` arrancaba en 0 (`models.py:61`) y SOLO se recalculaba al jugar, vender o rotar temporada. Un jugador recién cargado mostraba `Valor $0` en la UI aunque `calcular_valor(j)` diese $100M+. Las ofertas del IA ya calculaban el monto correcto (caían al `calcular_valor` cuando `valor` guardado era 0) pero la tarjeta de oferta (`ofertas_screen.py:105`) imprimía el campo crudo `getattr(jug,'valor',0)` → "Valor $0" junto a $200M.
+
+**Cambios en `market.py`:**
+- Nuevo helper `asignar_valores_iniciales(liga)` que puebla `valor` (`calcular_valor`) y `potencial` (`desarrollo.calcular_potencial`, vía import perezoso para evitar ciclo) en todos los jugadores. Idempotente.
+- `crear_oferta_ui` (L567) y `crear_oferta_exterior` (L758): tras `valor = getattr(objetivo,"valor",0) or calcular_valor(objetivo)`, ahora `setattr(objetivo, "valor", valor)` para que la tarjeta muestre el mismo valor base que el monto.
+
+**Llamadas en `menu.py`:**
+- `load_league_teams` (después de `escalar_presupuestos`).
+- `_aplicar_estado_cargado` (después de `expandir_liga` al cargar save).
+
+**Red de seguridad en `ofertas_screen.py`:** import tolerante de `calcular_valor` y `_valor_mostrar = getattr(jug, 'valor', 0) or calcular_valor(jug)` en la línea de la tarjeta. Si por algún motivo `valor` sigue en 0, se calcula on-the-fly sin romper la UI.
+
+### 2) Potencial final (techo de OVR + regla de veterano)
+
+**`models.py`:** nuevo campo `potencial: int = 0` en `Jugador`. `to_dict` ya lo serializa vía `asdict`; `from_dict` lo carga tolerante (`datos.get("potencial", 0)`). 0 = "sin calcular aún", se deriva perezoso.
+
+**`desarrollo.py`:**
+- Nueva función `calcular_potencial(overall, edad, rng) -> int`. Curva generosa: ≤18 → +14, 19-20 → +11, 21-22 → +8, 23-24 → +5, 25-28 → +4, 29-30 → +3, 31-32 → +2, ≥33 → +1. + jitter `rng.randint(-1, 1)`. Acotado a `[overall+1, 99]`. Ejemplos del plan verificados con 50 seeds:
+  - 20/80 → 90-92 ✓
+  - 24/85 → 89-91 ✓
+  - 27/80 → 83-85 ✓
+- Helper `_potencial_perezoso(j, _azar)` que devuelve `j.potencial` si > 0, si no lo calcula con `random.Random(j.id)` (RNG sembrado por id → estable entre llamadas) y lo guarda. Fallback permisivo a 99 si algo falla.
+- **`desarrollar_plantilla_post_partido`** (L148): en el bucle `while progreso >= 1.0`, calcula `_pot_actual` UNA vez por jugador; solo sube OVR si `j.overall < _pot_actual`. Si ya está en el techo, el progreso se consume silenciosamente (la "gran temporada" no rompe el límite).
+- **`progresar_pasivo`** (L226): regla de veterano + temporada destacada, gateada por `promedio_nota > 0` (las ligas de fondo sin stats siguen su curva por edad normal sin invocar la regla destacada):
+  - `promedio_nota >= 7.3` (gran temporada):
+    - edad ≤ 33 → `delta = max(delta_curva, +1)` (puede SUBIR, nunca baja), acotado por el techo.
+    - edad ≥ 34 → `delta = max(delta_curva, 0)` (no baja esa temporada).
+    - **además**, sube el techo: `j.potencial = min(99, j.potencial + rng.choice([1, 2]))`.
+  - `promedio_nota >= 6.8` y edad ≤ 33 → `delta = max(delta, 0)` (se mantiene).
+  - Resto → curva por edad (`_delta_ovr_por_edad`) sin cambios.
+- Techo también recortado al final: si `delta > 0` y `j.overall + delta > _pot_actual`, `delta = max(0, _pot_actual - j.overall)`.
+- **Orden en el rollover:** `resumen_temporada_screen.avanzar_nueva_temporada` resetea `partidos_jugados=0` ANTES de `progresar_liga_pasivo`, pero NO toca `promedio_nota` → la regla destacada ve el promedio de la temporada recién jugada, sin reordenar nada. Verificado: veterano 33/nota 7.8 → 80→81 + potencial 0→83; veterano 35/nota 8.0 → 80→80 (no baja) + potencial 0→83; fondo 35/nota 0 → 75→74 (curva normal sin regla destacada).
+
+### 3) Agentes libres (más frecuentes, más nombres, datos completos)
+
+**`data/free_agents.py` (reescrito):**
+- Eliminado el gate `if jornada % 2 != 0: return []` → ahora SIEMPRE hay lote.
+- Pool ampliado de 11 a 22 nombres parodiados (los 11 originales + 11 nuevos: Sergio Ramos-pega, Mauro Icardi-flojo, Pierre-Emerick Auba-viejo, Karim Benzemóvil, Carlos Tequila-Vela, Mesut Ozil-retirado, Gareth Bale-pensionado, Antoine Griezman-mediocre, Luis Suarez-muerde-menos, Alexis Sanchez-quebrado, Alex Sandropastoso).
+- Lote subido de `randint(3,5)` a `randint(6,9)`.
+- Edad 28-35 (agentes libres veteranos).
+- **Pobla `valor = calcular_valor(j)` y `potencial = calcular_potencial(...)`** al construir el jugador → cero "Valor $0".
+- Sin cambios en la API pública (`get_free_agents(jornada) -> list[Jugador]`).
+
+**`ui/market_screen.py` (L384):** cambia `if 'free_agents_list' not in estado:` por `if not estado.get('free_agents_list'):` → si la lista cacheada quedó vacía por cualquier motivo, se regenera al render siguiente (la pestaña "Libres" ya no se queda pegada en []).
+
+### 4) Potencial editable en el editor (`edit_screen.py`)
+
+- **Dibujo:** input numérico en `pygame.Rect(860, 360, 140, 36)` con label "Potencial (máx. 99):" en `(860, 335)` (fila del Rasgo, columna de la Posición). Display: `str(jugador_sel.get('potencial') or jugador_sel.get('overall', 70))` → si el potencial es 0 (save viejo / aún sin calcular), muestra el OVR como base sensata en vez de "0".
+- **Click handler:** `if click_pos and inp_play_pot.collidepoint(click_pos): estado['edit_input_activo'] = 'player_potencial'; estado['edit_dropdown_activo'] = None` (igual patrón que `inp_play_age`).
+- **BACKSPACE:** rama `elif jugador_sel and campo_activo == 'player_potencial': val_str = str(jugador_sel.get('potencial', 0) or 0)[:-1]; jugador_sel['potencial'] = int(val_str) if val_str else 0`.
+- **Dígitos:** rama análoga a `player_age` con `len(val_str) < 3` y clamp `potencial = max(int(jugador_sel.get('overall', 70) or 70), min(99, raw))` → nunca queda por debajo del OVR (un techo menor al OVR no tiene sentido).
+- El campo fluye por `to_dict`/`from_dict` ya integrado en §2; el editor trabaja sobre dicts (`jugador_sel`) que se guardan a `alpha_football_edited_db.json`.
+
+### 5) Limpieza de código muerto
+
+Verificado por grep en todo el repo (cero `import`/`from ... import`/`__import__` de `alpha_football.copa` y `alpha_football.events`):
+- **Borrado** `alpha_football/copa.py` (501 líneas) — la lógica viva de copa está toda en `ui/copa_screen.py`.
+- **Borrado** `alpha_football/events.py` (564 líneas) — definía su PROPIA clase `EventoCaotico` (la usada por el juego es la de `models.py`); las funciones `crear_evento_*`, `aplicar_efecto` y el `EventoCaotico` propio nadie los llamaba. `procesar_eventos_volumen` está definido en `main.py:212` (no en `events.py`).
+- `python -c "import main"` sigue arrancando sin error tras el borrado.
+
+### 6) Tests (28/28 OK, 0 regresiones)
+
+- **`tests/test_potencial.py` (nuevo, 6/6 OK):**
+  1. `calcular_potencial` cumple los rangos de los 3 ejemplos del plan (20/80→90-92, 24/85→89-91, 27/80→83-85) en 50 seeds distintos.
+  2. `calcular_potencial` acotado a `[overall+1, 99]` en grilla 6×9 (OVRs × edades).
+  3. `desarrollar_plantilla_post_partido` nunca deja OVR > potencial (10 invocaciones con progreso 5.0 forzado).
+  4. `progresar_pasivo` nunca deja OVR > potencial (joven 5 años de rollover).
+  5. `_potencial_perezoso` calcula y guarda; idempotente (segunda llamada devuelve mismo valor).
+  6. `Jugador.to_dict()/from_dict()` conserva `potencial`; save viejo sin la clave → 0 (tolerante).
+- **`tests/test_valor_ofertas.py` (nuevo, 5/5 OK):**
+  1. `asignar_valores_iniciales` puebla valor+potencial en 100% de los jugadores.
+  2. `asignar_valores_iniciales` idempotente (2 invocaciones → mismo snapshot).
+  3. `crear_oferta_ui` con valor=0 forzado: persiste `valor > 0`, monto coherente (`valor × 0.95..1.5`).
+  4. `crear_oferta_exterior` con valor=0 forzado: persiste `valor > 0`, monto coherente (`valor × 1.3..2.2`).
+  5. Flujo end-to-end: cargar Premier → expandir plantilla → asignar valores → min valor > 0.
+- **`tests/test_free_agents.py` (nuevo, 6/6 OK):**
+  1. Jornada impar (1) → lote no vacío (antes: gate de pares devolvía `[]`).
+  2. Jornada par (2) → lote no vacío.
+  3. Lote entre 6-9 en 20 jornadas consecutivas.
+  4. Todos con `valor > 0` y `potencial > 0`.
+  5. Edad 28-35 (veterano).
+  6. Pool `NOMBRES_LIBRES` >= 20.
+- **`tests/test_desarrollo_pasivo.py` (ampliado, 7/7 OK):** los 4 originales + 3 nuevos:
+  1. Veterano 33/nota 7.8 → OVR sube/mantiene y potencial sube.
+  2. Veterano 35/nota 8.0 → no baja, potencial sube.
+  3. Fondo 35/nota 0 → baja por curva normal (sin regla destacada), potencial perezoso se calcula.
+- **`tests/test_copa_integridad.py` (sin cambios, 4/4 OK):** cero regresiones.
+
+### Verificación end-to-end
+
+- `python -m compileall -q alpha_football main.py` → 0 errores.
+- `python -c "import main"` → arranca OK (pygame + main).
+- Verificación del plan: `python -c "import alpha_football.market as m, alpha_football.data.premier as p; from alpha_football.plantilla import expandir_liga; lg=p.get_liga(); expandir_liga(lg,20); m.asignar_valores_iniciales(lg); print(min(j.valor for e in lg.equipos for j in e.jugadores))"` → `min valor en Premier tras asignar_valores_iniciales: 2,478,794` (> 0 ✓).
+- 28/28 tests pasan con `SDL_VIDEODRIVER=dummy`.
+
+### Archivos modificados en v0.8.9
+
+**Tocados:**
+- `alpha_football/market.py` — `asignar_valores_iniciales` + setattr `objetivo.valor` en las 2 creadoras de oferta.
+- `alpha_football/ui/menu.py` — llamada a `asignar_valores_iniciales` en `load_league_teams` y `_aplicar_estado_cargado`.
+- `alpha_football/ui/ofertas_screen.py` — import tolerante de `calcular_valor` + fallback en tarjeta.
+- `alpha_football/models.py` — campo `potencial: int = 0` + `from_dict` tolerante.
+- `alpha_football/desarrollo.py` — `calcular_potencial`, `_potencial_perezoso`, regla veterano/destacada en `progresar_pasivo`, techo en `desarrollar_plantilla_post_partido`.
+- `alpha_football/data/free_agents.py` — reescrito (22 nombres, sin gate de pares, 6-9 lote, edad 28-35, valor+potencial poblados).
+- `alpha_football/ui/market_screen.py` — `if not estado.get('free_agents_list')` en pestaña Libres.
+- `alpha_football/ui/edit_screen.py` — input `player_potencial` (dibujo + handlers).
+- `.gitignore` — `planes implementacion/`.
+- `context.md` — esta bitácora.
+
+**Creados:**
+- `planes implementacion/2026-06-19-valor-potencial-agentes-libres.md` — el plan completo.
+- `tests/test_potencial.py`, `tests/test_valor_ofertas.py`, `tests/test_free_agents.py` — 3 tests nuevos.
+
+**Borrados (código muerto):**
+- `alpha_football/copa.py`, `alpha_football/events.py`.
+
+### Lo que queda (validación en vivo)
+1. Carrera nueva → ir a Ofertas → la oferta inicial muestra un Valor coherente (no $0).
+2. Mercado → pestaña "Libres" en J1 (impar) → lote visible con valores.
+3. Mercado → pestaña "Libres" en J3 → lote visible con nombres distintos (pool más rico).
+4. Terminar temporada con un joven rindiendo bien → su OVR sube pero se frena en su potencial (visible en la pantalla de fin de temporada / career).
+5. Veterano (≤33) con gran promedio (≥7.3) en el rollover → no baja, +1, potencial sube 1-2.
+6. Veterano (≥34) con gran promedio → no baja esa temporada, potencial sube.
+7. Modo edición → seleccionar un jugador → escribir "Potencial", guardar → iniciar carrera nueva con esa liga → respetar el techo editado al desarrollarse.
+8. `git status` muestra `copa.py` y `events.py` eliminados.
+
+### Compatibilidad
+- `Jugador.from_dict` ya era tolerante; `potencial` ausente → 0 → se calcula perezosamente en `asignar_valores_iniciales` o al aplicar el primer desarrollo.
+- `asignar_valores_iniciales` solo escribe `valor` y `potencial` si están en 0 → saves nuevos con valores ya fijados no se duplican.
+- La regla de rendimiento solo aplica con `promedio_nota > 0`, así las ligas de fondo (sin stats) conservan su envejecimiento determinista por temporada (sin tocar el desarrollo pasivo de v0.8.8).
+- Sin atribución a IA en commits.
+
+---
+
 ## 🔴 ESTADO ACTUAL — Para que claude continue
 
-**Versión:** v0.8.8 (recién aplicado por claude, pendiente validación en vivo de Diego)
+**Versión:** v0.8.9 (recién aplicado por claude, pendiente validación en vivo de Diego)
 
 **Última corrida:** Diego ejecutó `python main.py` 2026-06-19 02:42-02:48 (sobre v0.8.4, no v0.8.5 ni v0.8.6 ni v0.8.7). En este momento:
 - v0.8.5 cubre los bugs críticos (partido en vivo, copa reparada, amistoso aislado, modal borrar slot).
@@ -1042,8 +1182,9 @@ Saves viejos cargan igual; el aging de otras ligas/internacionales es determinis
 - v0.8.7.2 reemplaza MODO ESPECTADOR por NO CLASIFICADO + VER, agrega copa en background (`simular_copa_fondo`), y DT/presupuesto en slots de Cargar/Guardar.
 - v0.8.7.3 corrige el bug "Campeón" en historial cuando el user no clasificó: `resumen_temporada_screen` ahora chequea `copa_user_en_copa` antes de derivar `mejor_fase`.
 - v0.8.7.4 consolida 3 fixes: VER ALINEACIÓN RIVAL en carrera, OVR visitante invertido, badge clasificados copa.
-- **v0.8.7.5** arregla 2 bugs: (1) VER ALINEACIÓN RIVAL abría DIRECCIÓN DE EQUIPO cuando el user jugaba de visitante (handler ahora elige el oponente real); (2) historial mostraba "Fase de grupos" en vez de "No clasificado" tras save/load porque los flags de clasificación a copa no se persistían (ahora se guardan/restauran).
-- Smoke headless previo (17/17) sigue válido + verificación puntual de v0.8.7.5 (rival real, roundtrip save/load). Falta que Diego pruebe en vivo.
+- v0.8.7.5 arregla 2 bugs: VER ALINEACIÓN RIVAL con oponente real + persistencia de flags de clasificación a copa.
+- v0.8.8 cierra integridad de copa (gating secuencial + validación de bracket), desarrollo pasivo + envejecimiento, equipos internacionales reales, editar internacionales en el editor.
+- **v0.8.9** cierra el bug "Valor $0" en 3 capas, añade el sistema de **Potencial final** (campo `Jugador.potencial`, `calcular_potencial` con curva por edad, regla de veterano + temporada destacada), arregla agentes libres (22 nombres, TODAS las jornadas, 6-9 lote, datos completos), expone el potencial como editable en el editor, y limpia `copa.py` + `events.py` (código muerto, verificado por grep). 28/28 tests headless OK. Falta validación en vivo de los 8 puntos al final de la bitácora v0.8.9.
 
 ### Cómo está firmado cada cambio (autor)
 - v0.4–v0.5: base original (Diego/Opus).
@@ -1058,24 +1199,19 @@ Saves viejos cargan igual; el aging de otras ligas/internacionales es determinis
 - v0.8.4: fixes de raíz post-2º-test (claude).
 - v0.8.5: paquete grande post-3er-test (claude).
 - v0.8.6: plan v0.8.6 (antigravity + claude).
-- v0.8.7: plan v0.8.7 — penales con secuencia, subs solo manual, clasificación a copa, modo espectador, fix bracket (claude, 2026-06-19 15:35-15:42).
+- v0.8.7: plan v0.8.7 — penales con secuencia, subs solo manual, clasificación a copa, modo espectador, fix bracket (claude, 2026-06-19).
 - v0.8.7.1: fix contador "Copas Internacionales" (acento ó ≠ o) en `career_screen` (claude, 2026-06-19).
 - v0.8.7.2: copa en background (NO CLASIFICADO + VER), DT/presupuesto en slots, hook en finalizar_jornada_liga (claude, 2026-06-19).
 - v0.8.7.3: fix "Campeón" en historial cuando user no clasificó (claude, 2026-06-19).
 - v0.8.7.4: VER ALINEACIÓN RIVAL fix + OVR visitante fix + badge clasificados copa (claude, 2026-06-19).
-- v0.8.7.5: VER ALINEACIÓN RIVAL elige el oponente real (user de visitante) + persistencia de flags de clasificación a copa en el save (fix "Fase de grupos" → "No clasificado" tras load) (claude, 2026-06-19).
-- **v0.8.8: integridad de copa (gating secuencial + validación de bracket), desarrollo pasivo + envejecimiento, equipos internacionales reales (data/internacional.py reescrito), editar internacionales en el editor + tests headless (claude, 2026-06-19).**
+- v0.8.7.5: VER ALINEACIÓN RIVAL elige el oponente real (user de visitante) + persistencia de flags de clasificación a copa en el save (claude, 2026-06-19).
+- v0.8.8: integridad de copa (gating secuencial + validación de bracket), desarrollo pasivo + envejecimiento, equipos internacionales reales (data/internacional.py reescrito), editar internacionales en el editor + tests headless (claude, 2026-06-19).
+- **v0.8.9: fix "Valor $0" (3 capas) + sistema de Potencial final (campo + calcular_potencial + regla veterano/destacada + techo en desarrollo) + agentes libres (22 nombres, TODAS las jornadas, datos completos) + potencial editable en editor + limpieza de código muerto (copa.py + events.py) + 3 tests nuevos (28/28 OK) (claude, 2026-06-19).**
 
 ### Lo que falta (próximas sesiones)
 
-1. **Validar en vivo v0.8.7.4** (`python main.py`): ver lista de los 5 puntos al final de la bitácora v0.8.7.4 (VER ALINEACIÓN RIVAL, OVR visitante, badge clasificados).
+1. **Validar en vivo v0.8.9** (`python main.py`): ver los 8 puntos al final de la bitácora v0.8.9 (oferta sin "Valor $0", libres en J1/J3, regla veterano, potencial editable, código muerto eliminado).
 2. **PENDIENTE histórico de context.md** (sigue válido):
    - Más atributos por jugador y editables uno por uno en modo editar (ampliar `Jugador` dataclass, `from_dict`/`to_dict` tolerante, `edit_screen.py` con un input por atributo, recalcular `overall`).
 3. **PENDIENTE menor:** revisar por qué `mi_equipo` puede ser None en `match_screen` post-clear.
-4. **PENDIENTE menor:** el editor `edit_screen.py` solo deja tocar el OVR (se copia a los 5 atributos). Decisión de diseño: ¿qué atributos quieres añadir?
-5. **Decisión:** sigue en pie la pregunta de la sesión v0.5 sobre si migrar la UI a HTML/CSS (pywebview/Eel/Tauri). Diego descartó Tauri, sigue como decisión futura no implementada.
-2. **PENDIENTE histórico de context.md** (sigue válido):
-   - Más atributos por jugador y editables uno por uno en modo editar (ampliar `Jugador` dataclass, `from_dict`/`to_dict` tolerante, `edit_screen.py` con un input por atributo, recalcular `overall`).
-3. **PENDIENTE menor:** revisar por qué `mi_equipo` puede ser None en `match_screen` post-clear.
-4. **PENDIENTE menor:** el editor `edit_screen.py` solo deja tocar el OVR (se copia a los 5 atributos). Decisión de diseño: ¿qué atributos quieres añadir?
-5. **Decisión:** sigue en pie la pregunta de la sesión v0.5 sobre si migrar la UI a HTML/CSS (pywebview/Eel/Tauri). Diego descartó Tauri, sigue como decisión futura no implementada.
+4. **Decisión:** sigue en pie la pregunta de la sesión v0.5 sobre si migrar la UI a HTML/CSS (pywebview/Eel/Tauri). Diego descartó Tauri, sigue como decisión futura no implementada.

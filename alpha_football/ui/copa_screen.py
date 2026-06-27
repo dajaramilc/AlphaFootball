@@ -2147,6 +2147,17 @@ def render(screen, estado: dict) -> str | None:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return "quit"
+            elif event.type == pygame.KEYDOWN:
+                # v2.3.3: teclado global en copa. Esc vuelve al menu,
+                # 1/2/3/4 cambian tabs, Enter juega el partido pendiente.
+                if event.key == pygame.K_ESCAPE:
+                    return "volver"
+                elif event.key == pygame.K_s:
+                    estado['copa_stats_abierto'] = not estado.get('copa_stats_abierto', False)
+                elif tiene_partido_pendiente and event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                    if jugar_rect:
+                        ev = pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=(jugar_rect.x + jugar_rect.width // 2, jugar_rect.y + jugar_rect.height // 2))
+                        pygame.event.post(ev)
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 # v0.8.7.2: si el overlay de "NO CLASIFICADO" está abierto, consumir el clic
                 # y manejar el botón VER antes que cualquier otro.

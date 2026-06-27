@@ -295,17 +295,25 @@ def render(screen, estado: dict) -> str | None:
             back_rect = pygame.Rect(SCREEN_W // 2 - 150, 520, 300, 60)
             back_hover = back_rect.collidepoint(pygame.mouse.get_pos())
             draw_button(screen, back_rect, "VOLVER A LIGA", back_hover)
-            
+
             click_pos = None
+            key_events = []
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     return "quit"
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     click_pos = event.pos
-                    
+                elif event.type == pygame.KEYDOWN:
+                    key_events.append(event)
+
+            # v2.3.3: teclado cuando el mercado está cerrado
+            for ev in key_events:
+                if ev.key in (pygame.K_RETURN, pygame.K_SPACE, pygame.K_ESCAPE):
+                    return "volver"
+
             if click_pos and back_rect.collidepoint(click_pos):
                 return "volver"
-                
+
             return None
         
         # Inicializar variables locales en el diccionario global para persistencia
@@ -883,6 +891,37 @@ def render(screen, estado: dict) -> str | None:
                                     nuevo = int(actual + ch) if actual != '0' else int(ch)
                                     estado[f'market_{fname}'] = nuevo
                     continue  # Consumir el evento para no procesarlo como click
+
+                # v2.3.3: navegacion por teclado del mercado (cuando NO hay input de filtro).
+                # ←→ cambia de pestana, Esc vuelve, Enter abre el dropdown de pais o filtros.
+                if event.key == pygame.K_LEFT:
+                    tab_keys = list(tab_rects.keys())
+                    cur = estado.get('market_tab', 'Todos')
+                    if cur in tab_keys:
+                        idx = tab_keys.index(cur)
+                        estado['market_tab'] = tab_keys[(idx - 1) % len(tab_keys)]
+                        estado['market_page'] = 0
+                elif event.key == pygame.K_RIGHT:
+                    tab_keys = list(tab_rects.keys())
+                    cur = estado.get('market_tab', 'Todos')
+                    if cur in tab_keys:
+                        idx = tab_keys.index(cur)
+                        estado['market_tab'] = tab_keys[(idx + 1) % len(tab_keys)]
+                        estado['market_page'] = 0
+                elif event.key == pygame.K_p:
+                    # P = toggle dropdown pais
+                    estado['market_pais_dropdown_open'] = not estado.get('market_pais_dropdown_open', False)
+                elif event.key == pygame.K_f:
+                    # F = toggle panel filtros
+                    estado['market_filtros_open'] = not estado.get('market_filtros_open', False)
+                elif event.key == pygame.K_PAGEUP:
+                    if page > 0:
+                        estado['market_page'] = page - 1
+                elif event.key == pygame.K_PAGEDOWN:
+                    if page < total_paginas - 1:
+                        estado['market_page'] = page + 1
+                elif event.key == pygame.K_ESCAPE:
+                    return "volver"
 
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 # A. Manejar interacciones del Modal de Oferta Inicial

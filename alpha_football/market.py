@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # Parámetros del mercado
 TAMANO_MERCADO = 12
 PLANTILLA_MINIMA = 11
-PLANTILLA_MAXIMA = 32   # Límite máximo de jugadores por equipo
+PLANTILLA_MAXIMA = 40   # v2.3 (Fase 5): ampliado a 40 para soportar plantillas de 25 + margen.
 RECARGO_COMPRA = 1.10
 RETORNO_VENTA = 0.90
 # v0.7.1: margen AMPLIO sobre el nivel del club para poder fichar jugadores mejores

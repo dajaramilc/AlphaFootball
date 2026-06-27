@@ -381,11 +381,14 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
 
         mouse_pos = pygame.mouse.get_pos()
         click_pos = None
+        key_events = []
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return "menu"
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 click_pos = event.pos
+            elif event.type == pygame.KEYDOWN:
+                key_events.append(event)
 
         # Tras una simulación instantánea, mostrar el resultado y los goleadores.
         if estado.get('prepartido_resultado'):
@@ -456,20 +459,84 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         btn_ver_rival = pygame.Rect(SCREEN_W // 2 - 260, 510, 250, 48)
         btn_volver = pygame.Rect(SCREEN_W // 2 + 10, 510, 250, 48)
 
-        draw_button(screen, btn_jugar, "1. JUGAR PARTIDO (en vivo)", btn_jugar.collidepoint(mouse_pos))
-        draw_button(screen, btn_sim, "2. SIMULAR INSTANTÁNEAMENTE", btn_sim.collidepoint(mouse_pos))
-
+        # v2.3.3 (FIX): dir_hab y rival_disponible deben estar definidos ANTES de la
+        # lista prepartido_buttons, porque alli los usamos como flag de habilitacion.
+        # Antes la lista los referenciaba antes de su definicion -> UnboundLocalError.
         # v0.8.5: en AMISTOSO, dirección gestiona el equipo elegido para el amistoso (local),
         # no la carrera; así se habilita aunque no haya carrera cargada.
         dir_hab = (local is not None) if match_mode == 'amistoso' else (mi_equipo is not None)
-        draw_button(screen, btn_dir, "3. DIRECCIÓN DE EQUIPO" if dir_hab else "3. DIRECCIÓN DE EQUIPO [Bloqueado]", btn_dir.collidepoint(mouse_pos) and dir_hab)
-
         # v0.8.3 (F1): botón extra para VER la alineación del RIVAL
         rival_disponible = visitante is not None and visitante is not local
-        draw_button(screen, btn_ver_rival, "4. VER ALINEACIÓN RIVAL" if rival_disponible else "4. RIVAL NO DISPONIBLE",
-                    btn_ver_rival.collidepoint(mouse_pos) and rival_disponible)
 
-        draw_button(screen, btn_volver, "VOLVER", btn_volver.collidepoint(mouse_pos))
+        # v2.3.3: navegacion por teclado. 5 botones en orden:
+        # 0=JUGAR, 1=SIMULAR, 2=DIRECCION, 3=VER RIVAL, 4=VOLVER.
+        if 'prepartido_kbd_focus' not in estado:
+            estado['prepartido_kbd_focus'] = 0
+        _pp_kbd = int(estado.get('prepartido_kbd_focus', 0))
+        prepartido_buttons = [
+            (btn_jugar, 'jugar', True),
+            (btn_sim, 'sim', True),
+            (btn_dir, 'dir', dir_hab),
+            (btn_ver_rival, 'rival', rival_disponible),
+            (btn_volver, 'volver', True),
+        ]
+
+        draw_button(screen, btn_jugar, "1. JUGAR PARTIDO (en vivo)",
+                    btn_jugar.collidepoint(mouse_pos) or _pp_kbd == 0)
+        draw_button(screen, btn_sim, "2. SIMULAR INSTANTÁNEAMENTE",
+                    btn_sim.collidepoint(mouse_pos) or _pp_kbd == 1)
+
+        # (dir_hab y rival_disponible ya están definidos arriba para el flag de teclado)
+        draw_button(screen, btn_dir, "3. DIRECCIÓN DE EQUIPO" if dir_hab else "3. DIRECCIÓN DE EQUIPO [Bloqueado]",
+                    (btn_dir.collidepoint(mouse_pos) and dir_hab) or (_pp_kbd == 2 and dir_hab))
+
+        draw_button(screen, btn_ver_rival, "4. VER ALINEACIÓN RIVAL" if rival_disponible else "4. RIVAL NO DISPONIBLE",
+                    (btn_ver_rival.collidepoint(mouse_pos) and rival_disponible) or (_pp_kbd == 3 and rival_disponible))
+
+        draw_button(screen, btn_volver, "VOLVER",
+                    btn_volver.collidepoint(mouse_pos) or _pp_kbd == 4)
+
+        # v2.3.3: indicador visual de foco por teclado
+        try:
+            if 0 <= _pp_kbd < len(prepartido_buttons):
+                rect, _n, _habilitado = prepartido_buttons[_pp_kbd]
+                if _habilitado and not rect.collidepoint(mouse_pos):
+                    pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), rect, width=3, border_radius=8)
+                    draw_text(screen, "▶", (rect.x - 22, rect.y + 22), size='lg', color='dorado')
+        except Exception:
+            pass
+
+        # v2.3.3: navegacion por teclado. ↑↓ mueve el foco entre los 5 botones,
+        # Enter dispara el handler del boton enfocado (solo si esta habilitado).
+        try:
+            for ev in key_events:
+                if ev.key == pygame.K_UP:
+                    estado['prepartido_kbd_focus'] = (_pp_kbd - 1) % len(prepartido_buttons)
+                elif ev.key == pygame.K_DOWN:
+                    estado['prepartido_kbd_focus'] = (_pp_kbd + 1) % len(prepartido_buttons)
+                elif ev.key in (pygame.K_RETURN, pygame.K_SPACE):
+                    rect, _n, habilitado = prepartido_buttons[_pp_kbd]
+                    if habilitado:
+                        click_pos = (rect.x + rect.width // 2, rect.y + rect.height // 2)
+                elif ev.key == pygame.K_1:
+                    estado['prepartido_kbd_focus'] = 0
+                    click_pos = (btn_jugar.x + btn_jugar.width // 2, btn_jugar.y + btn_jugar.height // 2)
+                elif ev.key == pygame.K_2:
+                    estado['prepartido_kbd_focus'] = 1
+                    click_pos = (btn_sim.x + btn_sim.width // 2, btn_sim.y + btn_sim.height // 2)
+                elif ev.key == pygame.K_3:
+                    if dir_hab:
+                        estado['prepartido_kbd_focus'] = 2
+                        click_pos = (btn_dir.x + btn_dir.width // 2, btn_dir.y + btn_dir.height // 2)
+                elif ev.key == pygame.K_4:
+                    if rival_disponible:
+                        estado['prepartido_kbd_focus'] = 3
+                        click_pos = (btn_ver_rival.x + btn_ver_rival.width // 2, btn_ver_rival.y + btn_ver_rival.height // 2)
+                elif ev.key == pygame.K_ESCAPE:
+                    click_pos = (btn_volver.x + btn_volver.width // 2, btn_volver.y + btn_volver.height // 2)
+                    estado['prepartido_kbd_focus'] = 4
+        except Exception as e_kbd_pp:
+            logger.error(f"Error en teclado de prepartido_screen: {e_kbd_pp}")
 
         if click_pos:
             if btn_jugar.collidepoint(click_pos):
@@ -477,6 +544,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 estado.pop('sim_estado', None)
                 return "match_screen"
             elif btn_sim.collidepoint(click_pos):
+                _simular_instantaneo(estado, local, visitante)
                 _simular_instantaneo(estado, local, visitante)
             elif btn_dir.collidepoint(click_pos) and dir_hab:
                 # Limpiar objetivo rival si está activo (vista de MI equipo)

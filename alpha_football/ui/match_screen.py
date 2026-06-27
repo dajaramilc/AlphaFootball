@@ -446,6 +446,14 @@ def finalizar_jornada_liga(estado: dict, liga: Any, mi_equipo: Any, partido: Any
             simular_copa_fondo(estado)
         except Exception as e_bg:
             logger.error(f"Error al simular copa de fondo: {e_bg}")
+        # v2.3 (Fase 7): avanzar la jornada de TODAS las 2ª divisiones en background.
+        # Mismo ritmo que 1ª división: 1 jornada por jornada del user. Si el user
+        # descendió, su partido en la 2ª división se salta (lo juega él).
+        try:
+            from alpha_football.ui.league_screen import simular_jornada_segunda_division
+            simular_jornada_segunda_division(estado)
+        except Exception as e_bg2:
+            logger.error(f"Error al simular jornada de 2ª división: {e_bg2}")
         # Ofertas tras la jornada (IA local + posible oferta del exterior por buen rendimiento)
         try:
             from alpha_football import market
@@ -540,7 +548,20 @@ def _menu_tactico(screen: pygame.Surface, estado: dict, equipo: Any, alin: Any,
 
     fila_rects = []   # (rect, idx, es_banco)
     titulares_idx = [i for i in alin.titulares if 0 <= i < len(jugadores)]
-    banco_idx = [i for i, j in enumerate(jugadores) if i not in alin.titulares and getattr(j, 'lesion_partidos', 0) == 0]
+    # v2.3 (Fase 5): el banquillo muestra SOLO los 10 CONVOCADOS (no las reservas).
+    # Si `alin.convocados` está vacío (saves muy viejos sin la clave), cae al
+    # comportamiento original (todos los no-titulares no lesionados) para no
+    # romper partidas existentes.
+    _convocados_set = set(getattr(alin, 'convocados', []) or [])
+    if _convocados_set:
+        banco_idx = [
+            i for i, j in enumerate(jugadores)
+            if i in _convocados_set                       # solo los 10 fijos
+            and i not in alin.titulares                   # y no titulares
+            and getattr(j, 'lesion_partidos', 0) == 0     # y no lesionados
+        ]
+    else:
+        banco_idx = [i for i, j in enumerate(jugadores) if i not in alin.titulares and getattr(j, 'lesion_partidos', 0) == 0]
 
     y0 = panel.y + 200
     minutos = estado.get('sim_minuto_por_jugador', {}) or {}

@@ -57,14 +57,19 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
     try:
         estado.setdefault('stats_tab', 'goles')
         estado.setdefault('stats_scope', 'liga')  # 'liga' (predomina) o 'mi_equipo'
+        # v2.3.3: foco de teclado. 0..len(TABS)-1 = pestanas; -2 = volver; -1 = liga/mi
+        estado.setdefault('stats_kbd_focus', 0)
 
         mouse_pos = pygame.mouse.get_pos()
         click_pos = None
+        key_events = []
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return "menu"
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 click_pos = event.pos
+            elif event.type == pygame.KEYDOWN:
+                key_events.append(event)
 
         draw_gradient_bg(screen)
         draw_text(screen, "ESTADÍSTICAS DE LA TEMPORADA", (40, 22), size='xl', color='dorado')
@@ -72,11 +77,19 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         # Alcance: TODA LA LIGA (por defecto) / MI EQUIPO
         sc_liga = pygame.Rect(760, 20, 230, 40)
         sc_mi = pygame.Rect(1000, 20, 230, 40)
-        for r, clave, txt in ((sc_liga, 'liga', 'TODA LA LIGA'), (sc_mi, 'mi_equipo', 'MI EQUIPO')):
+        # v2.3.3: visualizacion del foco por teclado en scope
+        _stats_kbd = int(estado.get('stats_kbd_focus', 0))
+        scope_focus_liga = (_stats_kbd == -1)
+        scope_focus_mi = (_stats_kbd == -2)
+        for r, clave, txt, is_focus in (
+            (sc_liga, 'liga', 'TODA LA LIGA', scope_focus_liga),
+            (sc_mi, 'mi_equipo', 'MI EQUIPO', scope_focus_mi),
+        ):
             act = (estado['stats_scope'] == clave)
             try:
                 pygame.draw.rect(screen, (0, 191, 255) if act else (20, 26, 46), r, border_radius=6)
-                pygame.draw.rect(screen, (255, 215, 0) if act else (0, 191, 255), r, width=1, border_radius=6)
+                pygame.draw.rect(screen, (255, 215, 0) if (act or is_focus) else (0, 191, 255),
+                                 r, width=3 if is_focus else 1, border_radius=6)
             except Exception:
                 pass
             s = get_font('sm').render(txt, True, (10, 14, 26) if act else (255, 255, 255))
@@ -87,13 +100,15 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         # Pestañas
         tab_rects = {}
         tx = 40
-        for clave, etiqueta, _attr, _h, _m in TABS:
+        for idx_t, (clave, etiqueta, _attr, _h, _m) in enumerate(TABS):
             r = pygame.Rect(tx, 80, 250, 38)
             tab_rects[clave] = r
             activo = (estado['stats_tab'] == clave)
+            is_kbd = (_stats_kbd == idx_t)
             try:
                 pygame.draw.rect(screen, (0, 191, 255) if activo else (20, 26, 46), r, border_radius=6)
-                pygame.draw.rect(screen, (255, 215, 0) if activo else (0, 191, 255), r, width=1, border_radius=6)
+                pygame.draw.rect(screen, (255, 215, 0) if (activo or is_kbd) else (0, 191, 255),
+                                 r, width=3 if is_kbd else 1, border_radius=6)
             except Exception:
                 pass
             s = get_font('sm').render(etiqueta, True, (10, 14, 26) if activo else (255, 255, 255))
@@ -143,7 +158,59 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             y += 35
 
         btn_volver = pygame.Rect(40, 660, 200, 48)
-        draw_button(screen, btn_volver, "VOLVER", btn_volver.collidepoint(mouse_pos))
+        # v2.3.3: foco en volver = -3
+        _kbd_volver = (_stats_kbd == -3)
+        draw_button(screen, btn_volver, "VOLVER", btn_volver.collidepoint(mouse_pos) or _kbd_volver)
+        if _kbd_volver and not btn_volver.collidepoint(mouse_pos):
+            pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), btn_volver, width=3, border_radius=8)
+            draw_text(screen, "▶", (btn_volver.x - 22, btn_volver.y + 14), size='lg', color='dorado')
+
+        # v2.3.3: navegacion por teclado. Focos:
+        #   0..len(TABS)-1 -> pestanas
+        #   -1 = TODA LA LIGA, -2 = MI EQUIPO, -3 = VOLVER
+        # ↑↓ entre pestanas, ← → entre los 2 botones de scope y volver, Enter aplica
+        try:
+            for ev in key_events:
+                if ev.key in (pygame.K_LEFT, pygame.K_UP):
+                    if _stats_kbd >= 0:
+                        estado['stats_kbd_focus'] = (max(-3, _stats_kbd - 1))
+                    elif _stats_kbd == -1:
+                        estado['stats_kbd_focus'] = -2
+                    elif _stats_kbd == -2:
+                        estado['stats_kbd_focus'] = -3
+                    elif _stats_kbd == -3:
+                        estado['stats_kbd_focus'] = len(TABS) - 1
+                elif ev.key in (pygame.K_RIGHT, pygame.K_DOWN):
+                    if _stats_kbd >= 0:
+                        if _stats_kbd == len(TABS) - 1:
+                            estado['stats_kbd_focus'] = -3
+                        else:
+                            estado['stats_kbd_focus'] = _stats_kbd + 1
+                    elif _stats_kbd == -1:
+                        estado['stats_kbd_focus'] = 0
+                    elif _stats_kbd == -2:
+                        estado['stats_kbd_focus'] = -1
+                    elif _stats_kbd == -3:
+                        estado['stats_kbd_focus'] = -2
+                elif ev.key in (pygame.K_RETURN, pygame.K_SPACE):
+                    if _stats_kbd >= 0:
+                        estado['stats_tab'] = TABS[_stats_kbd][0]
+                    elif _stats_kbd == -1:
+                        estado['stats_scope'] = 'liga'
+                    elif _stats_kbd == -2:
+                        estado['stats_scope'] = 'mi_equipo'
+                    elif _stats_kbd == -3:
+                        return "league_screen"
+                elif ev.key == pygame.K_ESCAPE:
+                    return "league_screen"
+                elif ev.key == pygame.K_l:
+                    estado['stats_scope'] = 'liga'
+                    estado['stats_kbd_focus'] = -1
+                elif ev.key == pygame.K_t:
+                    estado['stats_scope'] = 'mi_equipo'
+                    estado['stats_kbd_focus'] = -2
+        except Exception as e_kbd_stats:
+            logger.error(f"Error en teclado de stats_screen: {e_kbd_stats}")
 
         if click_pos:
             for clave, r in tab_rects.items():

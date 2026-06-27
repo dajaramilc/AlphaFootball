@@ -38,7 +38,7 @@ def _atributos_por_posicion(posicion: str, ovr: int):
     return ovr + 10, ovr - 20, ovr, ovr + 5, ovr  # DEL
 
 
-def expandir_plantilla(equipo, objetivo: int = 20, tope: int = 32):
+def expandir_plantilla(equipo, objetivo: int = 25, tope: int = 40):
     """
     Asegura que el equipo tenga al menos `objetivo` jugadores (rellenando con suplentes
     generados), SIN pasar de `tope`. Idempotente por longitud: si ya tiene `objetivo` o más,
@@ -101,7 +101,7 @@ def expandir_plantilla(equipo, objetivo: int = 20, tope: int = 32):
         return equipo
 
 
-def expandir_liga(liga, objetivo: int = 20, tope: int = 32):
+def expandir_liga(liga, objetivo: int = 25, tope: int = 40):
     """Asegura `objetivo` jugadores (cap `tope`) en todos los equipos de una liga (fail-soft)."""
     try:
         for equipo in getattr(liga, "equipos", []) or []:

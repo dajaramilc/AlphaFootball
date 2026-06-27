@@ -341,7 +341,8 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         # Procesar hovers de los botones
         mouse_pos = pygame.mouse.get_pos()
         click_pos = None
-        
+        key_events = []
+
         # Consumir eventos del frame de forma limpia
         try:
             for event in pygame.event.get():
@@ -349,8 +350,54 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     return "quit"
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     click_pos = event.pos
+                elif event.type == pygame.KEYDOWN:
+                    key_events.append(event)
         except Exception as e_events:
             logger.error(f"Error al procesar eventos en career_screen: {str(e_events)}")
+
+        # v2.3.3: navegacion por teclado del sidebar.
+        career_sidebar = [
+            (btn_liga, 'liga'),
+            (btn_mercado, 'mercado'),
+            (btn_copa, 'copa'),
+            (btn_career, 'career'),  # siempre activo (es donde estamos)
+            (btn_equipo, 'equipo'),
+            (btn_opciones, 'opciones'),
+            (btn_salir, 'salir'),
+        ]
+        if 'career_kbd_focus' not in estado:
+            estado['career_kbd_focus'] = 3  # default en la pestaña activa
+
+        try:
+            _career_kbd = int(estado.get('career_kbd_focus', 3))
+            for ev in key_events:
+                if ev.key == pygame.K_UP:
+                    estado['career_kbd_focus'] = (_career_kbd - 1) % len(career_sidebar)
+                elif ev.key == pygame.K_DOWN:
+                    estado['career_kbd_focus'] = (_career_kbd + 1) % len(career_sidebar)
+                elif ev.key in (pygame.K_RETURN, pygame.K_SPACE):
+                    rect, _name = career_sidebar[_career_kbd]
+                    click_pos = (rect.x + rect.width // 2, rect.y + rect.height // 2)
+                elif ev.key == pygame.K_l:
+                    click_pos = (btn_liga.x + btn_liga.width // 2, btn_liga.y + btn_liga.height // 2)
+                    estado['career_kbd_focus'] = 0
+                elif ev.key == pygame.K_m:
+                    click_pos = (btn_mercado.x + btn_mercado.width // 2, btn_mercado.y + btn_mercado.height // 2)
+                    estado['career_kbd_focus'] = 1
+                elif ev.key == pygame.K_c:
+                    click_pos = (btn_copa.x + btn_copa.width // 2, btn_copa.y + btn_copa.height // 2)
+                    estado['career_kbd_focus'] = 2
+                elif ev.key == pygame.K_e:
+                    click_pos = (btn_equipo.x + btn_equipo.width // 2, btn_equipo.y + btn_equipo.height // 2)
+                    estado['career_kbd_focus'] = 4
+                elif ev.key == pygame.K_o:
+                    click_pos = (btn_opciones.x + btn_opciones.width // 2, btn_opciones.y + btn_opciones.height // 2)
+                    estado['career_kbd_focus'] = 5
+                elif ev.key == pygame.K_ESCAPE:
+                    estado['current_screen'] = 'league_screen'
+                    return 'league_screen'
+        except Exception as e_kbd_career:
+            logger.error(f"Error en teclado de career_screen: {e_kbd_career}")
             
         hov_liga = btn_liga.collidepoint(mouse_pos)
         hov_mercado = btn_mercado.collidepoint(mouse_pos)
@@ -368,6 +415,18 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         draw_styled_button(screen, btn_equipo, "DIRECCIÓN EQUIPO", hov_equipo, COLORS.get('azul', (0, 191, 255)))
         draw_styled_button(screen, btn_opciones, "OPCIONES", hov_opciones, COLORS.get('verde', (0, 255, 136)))
         draw_styled_button(screen, btn_salir, "GUARDAR Y SALIR", hov_salir, COLORS.get('rojo', (255, 68, 68)))
+
+        # v2.3.3: indicador de foco por teclado sobre el boton enfocado del sidebar
+        try:
+            _career_kbd_idx = int(estado.get('career_kbd_focus', 3))
+            if 0 <= _career_kbd_idx < len(career_sidebar):
+                kbd_rect, _n = career_sidebar[_career_kbd_idx]
+                if not kbd_rect.collidepoint(mouse_pos):
+                    pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)),
+                                     kbd_rect, width=3, border_radius=8)
+                    draw_text(screen, "▶", (kbd_rect.x - 22, kbd_rect.y + 14), size='lg', color='dorado')
+        except Exception:
+            pass
         
         # --- PANEL CENTRAL: ESTADÍSTICAS GLOBALES ---
         left_rect = pygame.Rect(300, 100, 380, 580)

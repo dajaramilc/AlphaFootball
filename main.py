@@ -478,6 +478,7 @@ def main():
             from alpha_football.ui.save_slots_screen import render as save_slots_render
             from alpha_football.ui.resumen_temporada_screen import render as resumen_temporada_render
             from alpha_football.ui.edit_screen import render as edit_render
+            from alpha_football.ui.promo_releg_screen import render as promo_releg_render
             PANTALLAS = {
                 'menu': menu_render,
                 'league_screen': league_render,
@@ -493,6 +494,7 @@ def main():
                 'save_slots_screen': save_slots_render,
                 'resumen_temporada_screen': resumen_temporada_render,
                 'edit_screen': edit_render,
+                'promo_releg_screen': promo_releg_render,
             }
         except Exception as e_import_pantallas:
             logger.critical(f"No se pudieron importar las pantallas del juego: {e_import_pantallas}", exc_info=True)
