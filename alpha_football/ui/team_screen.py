@@ -13,6 +13,7 @@ import logging
 from typing import Optional, Any, Dict, List
 
 from alpha_football import formaciones as F
+from alpha_football.vestuario import PERSONALIDAD_TXT
 
 # Configurar logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s')
@@ -197,22 +198,24 @@ def _render_team_view_mode(screen, estado, team_objetivo, f_riv, mejores, jugado
         pass
 
     # Encabezado
-    draw_text(screen, f"ALINEACIÓN DEL RIVAL — {team_objetivo.nombre.upper()}",
-              (300, 20), size='xl', color='dorado')
+    # v3.9.0: en 'xl' el título pisaba el botón VOLVER A MI ONCE
+    draw_text(screen, f"ALINEACIÓN DEL RIVAL — {_truncar(team_objetivo.nombre.upper(), 15)}",
+              (300, 22), size='lg', color='dorado')
     est_l = getattr(team_objetivo, 'estilo_dt', 'anchelottismo') or 'anchelottismo'
-    draw_text(screen, f"Estilo: {est_l.capitalize()}  ·  Formación: {f_riv.formacion}  ·  Vista de solo lectura",
+    est_l = NOMBRE_ESTILO.get(est_l, est_l.capitalize())   # v3.3.0
+    draw_text(screen, f"Estilo: {est_l}  ·  Formación: {f_riv.formacion}  ·  Vista de solo lectura",
               (300, 66), size='sm', color='azul')
 
     # Botón "VOLVER A MI ONCE" (arriba a la derecha)
-    btn_volver = pygame.Rect(SCREEN_W - 260, 22, 240, 44)
+    btn_volver = R_VISOR_VOLVER
     btn_volver_hover = btn_volver.collidepoint(mouse_pos)
-    draw_styled_button(screen, btn_volver, "← VOLVER A MI ONCE", btn_volver_hover, COLORS.get('verde', (0, 255, 136)))
+    draw_styled_button(screen, btn_volver, "VOLVER A MI ONCE", btn_volver_hover, COLORS.get('verde', (0, 255, 136)))
     if click_pos and btn_volver.collidepoint(click_pos):
         estado['team_equipo_objetivo'] = None
         return "prepartido_screen" if estado.get('match_mode') else "league_screen"
 
     # Lista de jugadores (read-only, no clicable)
-    rect_lista = pygame.Rect(40, 100, 440, 580)
+    rect_lista = R_VISOR_LISTA
     draw_panel(screen, rect_lista)
     encabezado_h = 36
     try:
@@ -235,7 +238,8 @@ def _render_team_view_mode(screen, estado, team_objetivo, f_riv, mejores, jugado
 
     fila_alto = 38
     y = rect_lista.y + encabezado_h + 6
-    for j in jugadores_ordenados[:15]:
+    filas_max = (rect_lista.height - encabezado_h - 10) // fila_alto     # v3.9.0: 15 filas se salían del panel
+    for j in jugadores_ordenados[:filas_max]:
         try:
             fila_r = pygame.Rect(rect_lista.x + 6, y, rect_lista.width - 12, fila_alto - 4)
             is_t = id(j) in {id(jugadores_riv[i]) for i in titulares_idx_set}
@@ -247,20 +251,21 @@ def _render_team_view_mode(screen, estado, team_objetivo, f_riv, mejores, jugado
             # Posición
             try:
                 pc = POS_COLOR.get(j.posicion, GRIS_CLAR)
-                badge = pygame.Rect(fila_r.x + 10, fila_r.y + 4, 36, 18)
+                badge = pygame.Rect(fila_r.x + 10, fila_r.y + 7, 42, 20)    # v3.9.0: "MED" no cabía en 36
                 pygame.draw.rect(screen, pc, badge, border_radius=3)
                 draw_text(screen, j.posicion, (badge.x + 5, badge.y + 2), size='sm', color='blanco', shadow=False)
             except Exception:
                 pass
-            draw_text(screen, _truncar(j.nombre_completo, 20), (fila_r.x + 55, fila_r.y + 4), size='sm',
+            # v3.9.0: nombre y OVR en la misma línea (antes el OVR se montaba sobre el nombre)
+            draw_text(screen, _truncar(j.nombre_completo, 24), (fila_r.x + 60, fila_r.y + 7), size='sm',
                       color='verde' if is_t else 'blanco')
-            draw_text(screen, f"OVR {j.overall}", (fila_r.x + 55, fila_r.y + 18), size='sm', color='dorado')
+            draw_text(screen, f"OVR {j.overall}", (fila_r.right - 78, fila_r.y + 7), size='sm', color='dorado')
         except Exception:
             pass
         y += fila_alto
 
     # Campo con los 11 mejores
-    rect_campo = pygame.Rect(500, 100, 740, 480)
+    rect_campo = R_VISOR_CAMPO
     try:
         pygame.draw.rect(screen, VERDE_CAMPO, rect_campo, border_radius=8)
         franja_h = rect_campo.height // 8
@@ -294,12 +299,517 @@ def _render_team_view_mode(screen, estado, team_objetivo, f_riv, mejores, jugado
             cy = rect_campo.y + int(rect_campo.height * py_rel)
             pygame.draw.circle(screen, COLORS.get('verde', (0, 255, 136)), (cx, cy), radio_circ)
             pygame.draw.circle(screen, (10, 14, 26), (cx, cy), radio_circ, width=2)
-            ap = j.apellido[:10] if hasattr(j, 'apellido') else ''
-            draw_text(screen, ap, (cx - 30, cy - 6), size='sm', color='blanco', shadow=True)
-            draw_text(screen, f"#{j.overall}", (cx - 12, cy + 6), size='sm', color='dorado', shadow=True)
+            # v3.9.0: la media dentro del círculo y el apellido debajo (antes se pisaban)
+            ap = j.apellido[:12] if hasattr(j, 'apellido') else ''
+            s_ovr = get_font('sm').render(str(j.overall), True, (10, 14, 26))
+            screen.blit(s_ovr, s_ovr.get_rect(center=(cx, cy)))
+            draw_text(screen, ap, (cx - get_font('sm').size(ap)[0] // 2, cy + radio_circ + 2), size='sm',
+                      color='blanco', shadow=True)
         except Exception:
             pass
 
+    return None
+
+
+from alpha_football.estilos import ESTILOS_UI as TACTICAS, NOMBRE_ESTILO, DESC_ESTILO  # v3.3.0: los 9 estilos
+MENTALIDADES = ["autobus", "defensiva", "normal", "ofensiva", "todo_o_nada"]
+NOMBRE_MENTALIDAD = {"autobus": "AUTOBÚS", "defensiva": "DEFENSIVA", "normal": "NORMAL",
+                     "ofensiva": "OFENSIVA", "todo_o_nada": "TODO O NADA"}
+_CARD_W, _CARD_H = 119, 104          # tarjetas de banco/reservas
+_BANCO_Y = 572
+_CAMPO = pygame.Rect(16, 100, 930, 452)
+_FICHA = pygame.Rect(962, 100, 302, 452)
+
+
+# v3.9.0: rects expuestos (ayuda H); render los usa tal cual.
+R_VISOR_VOLVER = pygame.Rect(SCREEN_W - 260, 22, 240, 44)
+R_VISOR_LISTA = pygame.Rect(40, 100, 440, 580)
+R_VISOR_CAMPO = pygame.Rect(500, 100, 740, 480)
+R_BANCO_TOGGLE = pygame.Rect(1050, _BANCO_Y - 20, 214, 34)
+R_BANCO_PREV = pygame.Rect(958, _BANCO_Y - 20, 40, 34)
+R_BANCO_NEXT = pygame.Rect(1004, _BANCO_Y - 20, 40, 34)
+
+
+def rect_tarjeta_banco(n: int) -> pygame.Rect:
+    """v3.9.0: tarjeta n (0-9) de la fila del banco / reservas."""
+    return pygame.Rect(16 + n * (_CARD_W + 6), _BANCO_Y + 20, _CARD_W, _CARD_H)
+
+
+def _salir_direccion(estado, es_amistoso, modo_prepartido):
+    for k in ('_original_alignment', '_original_convocados', '_original_formacion',
+              '_original_estilo', '_original_mentalidad', '_original_subs', '_original_salieron',
+              'team_sel', 'team_res_page', 'team_view'):
+        estado.pop(k, None)
+    if es_amistoso:
+        estado.pop('team_contexto', None)
+    if modo_prepartido:
+        estado.pop('team_modo_prepartido', None)
+
+
+def _rects_cabecera() -> dict:
+    """v2.5.0: controles de la cabecera de dirección (formación, estilo, mentalidad y botones)."""
+    return {
+        'form_prev': pygame.Rect(300, 22, 30, 40), 'form_box': pygame.Rect(334, 22, 80, 40),
+        'form_next': pygame.Rect(418, 22, 30, 40),
+        'tact_prev': pygame.Rect(456, 22, 30, 40), 'tact_box': pygame.Rect(490, 22, 127, 40),
+        'tact_next': pygame.Rect(621, 22, 30, 40),
+        'ment_prev': pygame.Rect(659, 22, 30, 40), 'ment_box': pygame.Rect(693, 22, 127, 40),
+        'ment_next': pygame.Rect(824, 22, 30, 40),
+        'auto': pygame.Rect(862, 18, 80, 48), 'ok': pygame.Rect(948, 18, 160, 48),
+        'cancel': pygame.Rect(1114, 18, 150, 48),
+    }
+
+
+def _flash(estado, msg, seg=2.0):
+    estado['team_flash_msg'] = msg
+    estado['team_flash_timer'] = seg
+    estado['team_flash_hasta'] = pygame.time.get_ticks() + int(seg * 1000)
+
+
+def _jugador_de(alin, jugadores, sel):
+    """Jugador (objeto) de una selección (zona, i) o None si es inválida."""
+    try:
+        zona, i = sel
+        idx = alin.titulares[i] if zona == 'campo' else alin.convocados[i] if zona == 'banco' else i
+        return jugadores[idx] if 0 <= idx < len(jugadores) else None
+    except Exception:
+        return None
+
+
+def _energia_de(estado, j, en_partido: bool) -> float:
+    """v3.1.0: energía a mostrar (en vivo = la del minuto actual según lo que lleva jugado)."""
+    from alpha_football import energia as E
+    if en_partido:
+        # v3.3.0: mismo multiplicador de gasto que el motor (Kloppismo gasta más).
+        from alpha_football.estilos import factor_gasto_estilo
+        mult = factor_gasto_estilo(getattr(estado.get('mi_equipo'), 'estilo_dt', ''))
+        return E.energia_en_minuto(j, (estado.get('sim_minuto_por_jugador') or {}).get(j.id, 0), mult)
+    return float(getattr(j, 'energia', 100.0))
+
+
+def texto_nota_vivo(j, estado):
+    """v3.6.0: nota en vivo del titular (fuente: estado['sim_nota_por_jugador'] de match_screen,
+    que arranca en 6.0) como (texto, color): ≥ 7.5 verde, ≥ 6 blanco, < 6 rojo. None sin partido."""
+    try:
+        notas = (estado or {}).get('sim_nota_por_jugador')
+        if not isinstance(notas, dict):
+            return None
+        n = float(notas.get(getattr(j, 'id', None), 6.0) or 6.0)
+        return (f"{n:.1f}", 'verde' if n >= 7.5 else ('blanco' if n >= 6 else 'rojo'))
+    except Exception as e:
+        logger.error(f"No se pudo leer la nota en vivo: {e}")
+        return None
+
+
+def _barra_energia(screen, x, y, ancho, e) -> None:
+    from alpha_football.energia import UMBRAL_AMARILLO, UMBRAL_ROJO   # v4.4.0
+    col = COLORS['verde'] if e >= UMBRAL_AMARILLO else (COLORS['dorado'] if e >= UMBRAL_ROJO else COLORS['rojo'])
+    pygame.draw.rect(screen, (40, 50, 70), pygame.Rect(x, y, ancho, 5), border_radius=2)
+    pygame.draw.rect(screen, col, pygame.Rect(x, y, int(ancho * max(0.0, min(100.0, e)) / 100), 5), border_radius=2)
+
+
+def _dibujar_tarjeta(screen, rect, j, seleccionada, hover, sustituido=False, energia=None):
+    col = POS_COLOR.get(getattr(j, 'posicion', 'MED'), GRIS_CLAR) if not sustituido else (70, 70, 80)
+    pygame.draw.rect(screen, (30, 45, 75) if hover else (15, 22, 40), rect, border_radius=6)
+    pygame.draw.rect(screen, col, pygame.Rect(rect.x, rect.y, rect.width, 22),
+                     border_top_left_radius=6, border_top_right_radius=6)
+    draw_text(screen, f"{j.posicion}  {j.overall}", (rect.x + 8, rect.y + 2), size='sm', color='blanco', shadow=False)
+    draw_text(screen, _truncar(getattr(j, 'apellido', '') or j.nombre, 11), (rect.x + 8, rect.y + 30), size='sm', color='blanco')
+    draw_text(screen, _truncar(getattr(j, 'nombre', ''), 11), (rect.x + 8, rect.y + 52), size='sm', color='azul', shadow=False)
+    if sustituido:
+        draw_text(screen, "SUSTITUIDO", (rect.x + 8, rect.y + 76), size='sm', color='rojo', shadow=False)
+    elif getattr(j, 'lesion_partidos', 0) > 0:
+        draw_text(screen, f"LESIÓN {j.lesion_partidos}", (rect.x + 8, rect.y + 76), size='sm', color='rojo', shadow=False)
+    else:
+        draw_text(screen, f"Moral {getattr(j, 'moral', 70)}", (rect.x + 8, rect.y + 76), size='sm', color='verde', shadow=False)
+    _barra_energia(screen, rect.x + 8, rect.bottom - 9, rect.width - 16,
+                   float(getattr(j, 'energia', 100.0)) if energia is None else energia)   # v3.1.0
+    pygame.draw.rect(screen, AMARILLO if seleccionada else (60, 80, 110), rect,
+                     width=4 if seleccionada else 1, border_radius=6)
+
+
+SUBS_MAX_PARTIDO = 5
+
+
+def _cambio_en_partido(estado, alin, jugadores, sel, hit, subs_hechas, salieron):
+    """v2.3.6: aplica un intercambio EN VIVO respetando las reglas del partido.
+    campo↔campo = cambio de puesto (gratis); campo↔banco = sustitución (cuenta,
+    máx. 5, el que sale no puede volver a entrar); banco↔banco no aplica."""
+    zonas = {sel[0], hit[0]}
+    if zonas == {'campo'}:
+        F.intercambiar(alin, sel, hit)
+        _flash(estado, "Cambio de puesto", 1.2)
+        return
+    if zonas != {'campo', 'banco'}:
+        _flash(estado, "Elige un titular y un suplente del banco", 1.8)
+        return
+    campo = sel if sel[0] == 'campo' else hit
+    banco = hit if campo is sel else sel
+    idx_sale = alin.titulares[campo[1]]
+    idx_entra = alin.convocados[banco[1]]
+    # v4.1.0: un expulsado (o lesionado sin cambio) ya no está en la cancha: no se reemplaza
+    if id(jugadores[idx_sale]) in getattr(estado.get('sim_ctx'), 'fuera', set()):
+        _flash(estado, f"{jugadores[idx_sale].apellido} ya no está en la cancha", 2.2)
+        return
+    if idx_entra in salieron:
+        _flash(estado, f"{jugadores[idx_entra].apellido} ya fue sustituido: no puede volver", 2.2)
+        return
+    if subs_hechas >= SUBS_MAX_PARTIDO:
+        _flash(estado, f"Ya hiciste los {SUBS_MAX_PARTIDO} cambios permitidos", 2.2)
+        return
+    if getattr(jugadores[idx_entra], 'lesion_partidos', 0) > 0:
+        _flash(estado, f"{jugadores[idx_entra].apellido} está lesionado", 2.0)
+        return
+    F.intercambiar(alin, campo, banco)
+    salieron.add(idx_sale)
+    estado['sim_salieron'] = sorted(salieron)
+    estado['sim_subs_realizadas'] = subs_hechas + 1
+    sale, entra = jugadores[idx_sale].apellido, jugadores[idx_entra].apellido
+    estado.setdefault('sim_comentarios', []).append(
+        f"CAMBIO ({subs_hechas + 1}/{SUBS_MAX_PARTIDO}): SALE {sale}, ENTRA {entra}")
+    _flash(estado, f"Sale {sale} · entra {entra}", 1.6)
+
+
+def _render_direccion(screen, estado, mi_equipo, alin, es_amistoso, modo_prepartido,
+                      ret_screen, mouse_pos, click_pos, en_partido=False, key_events=None):
+    """
+    v2.3.5: Dirección de equipo estilo FIFA. Una sola pantalla: los 11 en el campo,
+    el banco (10) abajo y la ficha del jugador seleccionado a la derecha.
+    Clic en un jugador = seleccionarlo; clic en otro = intercambiarlos
+    (campo↔campo cambia de puesto, campo/banco↔banco/reserva cambia de jugador).
+    Nunca se borra a nadie: siempre hay 11 titulares.
+
+    en_partido=True (dirección EN VIVO desde match_screen): sin reservas (solo entran
+    los convocados), máximo 5 cambios, el que sale no vuelve y sin AUTO. REANUDAR
+    devuelve `ret_screen`; DESHACER revierte lo hecho desde que se abrió. Todo vale solo
+    para ese partido (match_screen restaura la alineación al terminar).
+    """
+    jugadores = mi_equipo.jugadores
+    subs_hechas = int(estado.get('sim_subs_realizadas', 0) or 0)
+    salieron = set(estado.get('sim_salieron', []) or [])
+    form_lista = F.lista_formaciones()
+    if key_events is None:   # v4.2.0: en vivo, match_screen ya leyó los eventos y los pasa
+        key_events = [e for e in pygame.event.get() if e.type == pygame.KEYDOWN]
+    sel = estado.get('team_sel')
+    if sel is not None and _jugador_de(alin, jugadores, sel) is None:
+        sel = estado['team_sel'] = None
+    ver_reservas = estado.get('team_view') == 'reservas' and not en_partido
+
+    # --- Cabecera: título, cicladores y acciones ---
+    draw_gradient_bg(screen)
+    draw_text(screen, "DIRECCIÓN EN VIVO" if en_partido else "DIRECCIÓN DE EQUIPO", (16, 16), size='md', color='dorado')
+    if en_partido:
+        draw_text(screen, f"Cambios: {subs_hechas}/{SUBS_MAX_PARTIDO}", (16, 50), size='sm',
+                  color='verde' if subs_hechas < SUBS_MAX_PARTIDO else 'rojo')
+        draw_text(screen, _truncar(mi_equipo.nombre.upper(), 22), (150, 50), size='sm', color='verde')
+    else:
+        draw_text(screen, _truncar(mi_equipo.nombre.upper(), 30), (16, 50), size='sm', color='verde')
+
+    rc = _rects_cabecera()
+    r_f_prev, r_f_box, r_f_next = rc['form_prev'], rc['form_box'], rc['form_next']
+    r_t_prev, r_t_box, r_t_next = rc['tact_prev'], rc['tact_box'], rc['tact_next']
+    r_m_prev, r_m_box, r_m_next = rc['ment_prev'], rc['ment_box'], rc['ment_next']
+    b_auto, b_ok, b_cancel = rc['auto'], rc['ok'], rc['cancel']
+    ment = getattr(mi_equipo, 'mentalidad', 'normal')
+    ment = ment if ment in MENTALIDADES else 'normal'
+    for prev, box, nxt, valor, etiqueta, color in (
+            (r_f_prev, r_f_box, r_f_next, alin.formacion, "FORMACIÓN", COLORS['verde']),
+            (r_t_prev, r_t_box, r_t_next, NOMBRE_ESTILO.get(mi_equipo.estilo_dt or TACTICAS[0],
+                                                             (mi_equipo.estilo_dt or TACTICAS[0]).capitalize()),
+             "ESTILO", COLORS['dorado']),
+            (r_m_prev, r_m_box, r_m_next, NOMBRE_MENTALIDAD[ment], "MENTALIDAD", COLORS['rojo'])):
+        draw_styled_button(screen, prev, "<", prev.collidepoint(mouse_pos), color)
+        draw_styled_button(screen, nxt, ">", nxt.collidepoint(mouse_pos), color)
+        pygame.draw.rect(screen, (15, 22, 40), box, border_radius=6)
+        pygame.draw.rect(screen, color, box, width=2, border_radius=6)
+        draw_text(screen, etiqueta, (box.x + 4, box.y - 16), size='sm', color='azul', shadow=False)
+        f = get_font('md' if get_font('md').size(valor)[0] <= box.width - 8 else 'sm')
+        s = f.render(valor, True, color)
+        screen.blit(s, s.get_rect(center=box.center))
+    if not en_partido:
+        draw_styled_button(screen, b_auto, "AUTO", b_auto.collidepoint(mouse_pos), COLORS['azul'])
+    draw_styled_button(screen, b_ok, "REANUDAR" if en_partido else "CONFIRMAR", b_ok.collidepoint(mouse_pos), COLORS['verde'])
+    draw_styled_button(screen, b_cancel, "DESHACER" if en_partido else "CANCELAR", b_cancel.collidepoint(mouse_pos), COLORS['rojo'])
+
+    fam = int(float((mi_equipo.tactica_familiaridad or {}).get(mi_equipo.estilo_dt, 0.0)) * 100)
+    ayuda = ("Titular↔banco = cambio (máx. 5, el que sale no vuelve)  ·  titular↔titular = cambio de puesto"
+             if en_partido else "Clic en un jugador para seleccionarlo y clic en otro para intercambiarlos")
+    pref_f = F.pref(alin.formacion)
+    draw_text(screen, f"{ayuda}  ·  Estilo preferido de {alin.formacion}: {NOMBRE_ESTILO.get(pref_f, pref_f)}  ·  Familiaridad {fam}%",
+              (16, 76), size='sm', color='azul', shadow=False)
+
+    # --- Campo con los 11 (slot k = titulares[k]) ---
+    pygame.draw.rect(screen, VERDE_CAMPO, _CAMPO, border_radius=8)
+    franja = _CAMPO.height // 8
+    for i in range(8):
+        if i % 2:
+            pygame.draw.rect(screen, VERDE_CAMPO2, pygame.Rect(_CAMPO.x + 2, _CAMPO.y + i * franja + 2, _CAMPO.width - 4, franja))
+    pygame.draw.rect(screen, BLANCO, _CAMPO, width=2, border_radius=8)
+    pygame.draw.line(screen, (220, 220, 220), (_CAMPO.x + 8, _CAMPO.centery), (_CAMPO.right - 8, _CAMPO.centery), 1)
+    pygame.draw.circle(screen, (220, 220, 220), _CAMPO.center, 56, 1)
+    pygame.draw.rect(screen, (220, 220, 220), pygame.Rect(_CAMPO.centerx - 150, _CAMPO.bottom - 80, 300, 80), 1)
+    pygame.draw.rect(screen, (220, 220, 220), pygame.Rect(_CAMPO.centerx - 150, _CAMPO.y, 300, 80), 1)
+
+    tipos = F.puestos(alin.formacion)
+    hits = []   # (rect, seleccion)
+    for k, (px, py) in enumerate(F.posiciones(alin.formacion)):
+        if k >= len(alin.titulares) or not (0 <= alin.titulares[k] < len(jugadores)):
+            continue
+        j = jugadores[alin.titulares[k]]
+        cx, cy = _CAMPO.x + int(_CAMPO.width * px), _CAMPO.y + int(_CAMPO.height * py)
+        area = pygame.Rect(cx - 50, cy - 28, 100, 70)
+        hits.append((area, ('campo', k)))
+        es_sel = sel == ('campo', k)
+        fuera = tipos[k] != j.posicion           # jugando fuera de su puesto
+        pygame.draw.circle(screen, (0, 0, 0), (cx + 2, cy + 3), 25)
+        pygame.draw.circle(screen, POS_COLOR.get(j.posicion, GRIS_CLAR), (cx, cy), 25)
+        pygame.draw.circle(screen, AMARILLO if es_sel else (BLANCO if not area.collidepoint(mouse_pos) else COLORS['verde']),
+                           (cx, cy), 25, 4 if es_sel else 2)
+        f = get_font('sm')
+        s = f.render(str(j.overall), True, BLANCO)
+        screen.blit(s, s.get_rect(center=(cx, cy)))
+        nombre = _truncar(getattr(j, 'apellido', '') or j.nombre, 12)
+        s = f.render(nombre, True, AMARILLO if es_sel else BLANCO)
+        fondo = s.get_rect(center=(cx, cy + 38)).inflate(8, 2)
+        pygame.draw.rect(screen, (10, 14, 26), fondo, border_radius=4)
+        screen.blit(s, s.get_rect(center=(cx, cy + 38)))
+        _barra_energia(screen, cx - 30, cy + 50, 60, _energia_de(estado, j, en_partido))   # v3.1.0
+        nota = texto_nota_vivo(j, estado) if en_partido else None       # v3.6.0: nota en vivo
+        if nota:
+            s = f.render(nota[0], True, COLORS.get(nota[1], BLANCO))
+            caja = s.get_rect(midleft=(cx + 30, cy - 14)).inflate(8, 2)
+            pygame.draw.rect(screen, (10, 14, 26), caja, border_radius=4)
+            screen.blit(s, s.get_rect(center=caja.center))
+        etiqueta_puesto = f"{tipos[k]}" + (" !" if fuera else "")
+        draw_text(screen, etiqueta_puesto, (cx - 16, cy - 44), size='sm', color='rojo' if fuera else 'blanco', shadow=True)
+
+    # --- Ficha del jugador seleccionado ---
+    draw_panel(screen, _FICHA)
+    jsel = _jugador_de(alin, jugadores, sel) if sel else None
+    if jsel is None:
+        draw_text(screen, "FICHA DEL JUGADOR", (_FICHA.x + 16, _FICHA.y + 14), size='md', color='dorado')
+        for n, linea in enumerate(["Haz clic en un jugador del", "campo, del banco o de las",
+                                   "reservas para seleccionarlo.", "", "Luego clic en otro para",
+                                   "intercambiarlos."]):
+            draw_text(screen, linea, (_FICHA.x + 16, _FICHA.y + 60 + n * 26), size='sm', color='blanco')
+        # v3.3.0: descripción del estilo elegido (bajo el selector no hay lugar: y=76 es la ayuda).
+        try:
+            est = mi_equipo.estilo_dt if mi_equipo.estilo_dt in TACTICAS else TACTICAS[0]
+            draw_text(screen, f"ESTILO: {NOMBRE_ESTILO[est].upper()}", (_FICHA.x + 16, _FICHA.y + 240),
+                      size='md', color='dorado')
+            f_d, linea, lineas = get_font('sm'), "", []
+            for palabra in DESC_ESTILO[est].split():
+                prueba = f"{linea} {palabra}".strip()
+                if f_d.size(prueba)[0] > _FICHA.width - 32 and linea:
+                    lineas.append(linea)
+                    prueba = palabra
+                linea = prueba
+            lineas.append(linea)
+            for n, l_ in enumerate(lineas[:4]):
+                draw_text(screen, l_, (_FICHA.x + 16, _FICHA.y + 276 + n * 24), size='sm', color='blanco', shadow=False)
+        except Exception as e_est:
+            logger.error(f"Error al dibujar la descripción del estilo: {e_est}")
+    else:
+        zona_txt = {'campo': "TITULAR", 'banco': "BANCO", 'reserva': "RESERVA"}[sel[0]]
+        draw_text(screen, _truncar(f"{jsel.nombre} {jsel.apellido}", 20), (_FICHA.x + 16, _FICHA.y + 14), size='md', color='dorado')
+        draw_text(screen, f"{jsel.posicion}  ·  OVR {jsel.overall}  ·  {zona_txt}", (_FICHA.x + 16, _FICHA.y + 48), size='sm', color='verde')
+        datos = [("Edad", getattr(jsel, 'edad', '?')), ("Potencial", getattr(jsel, 'potencial', 0) or '?'),
+                 ("Ataque", jsel.ataque), ("Defensa", jsel.defensa), ("Físico", jsel.fisico),
+                 ("Técnica", jsel.tecnica), ("Mental", jsel.mental), ("Moral", getattr(jsel, 'moral', 70)),
+                 ("Goles", getattr(jsel, 'goles', 0)), ("Rasgo", getattr(jsel, 'rasgo', '') or '-'),
+                 ("Resistencia", getattr(jsel, 'resistencia', 50)),                        # v3.1.0
+                 ("Energía", int(_energia_de(estado, jsel, en_partido))),
+                 ("Personalidad", PERSONALIDAD_TXT.get(getattr(jsel, 'personalidad', ''), '-'))]
+        for n, (k_, v) in enumerate(datos):
+            yy = _FICHA.y + 84 + n * 23
+            draw_text(screen, k_, (_FICHA.x + 16, yy), size='sm', color='azul', shadow=False)
+            draw_text(screen, _truncar(str(v), 16), (_FICHA.x + 130, yy), size='sm', color='blanco', shadow=False)
+            if isinstance(v, int) and k_ in ("Ataque", "Defensa", "Físico", "Técnica", "Mental", "Moral",
+                                             "Resistencia", "Energía"):
+                barra = pygame.Rect(_FICHA.x + 180, yy + 4, 100, 10)
+                pygame.draw.rect(screen, (40, 50, 70), barra, border_radius=3)
+                pygame.draw.rect(screen, COLORS['verde'], pygame.Rect(barra.x, barra.y, int(barra.width * max(0, min(99, v)) / 99), 10), border_radius=3)
+        if getattr(jsel, 'lesion_partidos', 0) > 0:
+            draw_text(screen, f"LESIONADO ({jsel.lesion_partidos} partidos)", (_FICHA.x + 16, _FICHA.bottom - 60), size='sm', color='rojo')
+        draw_text(screen, "Clic de nuevo para soltarlo", (_FICHA.x + 16, _FICHA.bottom - 30), size='sm', color='azul', shadow=False)
+
+    # --- Banco (10) o reservas abajo ---
+    en_listas = set(alin.titulares) | set(alin.convocados)
+    reservas = sorted((i for i in range(len(jugadores)) if i not in en_listas),
+                      key=lambda i: (POS_ORDEN.get(jugadores[i].posicion, 9), -jugadores[i].overall))
+    pag = int(estado.get('team_res_page', 0))
+    n_pag = max(1, (len(reservas) + 9) // 10)
+    pag = max(0, min(pag, n_pag - 1))
+    estado['team_res_page'] = pag
+
+    b_toggle, b_prev, b_next = R_BANCO_TOGGLE, R_BANCO_PREV, R_BANCO_NEXT
+    titulo = (f"RESERVAS ({len(reservas)})  ·  pág. {pag + 1}/{n_pag}" if ver_reservas
+              else f"BANCO ({len(alin.convocados)}/10)  ·  pueden entrar en el partido")
+    if sel is not None and sel[0] == 'reserva' and not ver_reservas:
+        titulo += "  ·  elige a quién reemplaza la reserva"
+    draw_text(screen, titulo, (16, _BANCO_Y - 16), size='sm', color='dorado')
+    if not en_partido:
+        draw_styled_button(screen, b_toggle, "VER BANCO" if ver_reservas else "VER RESERVAS",
+                           b_toggle.collidepoint(mouse_pos), COLORS['azul'])
+    if ver_reservas and n_pag > 1:
+        draw_styled_button(screen, b_prev, "◀", b_prev.collidepoint(mouse_pos), COLORS['azul'])
+        draw_styled_button(screen, b_next, "▶", b_next.collidepoint(mouse_pos), COLORS['azul'])
+
+    fila = ([('reserva', i) for i in reservas[pag * 10:pag * 10 + 10]] if ver_reservas
+            else [('banco', i) for i in range(len(alin.convocados))])
+    for n, s_ in enumerate(fila):
+        rect = rect_tarjeta_banco(n)
+        j = _jugador_de(alin, jugadores, s_)
+        if j is None:
+            continue
+        hits.append((rect, s_))
+        fuera_partido = en_partido and s_[0] == 'banco' and alin.convocados[s_[1]] in salieron
+        _dibujar_tarjeta(screen, rect, j, sel == s_, rect.collidepoint(mouse_pos), fuera_partido,
+                         _energia_de(estado, j, en_partido))
+    if ver_reservas and not reservas:
+        draw_text(screen, "No hay reservas: toda la plantilla está en el once o en el banco.",
+                  (16, _BANCO_Y + 50), size='sm', color='blanco')
+
+    # Mensaje flash
+    if pygame.time.get_ticks() < estado.get('team_flash_hasta', 0) and estado.get('team_flash_msg'):
+        s = get_font('md').render(estado['team_flash_msg'], True, AMARILLO)
+        caja = s.get_rect(center=(_CAMPO.centerx, _CAMPO.y + 24)).inflate(24, 12)
+        pygame.draw.rect(screen, (10, 14, 26), caja, border_radius=8)
+        pygame.draw.rect(screen, AMARILLO, caja, width=2, border_radius=8)
+        screen.blit(s, s.get_rect(center=caja.center))
+
+    # v4.2.0: cursor de teclado sobre las tarjetas (← → mueve, ↑ ↓ cambia campo/banco,
+    # Espacio = clic en la tarjeta: seleccionar / intercambiar)
+    if hits:
+        cur = max(0, min(int(estado.get('team_cursor', 0) or 0), len(hits) - 1))
+        for ev in key_events:
+            if ev.key == pygame.K_RIGHT:
+                cur = (cur + 1) % len(hits)
+            elif ev.key == pygame.K_LEFT:
+                cur = (cur - 1) % len(hits)
+            elif ev.key == pygame.K_DOWN:
+                cur = next((i for i, (_r, s_) in enumerate(hits) if s_[0] != 'campo'), cur)
+            elif ev.key == pygame.K_UP:
+                cur = next((i for i, (_r, s_) in enumerate(hits) if s_[0] == 'campo'), cur)
+            elif ev.key == pygame.K_SPACE and click_pos is None:
+                click_pos = hits[cur][0].center
+        estado['team_cursor'] = cur
+        pygame.draw.rect(screen, (255, 255, 255), hits[cur][0].inflate(6, 6), width=2, border_radius=8)
+
+    # --- Teclado ---
+    accion = None
+    for ev in key_events:
+        if ev.key == pygame.K_ESCAPE:
+            accion = 'soltar' if sel is not None else 'cancelar'
+        elif ev.key == pygame.K_RETURN:
+            accion = 'confirmar'
+        elif ev.key == pygame.K_a and not en_partido:
+            accion = 'auto'
+        elif ev.key == pygame.K_r and not en_partido:
+            accion = 'toggle'
+        elif ev.key in (pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET):
+            accion = ('form', -1 if ev.key == pygame.K_LEFTBRACKET else 1)
+        elif ev.key in (pygame.K_MINUS, pygame.K_EQUALS):
+            accion = ('tact', -1 if ev.key == pygame.K_MINUS else 1)
+        elif ev.key in (pygame.K_COMMA, pygame.K_PERIOD):
+            accion = ('ment', -1 if ev.key == pygame.K_COMMA else 1)
+
+    # --- Clics ---
+    if click_pos and accion is None:
+        if r_f_prev.collidepoint(click_pos) or r_f_next.collidepoint(click_pos):
+            accion = ('form', -1 if r_f_prev.collidepoint(click_pos) else 1)
+        elif r_t_prev.collidepoint(click_pos) or r_t_next.collidepoint(click_pos):
+            accion = ('tact', -1 if r_t_prev.collidepoint(click_pos) else 1)
+        elif r_m_prev.collidepoint(click_pos) or r_m_next.collidepoint(click_pos):
+            accion = ('ment', -1 if r_m_prev.collidepoint(click_pos) else 1)
+        elif b_auto.collidepoint(click_pos) and not en_partido:
+            accion = 'auto'
+        elif b_ok.collidepoint(click_pos):
+            accion = 'confirmar'
+        elif b_cancel.collidepoint(click_pos):
+            accion = 'cancelar'
+        elif b_toggle.collidepoint(click_pos) and not en_partido:
+            accion = 'toggle'
+        elif ver_reservas and b_prev.collidepoint(click_pos):
+            estado['team_res_page'] = (pag - 1) % n_pag
+        elif ver_reservas and b_next.collidepoint(click_pos):
+            estado['team_res_page'] = (pag + 1) % n_pag
+        else:
+            hit = next((s_ for r, s_ in hits if r.collidepoint(click_pos)), None)
+            if hit is None:
+                pass
+            elif sel is None:
+                estado['team_sel'] = hit
+            elif hit == sel:
+                estado['team_sel'] = None
+            elif sel[0] == 'reserva' and hit[0] == 'reserva':
+                estado['team_sel'] = hit          # cambiar de reserva seleccionada
+            elif en_partido:
+                _cambio_en_partido(estado, alin, jugadores, sel, hit, subs_hechas, salieron)
+                estado['team_sel'] = None
+            else:
+                entra_a_lista = [s_ for s_ in (sel, hit) if s_[0] == 'reserva']
+                otro = hit if sel[0] == 'reserva' else sel
+                j_res = _jugador_de(alin, jugadores, entra_a_lista[0]) if entra_a_lista else None
+                if j_res is not None and getattr(j_res, 'lesion_partidos', 0) > 0:
+                    _flash(estado, f"{j_res.apellido} está lesionado: no puede jugar")
+                else:
+                    a_nombre = _jugador_de(alin, jugadores, sel).apellido
+                    b_nombre = _jugador_de(alin, jugadores, hit).apellido
+                    F.intercambiar(alin, sel, hit)
+                    _flash(estado, f"{a_nombre} ⇄ {b_nombre}", 1.5)
+                estado['team_sel'] = None
+
+    if accion == 'soltar':
+        estado['team_sel'] = None
+    elif accion == 'toggle':
+        # v2.3.6: la selección se conserva al cambiar de vista para poder cambiar una
+        # reserva por un jugador del banco (antes se soltaba y era imposible).
+        estado['team_view'] = 'once' if ver_reservas else 'reservas'
+    elif accion == 'auto':
+        alin.titulares = F.mejor_once(jugadores, alin.formacion)
+        alin.convocados = []
+        F.normalizar_convocados(alin, jugadores)
+        estado['team_sel'] = None
+        _flash(estado, f"Mejor once y banco para {alin.formacion}")
+    elif isinstance(accion, tuple) and accion[0] == 'form':
+        i = form_lista.index(alin.formacion) if alin.formacion in form_lista else 0
+        alin.formacion = form_lista[(i + accion[1]) % len(form_lista)]
+        alin.titulares = F.acomodar_en_puestos(alin.titulares, jugadores, alin.formacion)
+        estado['team_sel'] = None
+        _flash(estado, f"Formación {alin.formacion}", 1.2)
+    elif isinstance(accion, tuple) and accion[0] == 'tact':
+        actual = mi_equipo.estilo_dt if mi_equipo.estilo_dt in TACTICAS else TACTICAS[0]
+        mi_equipo.estilo_dt = TACTICAS[(TACTICAS.index(actual) + accion[1]) % len(TACTICAS)]
+    elif isinstance(accion, tuple) and accion[0] == 'ment':
+        mi_equipo.mentalidad = MENTALIDADES[(MENTALIDADES.index(ment) + accion[1]) % len(MENTALIDADES)]
+    elif accion == 'confirmar' and en_partido:
+        _salir_direccion(estado, es_amistoso, modo_prepartido)
+        return ret_screen
+    elif accion == 'cancelar' and en_partido:
+        alin.titulares = list(estado.get('_original_alignment', alin.titulares))
+        alin.convocados = list(estado.get('_original_convocados', alin.convocados))
+        alin.formacion = estado.get('_original_formacion', alin.formacion)
+        mi_equipo.estilo_dt = estado.get('_original_estilo', mi_equipo.estilo_dt)
+        mi_equipo.mentalidad = estado.get('_original_mentalidad', ment)
+        estado['sim_subs_realizadas'] = int(estado.get('_original_subs', subs_hechas) or 0)
+        estado['sim_salieron'] = list(estado.get('_original_salieron', []) or [])
+        estado['team_sel'] = None
+        _flash(estado, "Cambios deshechos", 1.2)
+    elif accion == 'confirmar':
+        F.normalizar_convocados(alin, jugadores)
+        if alin.es_valida(jugadores):
+            mi_equipo.alineacion_activa = alin
+            _salir_direccion(estado, es_amistoso, modo_prepartido)
+            return ret_screen
+        _flash(estado, "El once necesita 1 POR, 3+ DEF, 2+ MED y 1+ DEL", 2.5)
+    elif accion == 'cancelar':
+        alin.titulares = list(estado.get('_original_alignment', alin.titulares))
+        alin.convocados = list(estado.get('_original_convocados', alin.convocados))
+        alin.formacion = estado.get('_original_formacion', alin.formacion)
+        mi_equipo.mentalidad = estado.get('_original_mentalidad', ment)
+        _salir_direccion(estado, es_amistoso, modo_prepartido)
+        return ret_screen
     return None
 
 
@@ -345,11 +855,18 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         # el modo visor sale antes de la sección de eventos y necesita ambos).
         mouse_pos = pygame.mouse.get_pos()
         click_pos = None
-        # v2.3.2 (FIX): NO consumir pygame.event.get() aqui. El unico
-        # pygame.event.get() del team_screen esta mas abajo (linea ~614) y
-        # procesa mouse + teclado en el mismo loop. Antes este primer get()
-        # consumia todos los eventos y el handler de teclado (K_LEFTBRACKET,
-        # K_TAB, K_a, etc.) NUNCA se ejecutaba.
+        # v2.3.5: el modo visor (rival) necesita el clic de "VOLVER A MI ONCE".
+        # main.py cachea los eventos por frame, así que leerlos aquí NO se los
+        # quita al loop de teclado de más abajo (v2.3.2 lo había borrado y el
+        # visor quedaba sin salida).
+        try:
+            for _ev in pygame.event.get():
+                if _ev.type == pygame.QUIT:
+                    return "quit"
+                if _ev.type == pygame.MOUSEBUTTONDOWN and _ev.button == 1:
+                    click_pos = _ev.pos
+        except Exception:
+            pass
 
         # v0.8.3: detectar si estamos en modo visor (viendo el rival)
         team_objetivo = estado.get('team_equipo_objetivo') or mi_equipo
@@ -403,44 +920,9 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 alin = alineacion_por_defecto(mi_equipo)
                 estado['alineacion_activa'] = alin
 
-        # Respaldar alineación para opción 'Cancelar'
-        if '_original_alignment' not in estado:
-            estado['_original_alignment'] = list(alin.titulares)
-        # v2.3 (Fase 10): respaldo de convocados también (para CANCELAR)
-        if '_original_convocados' not in estado:
-            estado['_original_convocados'] = list(getattr(alin, 'convocados', []) or [])
-
-        # v2.3 (Fase 10): si `convocados` está vacío (save viejo / alta nueva),
-        # re-derivar con AUTO CONVOCADOS = los 10 mejores no-titulares sin lesión.
-        if not getattr(alin, 'convocados', None):
-            try:
-                sel_tit = set(alin.titulares)
-                pool = [j for j in mi_equipo.jugadores
-                        if getattr(j, 'lesion_partidos', 0) == 0
-                        and id(j) not in {id(mi_equipo.jugadores[i]) for i in sel_tit}]
-                pool.sort(key=lambda j: -getattr(j, 'overall', 60))
-                alin.convocados = [mi_equipo.jugadores.index(j) for j in pool[:10]]
-            except Exception as e_c:
-                logger.error(f"Error al auto-derivar convocados: {e_c}")
-
-        # v2.3 (Fase 10): estado de selección PES (None = nada seleccionado)
-        if 'team_seleccion' not in estado:
-            estado['team_seleccion'] = None  # idx en alin.titulares
-        # v2.3 (Fase 10): vista "once" (default) o "reservas"
-        if 'team_view' not in estado:
-            estado['team_view'] = 'once'
-
-        # v0.7: formación válida del registro y posiciones del campo según ella.
+        # v0.7: formación válida del registro.
         if not getattr(alin, 'formacion', None) or not F.existe(alin.formacion):
             alin.formacion = F.FORMACION_DEFECTO
-        posiciones_campo = F.posiciones(alin.formacion)
-        tacticas = ["anchelottismo", "cruyffismo", "flickismo", "haramball"]
-        form_lista = F.lista_formaciones()
-
-        # v2.3.2: foco de teclado para cicladores (TAB alterna entre
-        # formacion/tactica; tanto mouse como teclado deben verse igual).
-        if 'team_kbd_focus' not in estado:
-            estado['team_kbd_focus'] = 'formacion'  # o 'tactica'
 
         # v0.8.3 (F1): si estamos en MODO VISOR (viendo al rival), saltamos toda la
         # sección de edición y dibujamos un layout simplificado: solo lista de jugadores
@@ -449,825 +931,22 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             return _render_team_view_mode(screen, estado, team_objetivo, _f_riv, _mejores,
                                            _jugadores_riv, mouse_pos, click_pos)
 
-        # Cicladores de formación y táctica (en la cabecera derecha, sobre el campo).
-        # v0.8.3: los rects dejan espacio ARRIBA para la etiqueta (no se superpone con
-        # el texto "Preferida de X: Y · Fam Z%" que va más abajo).
-        # v0.8.6 (Tarea 1): en modo_prepartido los cicladores se mueven al panel compacto
-        # de la izquierda (más visibles y con el espacio del HUB libre).
-        if modo_prepartido:
-            rect_f_prev = pygame.Rect(50, 240, 28, 30)
-            rect_f_box = pygame.Rect(82, 240, 130, 30)
-            rect_f_next = pygame.Rect(216, 240, 28, 30)
-            rect_t_prev = pygame.Rect(50, 320, 28, 30)
-            rect_t_box = pygame.Rect(82, 320, 130, 30)
-            rect_t_next = pygame.Rect(216, 320, 28, 30)
-        else:
-            rect_f_prev = pygame.Rect(770, 48, 30, 30)
-            rect_f_box = pygame.Rect(804, 48, 150, 30)
-            rect_f_next = pygame.Rect(958, 48, 30, 30)
-            rect_t_prev = pygame.Rect(770, 98, 30, 30)
-            rect_t_box = pygame.Rect(804, 98, 150, 30)
-            rect_t_next = pygame.Rect(958, 98, 30, 30)
-
-        rect_scr_up = pygame.Rect(740 - 80, 95 + 4, 32, 28)
-        rect_scr_down = pygame.Rect(740 - 42, 95 + 4, 32, 28)
-
-        # Inicializar variables auxiliares en el estado si faltan
-        estado.setdefault('team_scroll_offset', 0)
-        estado.setdefault('team_player_hover', -1)
-        estado.setdefault('team_flash_msg', "")
-        estado.setdefault('team_flash_timer', 0.0)
-
-        # Descontar tiempo del mensaje de alerta
-        dt = 1.0 / 60.0
-        if estado['team_flash_timer'] > 0:
-            estado['team_flash_timer'] -= dt
-            if estado['team_flash_timer'] <= 0:
-                estado['team_flash_msg'] = ""
-
-        # 1. Dibujar fondo base con gradiente y líneas decorativas
-        try:
-            draw_gradient_bg(screen)
-            draw_pitch_lines(screen)
-        except Exception as e_bg:
-            logger.error(f"Error de dibujo de fondo: {e_bg}")
-            screen.fill(COLORS.get('bg', (10, 14, 26)))
-
-        # Dibujar franjas decorativas superiores
-        pygame.draw.rect(screen, COLORS.get('rojo', (255, 68, 68)), pygame.Rect(0, 0, SCREEN_W, 4))
-        pygame.draw.rect(screen, COLORS.get('verde', (0, 255, 136)), pygame.Rect(0, 4, SCREEN_W, 4))
-        pygame.draw.rect(screen, COLORS.get('azul', (0, 191, 255)), pygame.Rect(0, 8, SCREEN_W, 4))
-
-        # --- MENÚ LATERAL IZQUIERDO (Consistencia visual 100%) ---
-        # v0.8.6 (Tarea 1): en modo_prepartido el HUB de carrera NO se dibuja — el área izquierda
-        # se reasigna a un panel compacto de "DIRECCIÓN DE EQUIPO" (ver bloque más abajo).
-        if not modo_prepartido:
-            menu_rect = pygame.Rect(20, 20, 260, 680)
-            try:
-                draw_panel(screen, menu_rect)
-                pygame.draw.rect(screen, COLORS.get('rojo', (255, 68, 68)), pygame.Rect(22, 22, 4, 676))
-                pygame.draw.rect(screen, COLORS.get('verde', (0, 255, 136)), pygame.Rect(26, 22, 4, 676))
-                pygame.draw.rect(screen, COLORS.get('azul', (0, 191, 255)), pygame.Rect(30, 22, 4, 676))
-            except Exception as e_menu:
-                logger.error(f"Error al dibujar panel de menú: {e_menu}")
-
-            # Títulos de la barra lateral
-            draw_text(screen, "★ ALPHA ★", (45, 45), size='lg', color='verde')
-            draw_text(screen, "FOOTBALL", (45, 80), size='md', color='blanco')
-            pygame.draw.line(screen, COLORS.get('azul', (0, 191, 255)), (40, 120), (260, 120), 1)
-
-            # Datos del Club
-            draw_text(screen, mi_equipo.nombre.upper()[:18], (45, 135), size='sm', color='verde')
-            pres_m = getattr(mi_equipo, 'balance', 0) / 1_000_000
-            draw_text(screen, f"Presupuesto: ${pres_m:.1f}M", (45, 160), size='sm', color='blanco')
-            draw_text(screen, f"Temporada: {estado.get('temporada', 1)}", (45, 185), size='sm', color='azul')
-            jornada_actual = getattr(liga, "jornada_actual", 1)
-            draw_text(screen, f"Jornada: {jornada_actual}/{getattr(liga, 'num_jornadas', 14)}", (45, 210), size='sm', color='dorado')
-
-        # --- ENCABEZADO DE CONTENIDO (DERECHA) ---
-        # v0.8.6 (Tarea 1): en modo_prepartido el título se acorta (estamos en el submenú
-        # de prepartido, no en la pantalla principal de dirección).
-        if modo_prepartido:
-            draw_text(screen, "DIRECCIÓN DE EQUIPO", (300, 20), size='xl', color='dorado')
-            draw_text(screen, "Elegí formación, táctica y once para el próximo partido.", (300, 66), size='sm', color='azul')
-        else:
-            draw_text(screen, "DIRECCIÓN TÁCTICA DEL EQUIPO", (300, 20), size='xl', color='dorado')
-            draw_text(screen, "Define tu once, formación y táctica.", (300, 66), size='sm', color='azul')
-
-        # --- v0.7: CICLADORES DE FORMACIÓN Y TÁCTICA ---
-        # v0.8.3: las etiquetas ("FORMACIÓN", "TÁCTICA") se dibujan ARRIBA del box
-        # en vez de a la derecha. Antes chocaban con el texto "Preferida..." y se
-        # cortaban.
-        # v0.8.6 (Tarea 1): en modo_prepartido los cicladores se dibujaron en la izquierda
-        # (ver bloque rect_f_* más arriba); en modo normal siguen arriba a la derecha.
-        _mp = pygame.mouse.get_pos()
-
-        def _cycler(prev_r, box_r, next_r, valor, etiqueta, color_acc, kbd_focus_key, label_y_above=True):
-            # v2.3.2: tanto mouse como teclado deben verse igual (resaltado
-            # dorado brillante cuando el cycler esta activo por teclado).
-            kbd_active = (estado.get('team_kbd_focus') == kbd_focus_key)
-            prev_hover = prev_r.collidepoint(_mp) or kbd_active
-            next_hover = next_r.collidepoint(_mp) or kbd_active
-            box_hover = box_r.collidepoint(_mp) or kbd_active
-            draw_styled_button(screen, prev_r, "<", prev_hover, color_acc)
-            draw_styled_button(screen, next_r, ">", next_hover, color_acc)
-            try:
-                pygame.draw.rect(screen, (15, 22, 40), box_r, border_radius=6)
-                borde_w = 4 if kbd_active else (3 if box_hover else 2)
-                pygame.draw.rect(screen, color_acc, box_r, width=borde_w, border_radius=6)
-            except Exception:
-                pass
-            vs = get_font('sm').render(str(valor), True, (255, 255, 255))
-            screen.blit(vs, vs.get_rect(center=box_r.center))
-            if label_y_above:
-                # Etiqueta ARRIBA del box (no choca con el texto "Preferida...").
-                draw_text(screen, etiqueta, (box_r.x, box_r.y - 18), size='sm', color='azul')
-            else:
-                draw_text(screen, etiqueta, (box_r.right + 6, box_r.y + 6), size='sm', color='azul')
-            # Indicador de foco por teclado
-            if kbd_active:
-                draw_text(screen, "▶", (box_r.x - 18, box_r.y + 6), size='md', color='dorado')
-
-        _cycler(rect_f_prev, rect_f_box, rect_f_next, alin.formacion, "FORMACIÓN",
-                COLORS.get('verde', (0, 255, 136)), 'formacion')
-        _fam_pct = int(float((mi_equipo.tactica_familiaridad or {}).get(mi_equipo.estilo_dt, 0.0)) * 100)
-        _cycler(rect_t_prev, rect_t_box, rect_t_next, mi_equipo.estilo_dt, "TÁCTICA",
-                COLORS.get('dorado', (255, 215, 0)), 'tactica')
-        # v0.8.3: el texto "Preferida..." se mueve más abajo para no chocar con los
-        # cyclers de táctica.
-        # v0.8.6 (Tarea 1): en modo_prepartido va debajo de los cicladores (que están a
-        # la izquierda); en modo normal sigue a la derecha.
-        if modo_prepartido:
-            draw_text(screen, f"Preferida: {F.pref(alin.formacion)}  ·  Fam {_fam_pct}%",
-                      (50, 370), size='sm', color='blanco')
-        else:
-            draw_text(screen, f"Preferida de {alin.formacion}: {F.pref(alin.formacion)}  ·  Familiaridad: {_fam_pct}%",
-                      (1000, 145), size='sm', color='blanco')
-
-        # --- BOTONES EN EL MENÚ IZQUIERDO ---
-        # v0.8.6 (Tarea 1): en modo_prepartido NO se dibujan los 8 botones de la barra
-        # lateral (son navegación del HUB de carrera). En su lugar, el área izquierda
-        # muestra un panel compacto con cicladores, AUTO ONCE y VOLVER (ver bloque más
-        # abajo). Las variables quedan definidas como None para que el handler de clics
-        # no falle.
-        btn_jugar = btn_mercado = btn_copa = btn_ofertas = btn_stats = btn_career = btn_equipo = btn_salir = None
-        btn_auto_pp = None
-        btn_volver_pp = None
-        if not modo_prepartido:
-            btn_jugar = pygame.Rect(40, 232, 220, 44)
-            btn_mercado = pygame.Rect(40, 288, 220, 44)
-            btn_copa = pygame.Rect(40, 344, 220, 44)
-            btn_ofertas = pygame.Rect(40, 400, 220, 44)
-            btn_stats = pygame.Rect(40, 456, 220, 44)
-            btn_career = pygame.Rect(40, 512, 220, 44)
-            btn_equipo = pygame.Rect(40, 568, 220, 44)
-            btn_salir = pygame.Rect(40, 632, 220, 44)
-
-        # v0.8.3: mouse_pos/click_pos ya se capturaron arriba (modo visor los usa).
-        # Refrescar para los eventos de scroll/click que faltan en este punto.
-        mouse_pos = pygame.mouse.get_pos()
-        click_pos = None
-        try:
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    return "quit"
-                elif event.type == pygame.MOUSEBUTTONDOWN:
-                    if event.button == 1:
-                        click_pos = event.pos
-                    elif event.button == 4:  # Rueda arriba (scroll plantilla)
-                        estado['team_scroll_offset'] = max(0, estado['team_scroll_offset'] - 1)
-                    elif event.button == 5:  # Rueda abajo (scroll plantilla)
-                        total_j = len(mi_equipo.jugadores)
-                        n_visible = 8  # 440 de altura visible / 55
-                        max_sc = max(0, total_j - n_visible)
-                        estado['team_scroll_offset'] = min(max_sc, estado['team_scroll_offset'] + 1)
-                # v2.3 (Fase 10): soporte de teclado PES-style.
-                elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE:
-                        # Deseleccionar jugador (PES: ESC = limpiar selección)
-                        if estado.get('team_seleccion') is not None:
-                            estado['team_seleccion'] = None
-                            estado['team_flash_msg'] = "Selección limpiada"
-                            estado['team_flash_timer'] = 1.0
-                        else:
-                            # Si no hay selección, CANCELAR (volver atrás)
-                            original = estado.get('_original_alignment', [])
-                            alin.titulares = list(original)
-                            alin.convocados = list(estado.get('_original_convocados', []))
-                            estado.pop('_original_alignment', None)
-                            estado.pop('_original_convocados', None)
-                            if es_amistoso:
-                                estado.pop('team_contexto', None)
-                            if modo_prepartido:
-                                estado.pop('team_modo_prepartido', None)
-                            return ret_screen
-                    elif event.key == pygame.K_RETURN:
-                        # Enter = selecciona/deselecciona (igual que click en campo).
-                        sel = estado.get('team_seleccion')
-                        if sel is None:
-                            # Seleccionar el primero
-                            if alin.titulares:
-                                estado['team_seleccion'] = 0
-                                estado['team_flash_msg'] = "Selecciona un titular → clickea un convocado"
-                                estado['team_flash_timer'] = 1.5
-                        else:
-                            estado['team_seleccion'] = None
-                    elif event.key in (pygame.K_LEFT, pygame.K_RIGHT):
-                        # Cambiar jugador dentro del grupo (campo o banco)
-                        # Mapeo: titulares = 11 primeros, convocados = 10 siguientes
-                        if alin.titulares:
-                            paso = 1 if event.key == pygame.K_RIGHT else -1
-                            sel = estado.get('team_seleccion')
-                            if sel is None:
-                                # Empezar por el primero
-                                estado['team_seleccion'] = 0
-                            else:
-                                n_campo = len(alin.titulares)
-                                nuevo = (sel + paso) % n_campo
-                                estado['team_seleccion'] = nuevo
-                    elif event.key in (pygame.K_UP, pygame.K_DOWN):
-                        # Cambiar entre campo y banco
-                        # Si estamos en campo (selección < 11), ir a banco (selección >= 11)
-                        # Si estamos en banco, ir a campo
-                        sel = estado.get('team_seleccion')
-                        n_campo = len(alin.titulares)
-                        n_banco = len(getattr(alin, 'convocados', []) or [])
-                        if event.key == pygame.K_DOWN:
-                            # ir a banco
-                            if n_banco > 0:
-                                if sel is None or sel < n_campo:
-                                    estado['team_seleccion'] = n_campo  # primer convocado
-                                else:
-                                    # siguiente convocado
-                                    estado['team_seleccion'] = min(sel + 1, n_campo + n_banco - 1)
-                        else:  # UP
-                            # ir a campo
-                            if n_campo > 0:
-                                if sel is None or sel >= n_campo:
-                                    estado['team_seleccion'] = 0
-                                else:
-                                    estado['team_seleccion'] = max(sel - 1, 0)
-                    # v2.3.2: teclado global en cicladores (PES-style)
-                    elif event.key in (pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET):
-                        # [ / ] cambian formación
-                        paso = -1 if event.key == pygame.K_LEFTBRACKET else 1
-                        f_idx = form_lista.index(alin.formacion) if alin.formacion in form_lista else 0
-                        alin.formacion = form_lista[(f_idx + paso) % len(form_lista)]
-                        alin.titulares = F.mejor_once(mi_equipo.jugadores, alin.formacion)
-                        estado['team_flash_msg'] = f"Formación: {alin.formacion}"
-                        estado['team_flash_timer'] = 1.5
-                    elif event.key in (pygame.K_MINUS, pygame.K_EQUALS):
-                        # - / + cambian táctica
-                        paso = -1 if event.key == pygame.K_MINUS else 1
-                        t_idx = tacticas.index(mi_equipo.estilo_dt) if mi_equipo.estilo_dt in tacticas else 0
-                        mi_equipo.estilo_dt = tacticas[(t_idx + paso) % len(tacticas)]
-                        estado['team_flash_msg'] = f"Táctica: {mi_equipo.estilo_dt}"
-                        estado['team_flash_timer'] = 1.5
-                    elif event.key == pygame.K_a:
-                        # A = AUTO ONCE
-                        alin.titulares = F.mejor_once(mi_equipo.jugadores, alin.formacion)
-                        _auto_convocados()
-                        estado['team_flash_msg'] = f"Once + banco auto-derivados para {alin.formacion}"
-                        estado['team_flash_timer'] = 2.0
-                    elif event.key == pygame.K_TAB:
-                        # TAB alterna foco entre formacion y tactica
-                        estado['team_kbd_focus'] = 'tactica' if estado.get('team_kbd_focus') == 'formacion' else 'formacion'
-        except Exception as e_ev:
-            logger.error(f"Error procesando eventos en team_screen: {e_ev}")
-
-        # v2.3 (Fase 10): helper para auto-derivar los 10 convocados.
-        def _auto_convocados():
-            try:
-                sel_tit = set(alin.titulares)
-                pool = [j for j in mi_equipo.jugadores
-                        if getattr(j, 'lesion_partidos', 0) == 0
-                        and id(j) not in {id(mi_equipo.jugadores[i]) for i in sel_tit}]
-                pool.sort(key=lambda j: -getattr(j, 'overall', 60))
-                alin.convocados = [mi_equipo.jugadores.index(j) for j in pool[:10]]
-            except Exception as e_ac:
-                logger.error(f"Error en auto_convocados: {e_ac}")
-
-        # Hover states de los botones de la barra lateral
-        hov_jugar = hov_mercado = hov_copa = hov_career = hov_salir = False
-        if not modo_prepartido:
-            hov_jugar = btn_jugar.collidepoint(mouse_pos)
-            hov_mercado = btn_mercado.collidepoint(mouse_pos)
-            hov_copa = btn_copa.collidepoint(mouse_pos)
-            hov_career = btn_career.collidepoint(mouse_pos)
-            hov_salir = btn_salir.collidepoint(mouse_pos)
-
-        # Dibujar botones de la barra lateral (solo en HUB normal; en prepartido va el panel compacto)
-        if not modo_prepartido:
-            draw_styled_button(screen, btn_jugar, "JUGAR JORNADA", hov_jugar, COLORS.get('verde', (0, 255, 136)))
-            draw_styled_button(screen, btn_mercado, "MERCADO DE PASES", hov_mercado, COLORS.get('azul', (0, 191, 255)))
-            draw_styled_button(screen, btn_copa, "COPA INTERNACIONAL", hov_copa, COLORS.get('dorado', (255, 215, 0)))
-            draw_styled_button(screen, btn_ofertas, "OFERTAS", btn_ofertas.collidepoint(mouse_pos), COLORS.get('verde', (0, 255, 136)))
-            draw_styled_button(screen, btn_stats, "ESTADÍSTICAS", btn_stats.collidepoint(mouse_pos), COLORS.get('dorado', (255, 215, 0)))
-            draw_styled_button(screen, btn_career, "HISTORIAL CARRERA", hov_career, COLORS.get('azul', (0, 191, 255)))
-            draw_styled_button(screen, btn_equipo, "DIRECCIÓN EQUIPO", True, COLORS.get('dorado', (255, 215, 0)))
-            draw_styled_button(screen, btn_salir, "GUARDAR Y SALIR", hov_salir, COLORS.get('rojo', (255, 68, 68)))
-
-        # v0.8.6 (Tarea 1): PANEL COMPACTO DE DIRECCIÓN DE EQUIPO (modo prepartido)
-        # Reemplaza la barra lateral de carrera con: nombre del club, cicladores
-        # (formación + táctica) bien visibles, AUTO ONCE y VOLVER a prepartido.
-        if modo_prepartido:
-            try:
-                # Fondo del panel compacto
-                panel_pp = pygame.Rect(20, 20, 260, 680)
-                draw_panel(screen, panel_pp)
-                try:
-                    pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), pygame.Rect(22, 22, 4, 676))
-                    pygame.draw.rect(screen, COLORS.get('verde', (0, 255, 136)), pygame.Rect(26, 22, 4, 676))
-                    pygame.draw.rect(screen, COLORS.get('azul', (0, 191, 255)), pygame.Rect(30, 22, 4, 676))
-                except Exception:
-                    pass
-
-                # Título del panel
-                draw_text(screen, "DIRECCIÓN", (45, 45), size='lg', color='dorado')
-                draw_text(screen, "DE EQUIPO", (45, 80), size='md', color='blanco')
-                pygame.draw.line(screen, COLORS.get('azul', (0, 191, 255)), (40, 120), (260, 120), 1)
-
-                # Nombre del club
-                draw_text(screen, mi_equipo.nombre.upper()[:20], (45, 135), size='sm', color='verde')
-
-                # Subtexto de ayuda (los cicladores se dibujan más abajo en el flujo normal)
-                draw_text(screen, "Elegí formación y táctica,", (45, 160), size='sm', color='blanco')
-                draw_text(screen, "luego VOLVER para volver", (45, 180), size='sm', color='blanco')
-                draw_text(screen, "a la pantalla del partido.", (45, 200), size='sm', color='blanco')
-
-                # Etiquetas de los cicladores (los rects ya están definidos arriba)
-                # Los cicladores en sí ya se dibujaron con _cycler() usando las posiciones
-                # de la izquierda. Acá solo agregamos la nota "Preferida..." debajo.
-
-                # Botón AUTO ONCE (en el panel compacto — equivalente al del fondo pero
-                # sin contar como cambio porque es prepartido, no partido)
-                btn_auto_pp = pygame.Rect(40, 410, 220, 44)
-                hov_auto_pp = btn_auto_pp.collidepoint(mouse_pos)
-                draw_styled_button(screen, btn_auto_pp, "AUTO ONCE", hov_auto_pp,
-                                    COLORS.get('azul', (0, 191, 255)))
-
-                # Botón VOLVER (regresa a prepartido, sin guardar la alineación)
-                btn_volver_pp = pygame.Rect(40, 470, 220, 44)
-                hov_volver_pp = btn_volver_pp.collidepoint(mouse_pos)
-                draw_styled_button(screen, btn_volver_pp, "VOLVER", hov_volver_pp,
-                                    COLORS.get('rojo', (255, 68, 68)))
-
-                # Mini ayuda inferior
-                draw_text(screen, "TIP: tocá un jugador en la", (45, 540), size='sm', color='azul')
-                draw_text(screen, "lista para alternarlo entre", (45, 560), size='sm', color='azul')
-                draw_text(screen, "titulares y suplentes.", (45, 580), size='sm', color='azul')
-            except Exception as e_pp:
-                logger.error(f"Error dibujando panel compacto prepartido: {e_pp}")
-
-        # --- SECCIONES DE CONTENIDO PRINCIPAL ---
-        rect_lista = pygame.Rect(300, 95, 440, 500)
-        rect_campo = pygame.Rect(760, 95, 480, 500)
-
-        # DIBUJAR LISTA DE JUGADORES
-        draw_panel(screen, rect_lista)
-        encabezado_h = 36
-        pygame.draw.rect(screen, (15, 22, 40), pygame.Rect(rect_lista.x, rect_lista.y, rect_lista.width, encabezado_h), border_top_left_radius=8, border_top_right_radius=8)
-        
-        titulares = alin.titulares
-        draw_text(screen, f"PLANTILLA — {len(titulares)}/11 TITULARES", (rect_lista.x + 15, rect_lista.y + 8), size='sm', color='dorado')
-        
-        # Botones de scroll físico para la plantilla
-        draw_styled_button(screen, rect_scr_up, "▲", rect_scr_up.collidepoint(_mp), COLORS.get('azul', (0, 191, 255)))
-        draw_styled_button(screen, rect_scr_down, "▼", rect_scr_down.collidepoint(_mp), COLORS.get('azul', (0, 191, 255)))
-
-        fila_alto = 55
-        visible_h = rect_lista.height - encabezado_h
-        n_visible = visible_h // fila_alto
-        total_j = len(mi_equipo.jugadores)
-        max_sc = max(0, total_j - n_visible)
-        
-        scroll = estado['team_scroll_offset']
-        if scroll > max_sc:
-            scroll = max_sc
-            estado['team_scroll_offset'] = scroll
-
-        # v0.8.4: ordenar la lista ANTES del hover. Antes se calculaba DESPUÉS del bloque de
-        # hover, así que el hover leía una lista vacía (y, peor, antes del fix v0.8.3.4 reventaba
-        # con UnboundLocalError). TITULARES primero, luego SUPLENTES por posición
-        # (POR -> DEF -> MED -> DEL) y dentro de cada posición por OVR descendente.
-        pos_orden = {'POR': 0, 'DEF': 1, 'MED': 2, 'DEL': 3}
-        titulares_set = set(alin.titulares)
-        # v2.3 (Fase 10): si team_view == 'reservas', mostrar SOLO los jugadores > 21
-        # (los que no son titulares ni convocados). El resto del flujo (titulares/
-        # banco) se mantiene igual.
-        if estado.get('team_view') == 'reservas':
-            # Reservas: jugadores cuyo índice no está en titulares ni en convocados.
-            _convocados_set_v = set(getattr(alin, 'convocados', []) or [])
-            jugadores_ordenados = sorted(
-                [j for i, j in enumerate(mi_equipo.jugadores)
-                 if i not in titulares_set and i not in _convocados_set_v],
-                key=lambda j: (pos_orden.get(getattr(j, 'posicion', ''), 9),
-                               -getattr(j, 'overall', 0))
-            )
-        else:
-            jugadores_ordenados = (
-                [mi_equipo.jugadores[i] for i in alin.titulares
-                 if 0 <= i < len(mi_equipo.jugadores)]
-                + sorted(
-                    [j for i, j in enumerate(mi_equipo.jugadores) if i not in titulares_set],
-                    key=lambda j: (pos_orden.get(getattr(j, 'posicion', ''), 9),
-                                   -getattr(j, 'overall', 0))
-                )
-            )
-        # Mapear jugador -> índice original en mi_equipo.jugadores (para hover/selección)
-        jugador_a_idx = {id(j): i for i, j in enumerate(mi_equipo.jugadores)}
-
-        # Controlar hover sobre las filas de jugadores (usa la lista ordenada ya calculada)
-        estado['team_player_hover'] = -1
-        if rect_lista.collidepoint(mouse_pos):
-            rel_y = mouse_pos[1] - rect_lista.y - encabezado_h
-            if rel_y >= 0:
-                hover_idx_visual = (rel_y // fila_alto) + scroll
-                if 0 <= hover_idx_visual < len(jugadores_ordenados):
-                    # Mapear de índice visual a índice original en mi_equipo.jugadores
-                    estado['team_player_hover'] = jugador_a_idx.get(
-                        id(jugadores_ordenados[hover_idx_visual]), -1)
-
-        # Renderizar cada fila de la plantilla
-        old_clip = screen.get_clip()
-        clip_rect = pygame.Rect(rect_lista.x, rect_lista.y + encabezado_h, rect_lista.width, visible_h)
-        screen.set_clip(clip_rect)
-
-        for i, jugador in enumerate(jugadores_ordenados):
-            fi = i - scroll
-            if fi < 0 or fi >= n_visible:
-                continue
-
-            fy = rect_lista.y + encabezado_h + fi * fila_alto
-            fila_rect = pygame.Rect(rect_lista.x + 6, fy + 4, rect_lista.width - 12, fila_alto - 8)
-            idx_orig = jugador_a_idx.get(id(jugador), -1)
-            es_titular = idx_orig in titulares_set
-            es_hover = (idx_orig == estado['team_player_hover'])
-
-            if es_titular:
-                bg_col = (30, 65, 45) if not es_hover else (40, 85, 55)
-            else:
-                bg_col = (20, 26, 46) if not es_hover else (32, 40, 68)
-
-            pygame.draw.rect(screen, bg_col, fila_rect, border_radius=6)
-            
-            # Línea de estado
-            ind_col = COLORS.get('verde', (0, 255, 136)) if es_titular else COLORS.get('rojo', (255, 68, 68))
-            pygame.draw.rect(screen, ind_col, pygame.Rect(fila_rect.x, fila_rect.y, 6, fila_rect.height), border_radius=3)
-
-            # Badge de posición
-            pos_col = POS_COLOR.get(jugador.posicion, GRIS_CLAR)
-            badge_r = pygame.Rect(fila_rect.x + 15, fila_rect.y + 8, 42, 22)
-            pygame.draw.rect(screen, pos_col, badge_r, border_radius=4)
-            draw_text(screen, jugador.posicion, (badge_r.x + 6, badge_r.y + 3), size='sm', color='blanco', shadow=False)
-
-            # Nombre
-            col_name = 'verde' if es_titular else 'blanco'
-            nombre_c = _truncar(jugador.nombre_completo, 20)
-            draw_text(screen, nombre_c, (fila_rect.x + 70, fy + 8), size='sm', color=col_name)
-
-            # Stats / Rasgos / Lesiones
-            det_str = f"OVR: {jugador.overall}"
-            if jugador.rasgo:
-                det_str += f" | {jugador.rasgo}"
-            
-            color_det = 'blanco'
-            if jugador.lesion_partidos > 0:
-                det_str += f" | Lesionado: {jugador.lesion_partidos}p"
-                color_det = 'rojo'
-            
-            draw_text(screen, det_str, (fila_rect.x + 70, fy + 26), size='sm', color=color_det)
-
-        screen.set_clip(old_clip)
-
-        # DIBUJAR CAMPO DE JUEGO (DERECHA)
-        pygame.draw.rect(screen, VERDE_CAMPO, rect_campo, border_radius=8)
-        franja_h = rect_campo.height // 8
-        for i in range(8):
-            col = VERDE_CAMPO if i % 2 == 0 else VERDE_CAMPO2
-            franja = pygame.Rect(rect_campo.x + 2, rect_campo.y + i * franja_h + 2, rect_campo.width - 4, franja_h - 2)
-            pygame.draw.rect(screen, col, franja)
-        pygame.draw.rect(screen, BLANCO, rect_campo, width=2, border_radius=8)
-
-        # Líneas de cancha
-        centro_y = rect_campo.y + rect_campo.height // 2
-        pygame.draw.line(screen, (220, 220, 220), (rect_campo.x + 8, centro_y), (rect_campo.right - 8, centro_y), 1)
-        radio_c = min(rect_campo.width, rect_campo.height) // 8
-        pygame.draw.circle(screen, (220, 220, 220), rect_campo.center, radio_c, 1)
-
-        # Áreas
-        area_w, area_h = rect_campo.width * 0.45, rect_campo.height * 0.15
-        area_top = pygame.Rect(rect_campo.centerx - area_w // 2, rect_campo.y + 4, area_w, area_h)
-        area_bot = pygame.Rect(rect_campo.centerx - area_w // 2, rect_campo.bottom - area_h - 4, area_w, area_h)
-        pygame.draw.rect(screen, (220, 220, 220), area_top, 1)
-        pygame.draw.rect(screen, (220, 220, 220), area_bot, 1)
-
-        # Renderizar jugadores sobre el campo con interactividad PES 2013
-        jugadores_titulares = [mi_equipo.jugadores[idx] for idx in titulares if idx < len(mi_equipo.jugadores)]
-        jugadores_titulares_ord = sorted(
-            jugadores_titulares,
-            key=lambda j: (POS_ORDEN.get(j.posicion, 2), -j.overall)
-        )
-
-        # PES 2013: campo interactivo — click en ficha → selecciona jugador
-        radio_circ = 20
-        campo_clicks = {}  # slot_idx -> (cx, cy, jugador, idx_original)
-        for slot_idx, jugador in enumerate(jugadores_titulares_ord[:11]):
-            if slot_idx >= len(posiciones_campo):
-                break
-            fx, fy_frac = posiciones_campo[slot_idx]
-            cx = int(rect_campo.x + rect_campo.width * fx)
-            cy = int(rect_campo.y + rect_campo.height * fy_frac)
-            idx_orig = jugador_a_idx.get(id(jugador), -1)
-            campo_clicks[slot_idx] = (cx, cy, jugador, idx_orig)
-
-            # Sombra bajo ficha
-            sombra = pygame.Rect(cx - radio_circ + 2, cy - radio_circ + 2, radio_circ*2, radio_circ*2)
-            pygame.draw.ellipse(screen, (0, 0, 0, 110), sombra)
-
-            # Determinar si esta ficha está seleccionada (PES 2013: click en campo)
-            es_seleccionado = (estado.get('team_seleccion') == slot_idx)
-            col_circ = POS_COLOR.get(jugador.posicion, GRIS_CLAR)
-            borde_circ = (255, 215, 0) if es_seleccionado else BLANCO  # dorado si seleccionado
-            borde_w = 4 if es_seleccionado else 2
-
-            # Ficha del jugador
-            pygame.draw.circle(screen, col_circ, (cx, cy), radio_circ)
-            pygame.draw.circle(screen, borde_circ, (cx, cy), radio_circ, borde_w)
-            if es_seleccionado:
-                # Brillo extra PES 2013-style
-                pygame.draw.circle(screen, (255, 255, 150), (cx - 3, cy - 3), 4)
-
-            # Posición + OVR dentro de la ficha
-            draw_text(screen, jugador.posicion, (cx - 13, cy - 13), size='sm', color='blanco', shadow=False)
-            draw_text(screen, str(jugador.overall), (cx - 10, cy + 1), size='sm', color='blanco', shadow=False)
-
-            # Apellido arriba
-            ap_trunc = _truncar(jugador.apellido, 9)
-            draw_text(screen, ap_trunc, (cx - 24, cy - radio_circ - 18), size='sm', color='dorado')
-
-        # Formación de la esquina
-        draw_text(screen, f"FORMACIÓN {alin.formacion}", (rect_campo.right - 150, rect_campo.y + 10), size='sm', color='dorado')
-
-        # ── PES 2013: BANCO DE SUPLENTES debajo del campo ──
-        convocados = getattr(alin, 'convocados', []) or []
-        n_conc = len(convocados)
-        banco_rect = pygame.Rect(rect_campo.x, rect_campo.bottom + 10, rect_campo.width, 60)
-        draw_panel(screen, banco_rect)
-        draw_text(screen, f"BANCO ({n_conc}/10)", (banco_rect.x + 10, banco_rect.y + 4), size='sm', color='dorado')
-        if n_conc == 0:
-            draw_text(screen, "Usa AUTO CONVOC. o agrega suplentes haciendo clic",
-                      (banco_rect.x + 160, banco_rect.y + 4), size='sm', color='azul')
-        else:
-            # Mostrar fichas mini de los 10 convocados en fila
-            mini_w = (banco_rect.width - 40) // 10
-            for ci, idx_j in enumerate(convocados[:10]):
-                if idx_j < 0 or idx_j >= len(mi_equipo.jugadores):
-                    continue
-                j = mi_equipo.jugadores[idx_j]
-                mx = banco_rect.x + 20 + ci * mini_w
-                my = banco_rect.y + 22
-                mini_r = pygame.Rect(mx, my, mini_w - 6, 30)
-                col = POS_COLOR.get(j.posicion, GRIS_CLAR)
-                pygame.draw.rect(screen, col, mini_r, border_radius=3)
-                ap = _truncar(j.apellido, 5)
-                draw_text(screen, ap, (mx + 2, my + 2), size='sm', color='blanco', shadow=False)
-                draw_text(screen, str(j.overall), (mx + 2, my + 14), size='sm', color='dorado', shadow=False)
-
-        # --- BOTONES DE ACCIÓN (ABAJO, debajo del banco) ---
-        btn_y = min(SCREEN_H - 52, rect_campo.bottom + 80)
-        btn_auto = pygame.Rect(300, btn_y, 170, 42)
-        btn_auto_convocados = pygame.Rect(475, btn_y, 170, 42)
-        btn_ver_reservas = pygame.Rect(650, btn_y, 170, 42)
-        btn_confirmar = pygame.Rect(900, btn_y, 170, 42)
-        btn_cancelar = pygame.Rect(1075, btn_y, 165, 42)
-
-        hov_auto = btn_auto.collidepoint(mouse_pos)
-        hov_auto_convocados = btn_auto_convocados.collidepoint(mouse_pos)
-        hov_ver_reservas = btn_ver_reservas.collidepoint(mouse_pos)
-        hov_confirmar = btn_confirmar.collidepoint(mouse_pos)
-        hov_cancelar = btn_cancelar.collidepoint(mouse_pos)
-
-        draw_styled_button(screen, btn_auto, "AUTO ONCE", hov_auto, COLORS.get('azul', (0, 191, 255)))
-        draw_styled_button(screen, btn_auto_convocados, "AUTO CONVOC.",
-                           hov_auto_convocados, COLORS.get('dorado', (255, 215, 0)))
-        draw_styled_button(screen, btn_ver_reservas, "VER RESERVAS",
-                           hov_ver_reservas, COLORS.get('azul', (0, 191, 255)))
-        draw_styled_button(screen, btn_confirmar, "CONFIRMAR",
-                           hov_confirmar, COLORS.get('verde', (0, 255, 136)))
-        draw_styled_button(screen, btn_cancelar, "CANCELAR",
-                           hov_cancelar, COLORS.get('rojo', (255, 68, 68)))
-
-        # --- LÓGICA DE PROCESAMIENTO DE CLICS ---
-        if click_pos:
-            # 0. Cicladores de formación / táctica (tienen prioridad sobre el resto)
-            if rect_f_prev.collidepoint(click_pos) or rect_f_next.collidepoint(click_pos):
-                paso = -1 if rect_f_prev.collidepoint(click_pos) else 1
-                f_idx = form_lista.index(alin.formacion) if alin.formacion in form_lista else 0
-                alin.formacion = form_lista[(f_idx + paso) % len(form_lista)]
-                # Al cambiar de formación, re-balancear el once a sus cuotas.
+        # v2.3.5: al entrar se respalda todo para CANCELAR, el banco queda válido
+        # (índices corridos por ventas, lesionados), el once completo y cada titular
+        # en un puesto de su posición (slot k del campo = titulares[k]).
+        if '_original_formacion' not in estado:
+            estado['_original_formacion'] = alin.formacion
+            estado['_original_alignment'] = list(alin.titulares)
+            estado['_original_convocados'] = list(getattr(alin, 'convocados', []) or [])
+            estado['_original_mentalidad'] = getattr(mi_equipo, 'mentalidad', 'normal')
+            F.normalizar_convocados(alin, mi_equipo.jugadores)
+            if len(set(alin.titulares)) != 11 or not all(0 <= i < len(mi_equipo.jugadores) for i in alin.titulares):
                 alin.titulares = F.mejor_once(mi_equipo.jugadores, alin.formacion)
-                estado['team_flash_msg'] = f"Formación: {alin.formacion}"
-                estado['team_flash_timer'] = 1.5
-                estado['team_kbd_focus'] = 'formacion'
-            elif rect_t_prev.collidepoint(click_pos) or rect_t_next.collidepoint(click_pos):
-                paso = -1 if rect_t_prev.collidepoint(click_pos) else 1
-                t_idx = tacticas.index(mi_equipo.estilo_dt) if mi_equipo.estilo_dt in tacticas else 0
-                mi_equipo.estilo_dt = tacticas[(t_idx + paso) % len(tacticas)]
-                estado['team_flash_msg'] = f"Táctica: {mi_equipo.estilo_dt}"
-                estado['team_flash_timer'] = 1.5
-                estado['team_kbd_focus'] = 'tactica'
-            elif rect_scr_up.collidepoint(click_pos):
-                estado['team_scroll_offset'] = max(0, estado['team_scroll_offset'] - 1)
-            elif rect_scr_down.collidepoint(click_pos):
-                total_j = len(mi_equipo.jugadores)
-                n_visible = 8  # 440 de altura visible / 55
-                max_sc = max(0, total_j - n_visible)
-                estado['team_scroll_offset'] = min(max_sc, estado['team_scroll_offset'] + 1)
+                F.normalizar_convocados(alin, mi_equipo.jugadores)
+            alin.titulares = F.acomodar_en_puestos(alin.titulares, mi_equipo.jugadores, alin.formacion)
 
-            # 1. Clic en los botones de acción inferior
-            elif btn_auto.collidepoint(click_pos):
-                try:
-                    alin.titulares = F.mejor_once(mi_equipo.jugadores, alin.formacion)
-                    estado['team_flash_msg'] = f"Once óptimo para {alin.formacion}"
-                    estado['team_flash_timer'] = 2.0
-                except Exception as e_auto:
-                    logger.error(f"Fallo en autoselección: {e_auto}")
-
-            # v2.3 (Fase 10): AUTO CONVOCADOS — llena los 10 con los mejores no-titulares.
-            elif btn_auto_convocados.collidepoint(click_pos):
-                _auto_convocados()
-                estado['team_flash_msg'] = "10 convocados (los mejores disponibles)"
-                estado['team_flash_timer'] = 2.0
-
-            # v2.3 (Fase 10): VER RESERVAS — toggle de página 2 con jugadores > 21.
-            elif btn_ver_reservas.collidepoint(click_pos):
-                if estado.get('team_view') == 'reservas':
-                    estado['team_view'] = 'once'
-                    estado['team_flash_msg'] = "Vista normal"
-                else:
-                    estado['team_view'] = 'reservas'
-                    estado['team_flash_msg'] = "Mostrando reservas (no juegan partidos)"
-                estado['team_flash_timer'] = 1.0
-
-            elif btn_confirmar.collidepoint(click_pos):
-                try:
-                    # v2.3 (Fase 10): validar también los 10 convocados
-                    n_convocados_ok = len(getattr(alin, 'convocados', []) or []) == 10
-                    if alin.es_valida(mi_equipo.jugadores) and n_convocados_ok:
-                        estado['team_flash_msg'] = "¡Alineación guardada con éxito!"
-                        estado['team_flash_timer'] = 2.0
-                        # Guardar la alineación activa (en amistoso queda en amis_local)
-                        mi_equipo.alineacion_activa = alin
-                        estado.pop('_original_alignment', None)
-                        estado.pop('_original_convocados', None)
-                        estado.pop('team_seleccion', None)
-                        if es_amistoso:
-                            estado.pop('team_contexto', None)
-                        # v0.8.6 (Tarea 1): limpiar bandera de modo prepartido al salir
-                        if modo_prepartido:
-                            estado.pop('team_modo_prepartido', None)
-                        return ret_screen
-                    elif not n_convocados_ok:
-                        estado['team_flash_msg'] = f"Necesitas 10 convocados (tienes {len(getattr(alin, 'convocados', []) or [])})"
-                        estado['team_flash_timer'] = 2.5
-                    else:
-                        estado['team_flash_msg'] = "Necesitas: 1 POR, 3+ DEF, 2+ MED, 1+ DEL"
-                        estado['team_flash_timer'] = 2.5
-                except Exception as e_conf:
-                    logger.error(f"Error al confirmar alineación: {e_conf}")
-
-            elif btn_cancelar.collidepoint(click_pos):
-                try:
-                    original = estado.get('_original_alignment', [])
-                    alin.titulares = list(original)
-                    alin.convocados = list(estado.get('_original_convocados', []))
-                    estado.pop('_original_alignment', None)
-                    if es_amistoso:
-                        estado.pop('team_contexto', None)
-                    # v0.8.6 (Tarea 1): limpiar bandera de modo prepartido al salir
-                    if modo_prepartido:
-                        estado.pop('team_modo_prepartido', None)
-                    return ret_screen
-                except Exception as e_canc:
-                    logger.error(f"Error al cancelar cambios: {e_canc}")
-                    estado.pop('team_contexto', None)
-                    if modo_prepartido:
-                        estado.pop('team_modo_prepartido', None)
-                    return ret_screen
-
-            # 2. Clic en la lista de la plantilla (PES 2013: swap 1:1 con campo, o toggle)
-            elif rect_lista.collidepoint(click_pos):
-                try:
-                    rel_y = click_pos[1] - rect_lista.y - encabezado_h
-                    if rel_y >= 0:
-                        click_idx = (rel_y // fila_alto) + scroll
-                        if 0 <= click_idx < len(mi_equipo.jugadores):
-                            jugador = mi_equipo.jugadores[click_idx]
-                            if jugador.lesion_partidos > 0:
-                                estado['team_flash_msg'] = f"¡{jugador.nombre} está lesionado!"
-                                estado['team_flash_timer'] = 2.0
-                            else:
-                                sel = estado.get('team_seleccion')
-                                if sel is not None:
-                                    # PES 2013: hay un jugador SELECCIONADO en el campo => SWAP 1:1
-                                    # reemplazamos exactamente ESE índice en titulares con el clickeado
-                                    if 0 <= sel < len(jugadores_titulares_ord):
-                                        _sel_idx_real = campo_clicks[sel][3]
-                                        if _sel_idx_real >= 0 and _sel_idx_real in titulares:
-                                            idx_pos = titulares.index(_sel_idx_real)
-                                            # Swap directo en el slot: el nuevo reemplaza al anterior
-                                            titulares[idx_pos] = click_idx
-                                            estado['team_flash_msg'] = f"Swap: {jugador.apellido} ⇄ {campo_clicks[sel][2].apellido}"
-                                            estado['team_flash_timer'] = 1.5
-                                            estado['team_seleccion'] = None
-                                        else:
-                                            estado['team_seleccion'] = None
-                                else:
-                                    # Sin selección previa => toggle clásico (agregar/quitar titular)
-                                    if click_idx in titulares:
-                                        if len(titulares) > 1:
-                                            titulares.remove(click_idx)
-                                            estado['team_flash_msg'] = "Jugador removido del once"
-                                            estado['team_flash_timer'] = 1.0
-                                    else:
-                                        if len(titulares) < 11:
-                                            titulares.append(click_idx)
-                                        else:
-                                            estado['team_flash_msg'] = "Ya tienes 11 titulares. Selecciona uno en el campo para swapear."
-                                            estado['team_flash_timer'] = 2.0
-                except Exception as e_click_row:
-                    logger.error(f"Error al alternar jugador en lista: {e_click_row}")
-
-            # 2.5. PES 2013: clic en el campo — selecciona/deselecciona una ficha
-            elif rect_campo.collidepoint(click_pos):
-                # Buscar si el clic cayó sobre alguna de las fichas del campo
-                hit_slot = None
-                for slot_idx, (cx, cy, j, idx_r) in campo_clicks.items():
-                    dist = ((click_pos[0] - cx) ** 2 + (click_pos[1] - cy) ** 2) ** 0.5
-                    if dist <= radio_circ + 4:
-                        hit_slot = slot_idx
-                        break
-                if hit_slot is not None:
-                    if estado.get('team_seleccion') == hit_slot:
-                        # Deseleccionar (mismo jugador clickeado)
-                        estado['team_seleccion'] = None
-                        estado['team_flash_msg'] = "Jugador deseleccionado"
-                        estado['team_flash_timer'] = 1.0
-                    else:
-                        # Seleccionar (muestra borde dorado, espera click en lista para swap)
-                        estado['team_seleccion'] = hit_slot
-                        j_nombre = campo_clicks[hit_slot][2].apellido
-                        estado['team_flash_msg'] = f"{j_nombre} seleccionado — clickea otro jugador para swap"
-                        estado['team_flash_timer'] = 2.0
-
-            # 3. Clic en las opciones de la barra de navegación lateral (descartar cambios no guardados)
-            # v0.8.6 (Tarea 1): en modo_prepartido estos botones son None; el handler de la
-            # barra lateral se procesa SOLO en HUB normal.
-            elif not modo_prepartido and btn_jugar is not None and btn_jugar.collidepoint(click_pos):
-                estado.pop('_original_alignment', None)
-                if es_amistoso:
-                    estado.pop('team_contexto', None)
-                return ret_screen
-            elif not modo_prepartido and btn_mercado is not None and btn_mercado.collidepoint(click_pos):
-                estado.pop('_original_alignment', None)
-                return "market_screen"
-            elif not modo_prepartido and btn_copa is not None and btn_copa.collidepoint(click_pos):
-                estado.pop('_original_alignment', None)
-                return "copa_screen"
-            elif not modo_prepartido and btn_ofertas is not None and btn_ofertas.collidepoint(click_pos):
-                estado.pop('_original_alignment', None)
-                return "ofertas_screen"
-            elif not modo_prepartido and btn_stats is not None and btn_stats.collidepoint(click_pos):
-                estado.pop('_original_alignment', None)
-                return "stats_screen"
-            elif not modo_prepartido and btn_career is not None and btn_career.collidepoint(click_pos):
-                estado.pop('_original_alignment', None)
-                return "career_screen"
-            elif not modo_prepartido and btn_salir is not None and btn_salir.collidepoint(click_pos):
-                estado.pop('_original_alignment', None)
-                estado['save_slots_return'] = 'team_screen'
-                return "save_slots_screen"
-
-            # v0.8.6 (Tarea 1): botones del panel compacto en modo prepartido
-            elif modo_prepartido and btn_auto_pp is not None and btn_auto_pp.collidepoint(click_pos):
-                try:
-                    alin.titulares = F.mejor_once(mi_equipo.jugadores, alin.formacion)
-                    estado['team_flash_msg'] = f"Once óptimo para {alin.formacion}"
-                    estado['team_flash_timer'] = 2.0
-                except Exception as e_auto_pp:
-                    logger.error(f"Fallo en autoselección (panel prepartido): {e_auto_pp}")
-            elif modo_prepartido and btn_volver_pp is not None and btn_volver_pp.collidepoint(click_pos):
-                # VOLVER del panel compacto: vuelve a prepartido descartando cambios
-                # (mismo comportamiento que CANCELAR, para coherencia).
-                try:
-                    original = estado.get('_original_alignment', [])
-                    alin.titulares = list(original)
-                    alin.convocados = list(estado.get('_original_convocados', []))
-                except Exception:
-                    pass
-                estado.pop('_original_alignment', None)
-                estado.pop('team_modo_prepartido', None)
-                estado.pop('team_contexto', None)
-                return "prepartido_screen"
-
-        # --- RENDERIZAR NOTIFICACIÓN FLASH ---
-        flash_msg = estado.get('team_flash_msg', "")
-        if flash_msg and estado.get('team_flash_timer', 0.0) > 0.0:
-            try:
-                # Dibujar panel de flash centrado
-                alpha = min(255, int(estado['team_flash_timer'] * 180))
-                font = get_font('md')
-                s = font.render(flash_msg, True, AMARILLO)
-                x = (SCREEN_W - s.get_width()) // 2
-                y = SCREEN_H // 2 - 30
-                bg = pygame.Surface((s.get_width() + 24, s.get_height() + 14), pygame.SRCALPHA)
-                bg.fill((0, 0, 0, min(200, alpha)))
-                screen.blit(bg, (x - 12, y - 7))
-                screen.blit(s, (x, y))
-            except Exception as e_flash:
-                logger.error(f"Error renderizando mensaje flash: {e_flash}")
-
+        return _render_direccion(screen, estado, mi_equipo, alin, es_amistoso, modo_prepartido,
+                                 ret_screen, mouse_pos, click_pos)
     except Exception as error_general:
         logger.error(f"Error general catastrófico en team_screen.render: {error_general}", exc_info=True)
         try:

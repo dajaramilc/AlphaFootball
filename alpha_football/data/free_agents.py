@@ -68,6 +68,9 @@ def get_free_agents(jornada: int) -> list[Jugador]:
         # "Libres" se cacheaba vacía en jornadas impares (market_screen.py:384).
         num_jugadores = random.randint(6, 9)
         seleccionados = random.sample(NOMBRES_LIBRES, min(num_jugadores, len(NOMBRES_LIBRES)))
+        # v4.4.0: si ese nombre ya lo tiene alguien en la carrera (p. ej. uno que fichaste), otro
+        from alpha_football.nombres import en_uso, nombre_unico
+        seleccionados = [nombre_unico(reservar=False) if en_uso(n, a) else (n, a) for n, a in seleccionados]
 
         resultado = []
         id_base = 5000 + (max(1, int(jornada)) * 10)

@@ -283,9 +283,12 @@ def simular_otros_partidos(liga: Any, jornada_actual: int) -> None:
                 p.jugado = True
                 
                 # Desarrollar los jugadores de ambos equipos de la IA
-                try:
-                    desarrollar_plantilla_post_partido(loc_eq, res.goles_local, res.goles_visitante)
-                    desarrollar_plantilla_post_partido(vis_eq, res.goles_visitante, res.goles_local)
+                try:   # v4.0.0: con goleadores, asistentes y notas reales del partido
+                    from alpha_football.partido_ctx import stats_de_equipo
+                    desarrollar_plantilla_post_partido(loc_eq, res.goles_local, res.goles_visitante,
+                                                       stats_partido=stats_de_equipo(res.ctx, res.notas, 'l'))
+                    desarrollar_plantilla_post_partido(vis_eq, res.goles_visitante, res.goles_local,
+                                                       stats_partido=stats_de_equipo(res.ctx, res.notas, 'v'))
                 except Exception as e_dev_ia:
                     logger.error(f"Error al desarrollar equipo de la IA: {e_dev_ia}")
     except Exception as e:
@@ -332,95 +335,47 @@ def actualizar_estadisticas_liga(liga: Any) -> None:
     except Exception as e:
         logger.error(f"Error al actualizar estadísticas de la tabla: {e}")
 
-def recalcular_standings_copa(estado: dict) -> None:
-    """Recalcula las posiciones de la fase de grupos de la Copa de forma robusta."""
-    try:
-        standings = estado.get('copa_grupo_standing', [])
-        partidos = estado.get('copa_grupo_partidos', [])
-        
-        # Reiniciar estadísticas (NOTA: Standing.dg es una property calculada, no se asigna).
-        for st in standings:
-            if hasattr(st, 'pj'):
-                st.pj = st.g = st.e = st.p = st.gf = st.gc = st.pts = 0
-            else:
-                st['pj'] = st['g'] = st['e'] = st['p'] = st['gf'] = st['gc'] = st['pts'] = 0
-                
-        mapa_st = {}
-        for st in standings:
-            name = st.equipo if hasattr(st, 'equipo') else st.get('equipo')
-            mapa_st[name] = st
-            
-        for p in partidos:
-            if not p.get('jugado'):
-                continue
-                
-            loc = p['local']
-            vis = p['visitante']
-            
-            try:
-                gl = int(p['goles_l'])
-                gv = int(p['goles_v'])
-            except (ValueError, TypeError):
-                continue
-                
-            st_l = mapa_st.get(loc)
-            st_v = mapa_st.get(vis)
-            
-            if st_l is not None:
-                if hasattr(st_l, 'pj'):
-                    st_l.pj += 1
-                    st_l.gf += gl
-                    st_l.gc += gv
-                    if gl > gv:
-                        st_l.g += 1
-                        st_l.pts += 3
-                    elif gl < gv:
-                        st_l.p += 1
-                    else:
-                        st_l.e += 1
-                        st_l.pts += 1
-                else:
-                    st_l['pj'] += 1
-                    st_l['gf'] += gl
-                    st_l['gc'] += gv
-                    if gl > gv:
-                        st_l['g'] += 1
-                        st_l['pts'] += 3
-                    elif gl < gv:
-                        st_l['p'] += 1
-                    else:
-                        st_l['e'] += 1
-                        st_l['pts'] += 1
-                        
-            if st_v is not None:
-                if hasattr(st_v, 'pj'):
-                    st_v.pj += 1
-                    st_v.gf += gv
-                    st_v.gc += gl
-                    if gv > gl:
-                        st_v.g += 1
-                        st_v.pts += 3
-                    elif gv < gl:
-                        st_v.p += 1
-                    else:
-                        st_v.e += 1
-                        st_v.pts += 1
-                else:
-                    st_v['pj'] += 1
-                    st_v['gf'] += gv
-                    st_v['gc'] += gl
-                    if gv > gl:
-                        st_v['g'] += 1
-                        st_v['pts'] += 3
-                    elif gv < gl:
-                        st_v['p'] += 1
-                    else:
-                        st_v['e'] += 1
-                        st_v['pts'] += 1
-    except Exception as err:
-        logger.error(f"Fallo en recalcular_standings_copa: {err}")
+# v3.8.0: recalcular_standings_copa se fue con la copa vieja (las tablas las calcula competiciones).
 
 # --- v0.7: cierre de jornada de liga reutilizable (live + simulación instantánea) ═══
+
+def _correo_oferta(estado: dict, oferta: dict, prefijo: str) -> None:
+    """v3.1.0: cada oferta recibida llega también al correo, con enlace a OFERTAS."""
+    try:
+        from alpha_football import correo as C
+        jo, comp = oferta.get('jugador'), oferta.get('comprador')
+        C.enviar(estado, 'club', f"{prefijo} {jo.nombre} {jo.apellido}",
+                 f"{getattr(comp, 'nombre', 'Un club')} ofrece ${int(oferta.get('monto', 0)):,}.",
+                 C.accion('ofertas_screen', "VER OFERTAS"))
+    except Exception as e:
+        logger.error(f"No se pudo enviar el correo de la oferta: {e}")
+
+
+def _depurar_titulares(user_eq: Any, user_alin: Any) -> None:
+    """v3.1.0: un titular lesionado o sancionado no juega: se reemplaza (en su mismo puesto de la
+    lista) por el jugador que el motor mete en su lugar, así los minutos y el físico son reales."""
+    if user_eq is None or user_alin is None:
+        return
+    from alpha_football.engine import _once_titular
+    from alpha_football.models import asegurar_ids_unicos
+    asegurar_ids_unicos(user_eq)
+    js = list(getattr(user_eq, 'jugadores', []) or [])
+    tit = list(getattr(user_alin, 'titulares', []) or [])
+    en_lista = {id(js[i]) for i in tit if 0 <= i < len(js)}
+    relevos = [j for j in _once_titular(user_eq) if id(j) not in en_lista]
+    for k, i in enumerate(tit):
+        if (not (0 <= i < len(js)) or not js[i].disponible) and relevos:
+            tit[k] = js.index(relevos.pop(0))
+    user_alin.titulares = tit
+
+
+def _minutos_previos(estado: dict, user_eq: Any, user_alin: Any) -> dict:
+    """v3.1.0: {id(jugador): minutos ya jugados} de los titulares actuales del user."""
+    mins = estado.get('sim_minuto_por_jugador') or {}
+    js = list(getattr(user_eq, 'jugadores', []) or [])
+    return {id(js[i]): int(mins.get(js[i].id, 0)) for i in (getattr(user_alin, 'titulares', []) or [])
+            if 0 <= i < len(js)}
+
 
 def finalizar_jornada_liga(estado: dict, liga: Any, mi_equipo: Any, partido: Any,
                            goles_l: int, goles_v: int) -> None:
@@ -430,17 +385,33 @@ def finalizar_jornada_liga(estado: dict, liga: Any, mi_equipo: Any, partido: Any
     Lo usan tanto la pantalla en vivo como la "Simulación instantánea" del pre-partido.
     """
     try:
+        # v3.0.0: un partido ya cerrado no se vuelve a cerrar (evita doble jornada/marcador pisado)
+        if getattr(partido, 'jugado', False):
+            logger.warning("finalizar_jornada_liga: el partido ya estaba jugado, no se cierra otra vez")
+            return
         partido.goles_local = goles_l
         partido.goles_visitante = goles_v
         partido.jugado = True
+        try:  # v2.8.0: la directiva ajusta su confianza con cada resultado de liga
+            from alpha_football.directiva import actualizar_confianza
+            es_local = partido.local_id == mi_equipo.id
+            actualizar_confianza(estado, goles_l if es_local else goles_v, goles_v if es_local else goles_l)
+        except Exception as e_conf:
+            logger.error(f"Error al actualizar la confianza de la directiva: {e_conf}")
+        try:  # v2.9.0: taquilla, patrocinio, salarios y control de quiebra
+            from alpha_football.finanzas import procesar_jornada
+            es_local = partido.local_id == mi_equipo.id
+            procesar_jornada(estado, es_local, goles_l if es_local else goles_v, goles_v if es_local else goles_l)
+        except Exception as e_fin:
+            logger.error(f"Error en las finanzas de la jornada: {e_fin}")
         simular_otros_partidos(liga, liga.jornada_actual)
         actualizar_estadisticas_liga(liga)
         if liga.jornada_actual < liga.num_jornadas:
             liga.jornada_actual += 1
         else:
             logger.info("Fin de temporada alcanzado.")
-        # v0.8.7.2: si el user no clasificó a la copa, avanzar la copa en background
-        # (catch-up gradual: usa los mismos gates que la copa del user).
+        # v3.8.0: las dos copas juegan sus fechas vencidas tras la jornada (salvo el partido del
+        # user, que queda pendiente para JUGAR).
         try:
             from alpha_football.ui.copa_screen import simular_copa_fondo
             simular_copa_fondo(estado)
@@ -454,6 +425,14 @@ def finalizar_jornada_liga(estado: dict, liga: Any, mi_equipo: Any, partido: Any
             simular_jornada_segunda_division(estado)
         except Exception as e_bg2:
             logger.error(f"Error al simular jornada de 2ª división: {e_bg2}")
+        # v2.3.7: con el mercado abierto, los clubes de la IA fichan entre ellos.
+        try:
+            from alpha_football import market as _mk
+            if _mk.ventana_mercado_abierta(liga.jornada_actual, liga.num_jornadas):
+                from alpha_football.mercado_ia import ronda_fichajes_ia
+                ronda_fichajes_ia(estado, 'ventana')
+        except Exception as e_mia:
+            logger.error(f"Error en el mercado de la IA: {e_mia}")
         # Ofertas tras la jornada (IA local + posible oferta del exterior por buen rendimiento)
         try:
             from alpha_football import market
@@ -462,227 +441,300 @@ def finalizar_jornada_liga(estado: dict, liga: Any, mi_equipo: Any, partido: Any
                 oferta_ia = market.crear_oferta_ui(mi_equipo, rivales, liga.jornada_actual, liga.num_jornadas)
                 if oferta_ia:
                     estado.setdefault('ofertas_recibidas', []).append(oferta_ia)
+                    _correo_oferta(estado, oferta_ia, "Oferta por")
                 _crear_ext = getattr(market, 'crear_oferta_exterior', None)
                 if _crear_ext:
                     oferta_ext = _crear_ext(mi_equipo, estado)
                     if oferta_ext:
                         estado.setdefault('ofertas_recibidas', []).append(oferta_ext)
+                        _correo_oferta(estado, oferta_ext, "Oferta del exterior por")
         except Exception as e_of:
             logger.error(f"Error al generar ofertas tras la jornada: {e_of}")
+        try:  # v4.4.0: descontento, pide salir, escalada y ofertas garantizadas (salidas.py)
+            from alpha_football.salidas import cierre_jornada as _salidas_cierre
+            _salidas_cierre(estado)
+        except Exception as e_sal:
+            logger.error(f"Error en las salidas de jugadores: {e_sal}")
+        try:  # v3.1.0: recuperación física de todos, pedidos de la directiva y cláusulas
+            from alpha_football.energia import recuperar_todos
+            recuperar_todos(estado)
+            from alpha_football.directiva import revisar_pedido
+            revisar_pedido(estado)
+            from alpha_football import market as _mk2
+            if _mk2.ventana_mercado_abierta(liga.jornada_actual, liga.num_jornadas):
+                from alpha_football.mercado_ia import pago_clausulas
+                pago_clausulas(estado)
+        except Exception as e_v31:
+            logger.error(f"Error en el cierre de jornada v3.1.0: {e_v31}")
+        try:  # v3.2.0: sueldo y renovación del DT
+            from alpha_football import carrera_dt as _cd
+            _cd.pagar_jornada(estado)
+            _cd.revisar_renovacion(estado)
+        except Exception as e_v32:
+            logger.error(f"Error en el cierre de jornada v3.2.0: {e_v32}")
+        try:  # v3.4.0: vencen ofertas de banquillo y los clubes IA que van mal echan a su DT
+            from alpha_football.entrenadores import revisar_jornada as _dts_jornada
+            _dts_jornada(estado)
+        except Exception as e_v34:
+            logger.error(f"Error en el cierre de jornada v3.4.0: {e_v34}")
+        try:  # v3.5.0: respuestas "lo analizamos" (ventas y compras)
+            from alpha_football.contraofertas import resolver_analisis
+            resolver_analisis(estado)
+        except Exception as e_co:
+            logger.error(f"Error al resolver contraofertas: {e_co}")
+        try:  # v4.3.0: correo cuando la meta de liga ya está asegurada
+            from alpha_football.directiva import revisar_objetivo_liga_asegurado
+            revisar_objetivo_liga_asegurado(estado)
+        except Exception as e_obj:
+            logger.error(f"Error al revisar el objetivo de liga: {e_obj}")
     except Exception as e:
         logger.error(f"Error en finalizar_jornada_liga: {e}")
 
 
 # --- v0.7: menú táctico en partido (medio tiempo + cambio en vivo) ═══════════════
-
-_TACTICAS_MENU = ["anchelottismo", "cruyffismo", "flickismo", "haramball"]
+# v3.3.0: se borró _TACTICAS_MENU (sin uso); el selector de estilo es el de team_screen.
 
 
 def _menu_tactico(screen: pygame.Surface, estado: dict, equipo: Any, alin: Any,
-                  mouse_pos: tuple, click_pos: Optional[tuple], titulo: str) -> Optional[str]:
+                  mouse_pos: tuple, click_pos: Optional[tuple], titulo: str = "",
+                  key_events: Optional[list] = None) -> Optional[str]:
     """
-    Overlay para dirigir el equipo durante el partido: FORMACIÓN, TÁCTICA, y CAMBIOS
-    (sacar un titular y meter un suplente, anunciados en la transmisión).
-    Devuelve 'reanudar' cuando el usuario pulsa REANUDAR; muta equipo/alineación in situ.
+    v2.3.6: dirección EN VIVO con la misma pantalla que "Dirección de equipo" (campo con
+    los 11, banco de convocados y ficha). Reglas del partido: máx. 5 cambios, el que sale
+    no vuelve a entrar, las reservas no entran; formación, táctica y cambios de puesto
+    son libres. Devuelve 'reanudar' al pulsar REANUDAR (el reloj sigue en pausa mientras).
+    Todo lo que se cambie aquí vale SOLO para este partido: render() restaura la
+    alineación, la formación y la táctica de antes del partido al terminar.
     """
+    # Foto al abrir: DESHACER vuelve a este punto (no al inicio del partido).
+    if not estado.get('sim_dir_snapshot'):
+        estado['sim_dir_snapshot'] = True
+        estado['_original_alignment'] = list(alin.titulares)
+        estado['_original_convocados'] = list(getattr(alin, 'convocados', []) or [])
+        estado['_original_formacion'] = alin.formacion
+        estado['_original_estilo'] = equipo.estilo_dt
+        estado['_original_mentalidad'] = getattr(equipo, 'mentalidad', 'normal')
+        estado['_original_subs'] = int(estado.get('sim_subs_realizadas', 0) or 0)
+        estado['_original_salieron'] = list(estado.get('sim_salieron', []) or [])
     try:
-        ov = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
-        ov.fill((8, 20, 14, 210))
-        screen.blit(ov, (0, 0))
-    except Exception:
-        pass
+        from alpha_football.ui.team_screen import _render_direccion
+        res = _render_direccion(screen, estado, equipo, alin, False, False, 'reanudar',
+                                mouse_pos, click_pos, en_partido=True,
+                                key_events=key_events if key_events is not None else [])   # v4.2.0
+    except Exception as e_dir:
+        logger.error(f"Error en la dirección en vivo: {e_dir}")
+        res = 'reanudar'
+    if res == 'reanudar':
+        estado.pop('sim_dir_snapshot', None)
+    return res
 
-    panel = pygame.Rect(SCREEN_W // 2 - 340, 40, 680, 600)
-    draw_glass_panel(screen, panel, bg_color=(12, 28, 20), border_color=(255, 215, 0), alpha=240)
-    draw_text(screen, titulo, (panel.x + 25, panel.y + 14), size='lg', color='dorado')
 
-    # v0.8.1: contador de cambios realizados (máx 5 por partido).
-    # v0.8.7: solo el swap manual titular↔banco cuenta; formación y AUTO ONCE son gratis.
-    subs_realizadas = int(estado.get('sim_subs_realizadas', 0) or 0)
-    subs_max = 5
-    draw_text(screen, f"Cambios: {subs_realizadas} / {subs_max}",
-              (panel.right - 150, panel.y + 18), size='sm', color='dorado' if subs_realizadas < subs_max else 'rojo')
-    draw_text(screen, "(solo el swap manual titular↔banco cuenta)",
-              (panel.right - 320, panel.y + 18), size='sm', color='azul')
+def _ments(local: Any, visitante: Any, user_eq: Any) -> dict:
+    """v2.5.0: mentalidad para el motor: la del user fija, la del rival la decide la IA."""
+    ml = mv = 'ia'
+    if user_eq is not None:
+        m = getattr(user_eq, 'mentalidad', 'normal') or 'normal'
+        uid = getattr(user_eq, 'id', None)
+        if user_eq is local or (uid is not None and uid == getattr(local, 'id', None)):
+            ml = m
+        elif user_eq is visitante or (uid is not None and uid == getattr(visitante, 'id', None)):
+            mv = m
+    return {'ment_l': ml, 'ment_v': mv}
 
-    if not getattr(alin, 'formacion', None) or not F.existe(alin.formacion):
-        alin.formacion = F.FORMACION_DEFECTO
-    form_lista = F.lista_formaciones()
-    jugadores = getattr(equipo, 'jugadores', [])
 
-    # --- Fila de cicladores: Formación y Táctica ---
-    fy = panel.y + 58
-    ty = panel.y + 104
-    rf_prev = pygame.Rect(panel.x + 150, fy, 38, 38)
-    rf_box = pygame.Rect(panel.x + 192, fy, 150, 38)
-    rf_next = pygame.Rect(panel.x + 346, fy, 38, 38)
-    rt_prev = pygame.Rect(panel.x + 150, ty, 38, 38)
-    rt_box = pygame.Rect(panel.x + 192, ty, 150, 38)
-    rt_next = pygame.Rect(panel.x + 346, ty, 38, 38)
+# v3.9.0: rects expuestos (ayuda H); render los usa tal cual.
+R_MARCADOR = pygame.Rect(40, 20, 1200, 150)
+R_VELOCIDAD = pygame.Rect(1085, 112, 115, 42)
+R_TACTICA = pygame.Rect(948, 112, 128, 42)
+R_TRANSMISION = pygame.Rect(40, 190, 1200, 360)
+R_FIN_PANEL = pygame.Rect(40, 570, 1200, 80)
+R_FIN_SALIR = pygame.Rect(1000, 585, 220, 50)
+R_PENALES = pygame.Rect(SCREEN_W // 2 - 320, 70, 640, 580)
+R_PENALES_DEFINIR = pygame.Rect(R_PENALES.x + 200, R_PENALES.bottom - 60, 240, 46)
+FILAS_PENALES = 11      # v3.9.0: con 14 filas las últimas quedaban debajo de DEFINIR EN PENALES
 
-    def _box(box_r, valor, acc):
-        try:
-            pygame.draw.rect(screen, (15, 22, 40), box_r, border_radius=6)
-            pygame.draw.rect(screen, acc, box_r, width=2, border_radius=6)
-        except Exception:
-            pass
-        s = get_font('sm').render(str(valor), True, (255, 255, 255))
-        screen.blit(s, s.get_rect(center=box_r.center))
 
-    draw_text(screen, "Formación:", (panel.x + 25, fy + 9), size='sm', color='blanco')
-    draw_text(screen, "Táctica:", (panel.x + 25, ty + 9), size='sm', color='blanco')
-    draw_button(screen, rf_prev, "<", rf_prev.collidepoint(mouse_pos))
-    draw_button(screen, rf_next, ">", rf_next.collidepoint(mouse_pos))
-    _box(rf_box, alin.formacion, (0, 255, 136))
-    draw_button(screen, rt_prev, "<", rt_prev.collidepoint(mouse_pos))
-    draw_button(screen, rt_next, ">", rt_next.collidepoint(mouse_pos))
-    _box(rt_box, equipo.estilo_dt, (255, 215, 0))
-    fam_pct = int(float((getattr(equipo, 'tactica_familiaridad', {}) or {}).get(equipo.estilo_dt, 0.0)) * 100)
-    draw_text(screen, f"Pref {F.pref(alin.formacion)} · Fam {fam_pct}%", (panel.x + 400, fy + 9), size='sm', color='azul')
+def _rects_tira_mentalidad() -> list:
+    """v2.5.0: los 5 botones de mentalidad bajo la transmisión."""
+    return [pygame.Rect(230 + i * 202, 562, 192, 40) for i in range(5)]
 
-    # --- Dirección del equipo: TITULARES (izq) y BANCO (der), toca uno y otro para cambiar ---
-    sub_out = estado.get('sim_sub_out')
-    draw_text(screen, "Toca un TITULAR y luego un SUPLENTE para cambiar:", (panel.x + 25, panel.y + 150), size='sm', color='dorado')
-    draw_text(screen, "TITULARES", (panel.x + 30, panel.y + 176), size='sm', color='verde')
-    draw_text(screen, "BANCO", (panel.x + 365, panel.y + 176), size='sm', color='azul')
 
-    fila_rects = []   # (rect, idx, es_banco)
-    titulares_idx = [i for i in alin.titulares if 0 <= i < len(jugadores)]
-    # v2.3 (Fase 5): el banquillo muestra SOLO los 10 CONVOCADOS (no las reservas).
-    # Si `alin.convocados` está vacío (saves muy viejos sin la clave), cae al
-    # comportamiento original (todos los no-titulares no lesionados) para no
-    # romper partidas existentes.
-    _convocados_set = set(getattr(alin, 'convocados', []) or [])
-    if _convocados_set:
-        banco_idx = [
-            i for i, j in enumerate(jugadores)
-            if i in _convocados_set                       # solo los 10 fijos
-            and i not in alin.titulares                   # y no titulares
-            and getattr(j, 'lesion_partidos', 0) == 0     # y no lesionados
-        ]
-    else:
-        banco_idx = [i for i, j in enumerate(jugadores) if i not in alin.titulares and getattr(j, 'lesion_partidos', 0) == 0]
+def _cambiar_mentalidad_en_vivo(estado: dict, user_eq: Any, local: Any, visitante: Any,
+                                nueva: str, minuto: int) -> None:
+    """
+    v2.5.0: cambia la mentalidad del user sin pausar y re-simula el resto de la mitad en
+    curso desde el minuto actual (mismo mecanismo que el REANUDAR del ajuste táctico).
+    """
+    from alpha_football.engine import NOMBRE_MENTALIDAD
+    user_eq.mentalidad = nueva
+    _resimular(estado, local, visitante, user_eq, minuto)
+    estado.setdefault('sim_comentarios', []).append(
+        f"Min {minuto}: » DT: mentalidad {NOMBRE_MENTALIDAD.get(nueva, nueva)}")
 
-    y0 = panel.y + 200
-    minutos = estado.get('sim_minuto_por_jugador', {}) or {}
-    notas_map = estado.get('sim_nota_por_jugador', {}) or {}
-    for n, idx in enumerate(titulares_idx[:11]):
-        r = pygame.Rect(panel.x + 25, y0 + n * 20, 310, 18)
-        j = jugadores[idx]
-        sel = (idx == sub_out)
-        try:
-            pygame.draw.rect(screen, (40, 80, 55) if sel else (20, 30, 26), r, border_radius=3)
-            if sel:
-                pygame.draw.rect(screen, (0, 255, 136), r, width=1, border_radius=3)
-        except Exception:
-            pass
-        # v0.8.1: nombre + OVR a la izquierda; barra de cansancio y nota a la derecha.
-        draw_text(screen, f"[{j.posicion}] {j.apellido[:14]}  {j.overall}", (r.x + 6, r.y + 1), size='sm',
-                  color='verde' if sel else 'blanco')
-        # Cansancio: minutos en cancha / 90 → porcentaje 0..100
-        jid = getattr(j, 'id', None)
-        mins_j = minutos.get(jid, 0) if jid is not None else 0
-        cans_pct = max(0, min(100, int((mins_j / 90.0) * 100)))
-        # Color de la barra: verde <50%, amarillo <80%, rojo >=80%
-        if cans_pct < 50:
-            bar_color = (0, 200, 100)
-        elif cans_pct < 80:
-            bar_color = (220, 180, 30)
-        else:
-            bar_color = (220, 60, 60)
-        # Dibujar barra de progreso horizontal
-        try:
-            bar_x = r.x + 178
-            bar_y = r.y + 6
-            bar_w = 70
-            bar_h = 6
-            pygame.draw.rect(screen, (40, 40, 50), (bar_x, bar_y, bar_w, bar_h), border_radius=2)
-            fill_w = int(bar_w * (cans_pct / 100.0))
-            if fill_w > 0:
-                pygame.draw.rect(screen, bar_color, (bar_x, bar_y, fill_w, bar_h), border_radius=2)
-        except Exception:
-            pass
-        # Nota actual del jugador (base 6.0 si no ha pasado nada)
-        nota = notas_map.get(jid, 6.0) if jid is not None else 6.0
-        nota_txt = f"{nota:.1f}"
-        nota_color = 'dorado' if nota >= 7.5 else ('verde' if nota >= 6.5 else 'blanco')
-        draw_text(screen, nota_txt, (r.x + 253, r.y + 1), size='sm', color=nota_color)
-        draw_text(screen, f"{cans_pct}%", (r.x + 283, r.y + 1), size='sm', color=bar_color)
-        fila_rects.append((r, idx, False))
-    for n, idx in enumerate(banco_idx[:11]):
-        r = pygame.Rect(panel.x + 360, y0 + n * 20, 295, 18)
-        j = jugadores[idx]
-        try:
-            pygame.draw.rect(screen, (20, 26, 46), r, border_radius=3)
-        except Exception:
-            pass
-        draw_text(screen, f"[{j.posicion}] {j.apellido[:15]}  {j.overall}", (r.x + 6, r.y + 1), size='sm', color='blanco')
-        fila_rects.append((r, idx, True))
 
-    btn_auto = pygame.Rect(panel.x + 30, panel.bottom - 56, 280, 44)
-    btn_reanudar = pygame.Rect(panel.x + 360, panel.bottom - 56, 290, 44)
-    draw_button(screen, btn_auto, "AUTO ONCE", btn_auto.collidepoint(mouse_pos))
-    draw_button(screen, btn_reanudar, "REANUDAR PARTIDO", btn_reanudar.collidepoint(mouse_pos))
+# v4.1.0: pausas del reloj en vivo (ms a velocidad x1; se dividen por la velocidad).
+PAUSA_MS = {'gol': 2500, 'roja': 2000, 'lesion': 2000, 'amarilla': 1000}
+R_AVISO = pygame.Rect(SCREEN_W // 2 - 330, 250, 660, 130)
+R_SELECTOR = pygame.Rect(SCREEN_W // 2 - 300, 120, 600, 470)
 
-    if click_pos:
-        if rf_prev.collidepoint(click_pos) or rf_next.collidepoint(click_pos):
-            # v0.8.7: cambio de formación NO consume cambios. Es solo reposicionamiento
-            # táctico abstracto. Si quieres meter jugadores del banco, hazlo con
-            # AUTO ONCE (también gratis) o con un swap manual titular↔banco.
-            paso = -1 if rf_prev.collidepoint(click_pos) else 1
-            i = form_lista.index(alin.formacion) if alin.formacion in form_lista else 0
-            alin.formacion = form_lista[(i + paso) % len(form_lista)]
-            estado.setdefault('sim_comentarios', []).append(
-                f"DT: Formación → {alin.formacion} (sin consumir cambios).")
-            estado['sim_sub_out'] = None
-        elif rt_prev.collidepoint(click_pos) or rt_next.collidepoint(click_pos):
-            paso = -1 if rt_prev.collidepoint(click_pos) else 1
-            i = _TACTICAS_MENU.index(equipo.estilo_dt) if equipo.estilo_dt in _TACTICAS_MENU else 0
-            equipo.estilo_dt = _TACTICAS_MENU[(i + paso) % len(_TACTICAS_MENU)]
-        elif btn_auto.collidepoint(click_pos):
-            # v0.8.7: AUTO ONCE NO consume cambios. Reorganiza titulares pero
-            # no se contabiliza como sustitución. Si el XI actual es subóptimo
-            # para la formación, lo deja óptimo sin gastar una ventana de cambios.
-            alin.titulares = F.mejor_once(equipo.jugadores, alin.formacion)
-            estado.setdefault('sim_comentarios', []).append(
-                f"DT: AUTO ONCE aplicado ({alin.formacion}, sin consumir cambios).")
-            estado['sim_sub_out'] = None
-        elif btn_reanudar.collidepoint(click_pos):
-            estado['sim_sub_out'] = None
-            return 'reanudar'
-        else:
-            for r, idx, es_banco in fila_rects:
-                if not r.collidepoint(click_pos):
-                    continue
-                if not es_banco:
-                    estado['sim_sub_out'] = idx  # marcar titular a sacar
-                else:
-                    # meter suplente: cambiar el titular marcado por este del banco
-                    out_idx = estado.get('sim_sub_out')
-                    if out_idx is not None and out_idx in alin.titulares:
-                        # v0.8.1: máximo 5 cambios por partido (como en el fútbol real).
-                        if subs_realizadas >= subs_max:
-                            estado['sim_sub_out'] = None
-                            estado.setdefault('sim_comentarios', []).append(
-                                "DT: Ya se realizaron los 5 cambios permitidos.")
-                            break
-                        pos = alin.titulares.index(out_idx)
-                        alin.titulares[pos] = idx
-                        estado['sim_subs_realizadas'] = subs_realizadas + 1
-                        try:
-                            sale = jugadores[out_idx].apellido
-                            entra = jugadores[idx].apellido
-                            estado.setdefault('sim_comentarios', []).append(
-                                f"CAMBIO ({subs_realizadas + 1}/5): SALE {sale}, ENTRA {entra}")
-                        except Exception:
-                            pass
-                        estado['sim_sub_out'] = None
-                break
-    return None
+
+def _lado_user(local: Any, user_eq: Any) -> Optional[str]:
+    if user_eq is None:
+        return None
+    return 'l' if getattr(user_eq, 'id', None) == getattr(local, 'id', None) else 'v'
+
+
+def _resimular(estado: dict, local: Any, visitante: Any, user_eq: Any, minuto: int,
+               fin: Optional[int] = None) -> None:
+    """
+    v4.1.0: re-simula desde `minuto + 1` hasta el fin de la mitad (o `fin`) partiendo del estado
+    REVELADO del partido (estado['sim_ctx']): un expulsado o lesionado ya visto no vuelve. Los
+    cambios que el user hizo en el menú táctico entran primero al ctx revelado (eventos 'cambio').
+    """
+    from alpha_football.engine import simular_rango, _once_titular, evento_cambio
+    from alpha_football import partido_ctx as PCX
+    fin = fin if fin is not None else (45 if minuto < 45 else int(estado.get('sim_fin', 90)))   # v4.4.0
+    ctx = estado.get('sim_ctx')
+    previos = [e for e in estado.get('sim_eventos', []) if e['minuto'] <= minuto]
+    try:
+        lado = _lado_user(local, user_eq)
+        if ctx is not None and lado is not None:
+            salen, entran = PCX.resincronizar_user(ctx, lado, _once_titular(user_eq), minuto)
+            for s_, e_ in zip(salen, entran):
+                ev = evento_cambio(minuto, lado, user_eq, s_, e_, ya_fuera=True)
+                ev['_aplicado'] = True
+                ctx.cambios[lado] = ctx.cambios.get(lado, 0) + 1
+                previos.append(ev)
+                estado.setdefault('sim_eventos_procesados', []).append(ev)
+        nuevos = []
+        if minuto < fin:
+            _gl, _gv, nuevos = simular_rango(
+                local, visitante, minuto + 1, fin, mult=estado.get("sim_suerte"),
+                goles_previos=(estado.get("sim_goles_l", 0), estado.get("sim_goles_v", 0)),
+                minutos_previos=_minutos_previos(estado, user_eq, getattr(user_eq, 'alineacion_activa', None)),
+                ctx=ctx.copia() if ctx is not None else None,
+                **_ments(local, visitante, user_eq))
+        estado['sim_eventos'] = previos + nuevos
+    except Exception as e_resim:
+        logger.error(f"Error al re-simular el partido en vivo: {e_resim}")
+
+
+def _pausar(estado: dict, tipo: str, texto: str, color: str) -> None:
+    """v4.1.0: detiene el reloj un momento con un aviso grande (Enter/Espacio lo salta)."""
+    factor = estado.get('sim_velocidad_factor') or 1
+    estado['sim_pausa_hasta'] = pygame.time.get_ticks() + PAUSA_MS.get(tipo, 1000) // max(1, factor)
+    estado['sim_aviso'] = {'tipo': tipo, 'texto': texto, 'color': color}
+
+
+def _dibujar_aviso(screen: pygame.Surface, estado: dict) -> None:
+    try:
+        av = estado.get('sim_aviso') or {}
+        draw_glass_panel(screen, R_AVISO, bg_color=(15, 20, 35), border_color=(255, 215, 0), alpha=235)
+        from alpha_football.ui.postpartido import dibujar_icono
+        dibujar_icono(screen, av.get('tipo', ''), (R_AVISO.x + 44, R_AVISO.centery))
+        titulo = {'gol': "¡GOL!", 'amarilla': "TARJETA AMARILLA", 'roja': "¡EXPULSADO!",
+                  'lesion': "LESIÓN"}.get(av.get('tipo'), "")
+        draw_text(screen, titulo, (R_AVISO.x + 80, R_AVISO.y + 18), size='lg', color=av.get('color', 'dorado'))
+        draw_text(screen, str(av.get('texto', ''))[:52], (R_AVISO.x + 80, R_AVISO.y + 62), size='md', color='blanco')
+        draw_text(screen, "Enter para seguir", (R_AVISO.right - 190, R_AVISO.bottom - 30), size='sm', color='azul')
+    except Exception as e:
+        logger.error(f"No se pudo dibujar el aviso del partido: {e}")
+
+
+def _selector_cambio(screen: pygame.Surface, estado: dict, user_eq: Any, local: Any, visitante: Any,
+                     teclas: list, mouse_pos: tuple, click_pos: Optional[tuple]) -> None:
+    """
+    v4.1.0: se lesionó un jugador del user y le quedan cambios: elige quién entra (↑/↓ + Enter o
+    clic). Aplica el cambio en la alineación, lo suma al ctx revelado y re-simula el resto de la mitad.
+    """
+    from alpha_football.engine import suplentes_disponibles, evento_cambio
+    from alpha_football.partido_ctx import aplicar_evento
+    ctx = estado.get('sim_ctx')
+    lado = _lado_user(local, user_eq)
+    lesionado = ctx.jugadores.get(estado.get('sim_cambio_forzado')) if ctx is not None else None
+    cands = suplentes_disponibles(ctx, lado, user_eq) if lesionado is not None else []
+    # primero los de su mismo puesto, luego por media
+    cands = sorted(cands, key=lambda j: (j.posicion != getattr(lesionado, 'posicion', ''), -j.overall))[:10]
+    if lesionado is None or not cands:
+        estado['sim_cambio_forzado'] = None
+        return
+    sel = max(0, min(int(estado.get('sim_cambio_sel', 0) or 0), len(cands) - 1))
+    elegido = None
+    for k in teclas:
+        if k == pygame.K_DOWN:
+            sel = (sel + 1) % len(cands)
+        elif k == pygame.K_UP:
+            sel = (sel - 1) % len(cands)
+        elif k in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+            elegido = cands[sel]
+    filas = [pygame.Rect(R_SELECTOR.x + 20, R_SELECTOR.y + 96 + i * 34, R_SELECTOR.width - 40, 30)
+             for i in range(len(cands))]
+    for i, r in enumerate(filas):
+        if click_pos and r.collidepoint(click_pos):
+            elegido = cands[i]
+    estado['sim_cambio_sel'] = sel
+    draw_glass_panel(screen, R_SELECTOR, bg_color=(15, 20, 35), border_color=(255, 68, 68), alpha=240)
+    draw_text(screen, f"LESIÓN: {lesionado.nombre_completo}"[:44], (R_SELECTOR.x + 20, R_SELECTOR.y + 16),
+              size='lg', color='rojo')
+    draw_text(screen, "Elige quién entra (↑ ↓ + Enter o clic)", (R_SELECTOR.x + 20, R_SELECTOR.y + 60),
+              size='sm', color='azul')
+    for i, r in enumerate(filas):
+        j = cands[i]
+        foco = i == sel or r.collidepoint(mouse_pos)
+        pygame.draw.rect(screen, (40, 60, 90) if foco else (20, 26, 46), r, border_radius=6)
+        draw_text(screen, f"{j.posicion}  {j.nombre_completo}"[:40], (r.x + 10, r.y + 4), size='sm',
+                  color='verde' if foco else 'blanco', shadow=False)
+        draw_text(screen, f"OVR {j.overall}", (r.right - 90, r.y + 4), size='sm', color='dorado', shadow=False)
+    if elegido is None:
+        return
+    try:
+        alin = user_eq.alineacion_activa
+        js = list(user_eq.jugadores)
+        idx_sale = next(i for i, x in enumerate(js) if x is lesionado)
+        idx_entra = next(i for i, x in enumerate(js) if x is elegido)
+        F.intercambiar(alin, ('campo', alin.titulares.index(idx_sale)), ('banco', alin.convocados.index(idx_entra)))
+        salieron = set(estado.get('sim_salieron', []) or [])
+        salieron.add(idx_sale)
+        estado['sim_salieron'] = sorted(salieron)
+        estado['sim_subs_realizadas'] = int(estado.get('sim_subs_realizadas', 0) or 0) + 1
+        minuto = estado.get('sim_minuto', 0)
+        ev = evento_cambio(minuto, lado, user_eq, lesionado, elegido, ya_fuera=True)
+        ev['_aplicado'] = True
+        aplicar_evento(ctx, ev)
+        estado.setdefault('sim_eventos_procesados', []).append(ev)
+        estado['sim_eventos'].append(ev)
+        estado.setdefault('sim_comentarios', []).append(f"Min {minuto}: {ev['detalle']}")
+    except Exception as e_cf:
+        logger.error(f"No se pudo hacer el cambio por lesión: {e_cf}")
+    estado['sim_cambio_forzado'] = None
+    _resimular(estado, local, visitante, user_eq, estado.get('sim_minuto', 0))
+    estado['sim_last_tick'] = pygame.time.get_ticks()
+
+
+def _snapshot_alineacion(equipo: Any, alin: Any) -> dict:
+    """Foto de la alineación y la táctica del usuario ANTES del partido."""
+    return {
+        'titulares': list(alin.titulares),
+        'convocados': list(getattr(alin, 'convocados', []) or []),
+        'formacion': alin.formacion,
+        'estilo': equipo.estilo_dt,
+        'mentalidad': getattr(equipo, 'mentalidad', 'normal'),
+    }
+
+
+def _restaurar_alineacion(equipo: Any, alin: Any, foto: Optional[dict]) -> None:
+    """v2.3.6: los cambios hechos en vivo solo valen para ese partido."""
+    if not foto or equipo is None or alin is None:
+        return
+    alin.titulares = list(foto['titulares'])
+    alin.convocados = list(foto['convocados'])
+    alin.formacion = foto['formacion']
+    equipo.estilo_dt = foto['estilo']
+    equipo.mentalidad = foto.get('mentalidad', 'normal')
 
 
 def _menu_penales(screen: pygame.Surface, estado: dict, user_eq: Any,
-                  mouse_pos: tuple, click_pos: Optional[tuple]) -> Optional[list]:
+                  mouse_pos: tuple, click_pos: Optional[tuple], teclas: Optional[list] = None) -> Optional[list]:
     """
     Selección de cobradores antes de la tanda. Pre-selecciona el top-5 por atributo
     `penales`; el usuario puede alternar (máx 5). Devuelve la lista de Jugador al
@@ -695,9 +747,12 @@ def _menu_penales(screen: pygame.Surface, estado: dict, user_eq: Any,
     except Exception:
         pass
 
-    panel = pygame.Rect(SCREEN_W // 2 - 320, 70, 640, 580)
+    panel = R_PENALES
     draw_glass_panel(screen, panel, bg_color=(28, 14, 14), border_color=(255, 215, 0), alpha=235)
-    draw_text(screen, "EMPATE — ELIGE TUS 5 COBRADORES", (panel.x + 30, panel.y + 18), size='lg', color='dorado')
+    # v3.8.0: en una vuelta puede haber penales sin empate en el partido (global empatado)
+    _empate = estado.get('sim_goles_l') == estado.get('sim_goles_v')
+    draw_text(screen, f"{'EMPATE' if _empate else 'GLOBAL EMPATADO'} — ELIGE TUS 5 COBRADORES",
+              (panel.x + 30, panel.y + 18 if _empate else panel.y + 24), size='lg' if _empate else 'md', color='dorado')
     draw_text(screen, "Ordenados por atributo de penales. Clic para alternar (máx 5).",
               (panel.x + 30, panel.y + 56), size='sm', color='azul')
 
@@ -711,7 +766,7 @@ def _menu_penales(screen: pygame.Surface, estado: dict, user_eq: Any,
 
     fila_rects = []
     y = panel.y + 95
-    for idx in orden[:14]:
+    for idx in orden[:FILAS_PENALES]:
         j = jugadores[idx]
         r = pygame.Rect(panel.x + 30, y, 580, 32)
         elegido = idx in sel
@@ -728,8 +783,27 @@ def _menu_penales(screen: pygame.Surface, estado: dict, user_eq: Any,
         fila_rects.append((r, idx))
         y += 36
 
-    btn_def = pygame.Rect(panel.x + 200, panel.bottom - 60, 240, 46)
+    btn_def = R_PENALES_DEFINIR
     draw_button(screen, btn_def, "DEFINIR EN PENALES", btn_def.collidepoint(mouse_pos))
+    draw_text(screen, "↑ ↓ Mover · Espacio Elegir · A Automático · Enter Definir",
+              (panel.x + 30, btn_def.y - 26), size='sm', color='azul')
+
+    # v4.2.0: teclado (cursor sobre la lista, Espacio alterna, A = los 5 mejores, Enter = DEFINIR)
+    cursor = max(0, min(int(estado.get('sim_penales_cursor', 0) or 0), len(fila_rects) - 1))
+    for k in teclas or []:
+        if k == pygame.K_DOWN and fila_rects:
+            cursor = (cursor + 1) % len(fila_rects)
+        elif k == pygame.K_UP and fila_rects:
+            cursor = (cursor - 1) % len(fila_rects)
+        elif k == pygame.K_SPACE and fila_rects:
+            click_pos = fila_rects[cursor][0].center
+        elif k == pygame.K_a:
+            sel[:] = orden[:5]
+        elif k in (pygame.K_RETURN, pygame.K_KP_ENTER) and sel:
+            click_pos = btn_def.center
+    estado['sim_penales_cursor'] = cursor
+    if fila_rects:
+        pygame.draw.rect(screen, (255, 215, 0), fila_rects[cursor][0], width=2, border_radius=5)
 
     if click_pos:
         for r, idx in fila_rects:
@@ -745,6 +819,104 @@ def _menu_penales(screen: pygame.Surface, estado: dict, user_eq: Any,
 
 
 # --- Renderizador de la Pantalla ══════════════════════════════════════════════
+
+# v4.1.0: claves del partido en vivo que se limpian al salir
+_CLAVES_SIM = ('sim_resultado', 'sim_eventos', 'sim_desarrollo', 'sim_desarrollo_done', 'sim_minuto',
+               'sim_goles_l', 'sim_goles_v', 'sim_comentarios', 'sim_eventos_procesados', 'sim_estado',
+               'sim_tactico_abierto', 'sim_sub_out', 'sim_ctx', 'sim_pausa_hasta', 'sim_aviso',
+               'sim_cambio_forzado', 'sim_cambio_sel', 'postpartido', 'postpartido_tab', 'postpartido_scroll',
+               'sim_penales_resuelto', 'sim_penales_marcador', 'sim_penales_gana_user', 'sim_penales_sel',
+               'sim_penales_secuencia', 'sim_penales_cobradores_l', 'sim_penales_cobradores_v')
+
+
+def _cerrar_partido_vivo(estado: dict, match_mode: str, liga: Any, mi_equipo: Any, partido: Any,
+                         local: Any, visitante: Any, user_eq: Any, user_alin: Any,
+                         goles_l: int, goles_v: int) -> None:
+    """
+    v4.1.0: al terminar el partido en vivo: notas finales, desarrollo de ambos equipos con los
+    goleadores/notas reales, físico y correo del user, y el cierre de la jornada (liga) o el
+    registro del resultado (copa) ANTES del post-partido, para que la tabla ya muestre dónde quedas.
+    """
+    from alpha_football import partido_ctx as PCX
+    from alpha_football.ui import postpartido as PP
+    ctx = estado.get('sim_ctx')
+    notas = PCX.notas_finales(ctx, goles_l, goles_v) if ctx is not None else {}
+    pos_antes = None
+
+    def restaurar():
+        # la alineación de antes del partido vuelve ANTES de cerrar la jornada: una venta por
+        # cláusula o quiebra al cerrar reindexa la plantilla y la foto de índices quedaría vieja
+        if 'sim_alin_partido' not in estado:
+            return
+        try:
+            _restaurar_alineacion(user_eq, user_alin, estado.pop('sim_alin_partido', None))
+        except Exception as e_rest:
+            logger.error(f"No se pudo restaurar la alineación previa al partido: {e_rest}")
+
+    try:
+        if (match_mode != 'amistoso' and mi_equipo is not None and ctx is not None
+                and mi_equipo.id in (local.id, visitante.id)):
+            from alpha_football.desarrollo import desarrollar_plantilla_post_partido
+            user_is_local = mi_equipo.id == local.id
+            lu, lr = ('l', 'v') if user_is_local else ('v', 'l')
+            st_l, st_v = PCX.stats_de_equipo(ctx, notas, 'l'), PCX.stats_de_equipo(ctx, notas, 'v')
+            if match_mode == 'copa':
+                # v3.8.0: en copa no se tocan las estadísticas de liga (van a copa['stats'])
+                from alpha_football.ui.copa_screen import desarrollo_copa
+                rep_l = desarrollo_copa(local, goles_l, goles_v, stats_partido=st_l)
+                rep_v = desarrollo_copa(visitante, goles_v, goles_l, stats_partido=st_v)
+            else:
+                rep_l = desarrollar_plantilla_post_partido(local, goles_l, goles_v, stats_partido=st_l)
+                rep_v = desarrollar_plantilla_post_partido(visitante, goles_v, goles_l, stats_partido=st_v)
+            estado['sim_desarrollo'] = rep_l if user_is_local else rep_v
+            try:  # v3.1.0: físico, moral y correo del partido del user
+                from alpha_football.vestuario import post_partido_user
+                post_partido_user(estado, mi_equipo, visitante if user_is_local else local,
+                                  goles_l if user_is_local else goles_v,
+                                  goles_v if user_is_local else goles_l,
+                                  estado['sim_desarrollo'] or [], PCX.minutos_por_id(ctx, lu),
+                                  incidencias=PCX.incidencias_de(ctx, lu),
+                                  incidencias_rival=PCX.incidencias_de(ctx, lr),
+                                  minutos_rival=PCX.minutos_por_id(ctx, lr))
+            except Exception as e_ves:
+                logger.error(f"Error de vestuario tras el partido en vivo: {e_ves}")
+            restaurar()
+            if match_mode == 'copa':
+                try:
+                    from alpha_football.ui.copa_screen import registrar_stats_copa, registrar_resultado_copa
+                    registrar_stats_copa(estado, getattr(local, 'nombre', ''), goles_v, rep_l)
+                    registrar_stats_copa(estado, getattr(visitante, 'nombre', ''), goles_l, rep_v)
+                    pen_user = estado.get('sim_penales_marcador') if estado.get('sim_penales_resuelto') else None
+                    registrar_resultado_copa(estado, goles_l, goles_v, pen_user)
+                except Exception as e_reg:
+                    logger.error(f"Error al registrar el partido de copa: {e_reg}")
+            else:
+                pos_antes = PP.posicion_liga(liga, mi_equipo.id)
+                finalizar_jornada_liga(estado, liga, mi_equipo, partido, goles_l, goles_v)
+    except Exception as e_dev:
+        logger.error(f"Error al cerrar el partido en vivo: {e_dev}")
+    restaurar()   # amistoso o sin carrera: igual se deja la alineación como estaba
+    pen = estado.get('sim_penales_marcador') if estado.get('sim_penales_resuelto') else None
+    PP.armar_datos(estado, match_mode, local, visitante, goles_l, goles_v, ctx, notas,
+                   estado.get('sim_eventos', []), penales=pen, pos_antes=pos_antes)
+
+
+def _salir_partido(estado: dict, match_mode: str) -> str:
+    """v4.1.0: limpia el partido en vivo y devuelve la pantalla de destino."""
+    for k in _CLAVES_SIM:
+        estado.pop(k, None)
+    if match_mode == 'amistoso':
+        # Fase 6: amistoso sin consecuencias; limpiar y volver al menú.
+        for k in ('match_mode', 'amis_local', 'amis_visitante', 'amistoso_liga'):
+            estado.pop(k, None)
+        return "menu"
+    if match_mode == 'copa':
+        for k in ('match_mode', 'partido_local_obj', 'partido_visitante_obj', 'partido_copa_dict',
+                  'partido_copa_bracket_fase'):
+            estado.pop(k, None)
+        estado['hub_tab'] = 'inicio'   # v2.4.0: la copa se juega desde Inicio
+    return "league_screen"
+
 
 def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
     """
@@ -786,7 +958,8 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         if not local or not visitante:
             logger.error("No se encontraron los equipos del partido.")
             if match_mode == 'copa':
-                return "copa_screen"
+                estado['hub_tab'] = 'inicio'   # v2.4.0
+                return "league_screen"
             if match_mode == 'amistoso':
                 return "menu"
             return "league_screen"
@@ -808,8 +981,25 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         # 1. Simulación de la PRIMERA MITAD al entrar. La 2ª mitad se simula DESPUÉS de la
         #    charla de medio tiempo, para que la decisión táctica afecte de verdad al motor.
         if 'sim_resultado' not in estado:
+            if match_mode != 'amistoso':
+                try:
+                    _depurar_titulares(user_eq, user_alin)
+                except Exception as e_dep:
+                    logger.error(f"No se pudieron depurar los titulares: {e_dep}")
             from alpha_football.engine import simular_rango
-            _gl1, _gv1, ev1 = simular_rango(local, visitante, 1, 45)
+            from alpha_football.engine import sortear_suerte
+            _sl, _sv = sortear_suerte(local, visitante)
+            estado["sim_suerte"] = {"suerte_l": _sl, "suerte_v": _sv}  # v2.3.6: misma suerte en todo el partido
+            # v4.1.0: estado REVELADO del partido; el motor simula sobre copias
+            from alpha_football.partido_ctx import nuevo_estado
+            from alpha_football.engine import _once_titular
+            _lu = _lado_user(local, user_eq)
+            estado['sim_ctx'] = nuevo_estado(local, visitante, _once_titular(local), _once_titular(visitante),
+                                             auto_l=_lu != 'l', auto_v=_lu != 'v')
+            _gl1, _gv1, ev1 = simular_rango(local, visitante, 1, 45, mult=estado["sim_suerte"],
+                                            minutos_previos=_minutos_previos(estado, user_eq, getattr(user_eq, 'alineacion_activa', None)),
+                                            ctx=estado['sim_ctx'].copia(),
+                **_ments(local, visitante, user_eq))
             # Sabor: evento caótico ocasional en la 1ª mitad
             try:
                 if random.random() < 0.3:
@@ -829,6 +1019,8 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             estado['sim_resultado'] = True            # marca de inicialización
             estado['sim_eventos'] = ev1               # eventos a revelar (crece con la 2ª mitad)
             estado['sim_minuto'] = 0
+            estado['sim_fin'] = 90 + random.randint(3, 10)   # v4.4.0: minutos de adición
+            estado['sim_ctx'].fin = estado['sim_fin']
             estado['sim_goles_l'] = 0
             estado['sim_goles_v'] = 0
             estado['sim_comentarios'] = []
@@ -837,6 +1029,9 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             estado['sim_flash_goles'] = 0 # contador de frames para animación de gol
             estado['sim_goleador_flash'] = ""
             estado['sim_ajuste_realizado'] = False
+            estado['sim_pausa_hasta'] = 0          # v4.1.0: pausa con aviso (gol, tarjeta, lesión)
+            estado['sim_aviso'] = None
+            estado['sim_cambio_forzado'] = None    # v4.1.0: lesión del user pendiente de cambio
             # Velocidad de simulación: factor 1 = normal, 2 = el doble de rápido. Se conserva
             # entre partidos (estado), por eso se lee con get en vez de fijarlo siempre a 1.
             # v0.8.5: una carrera nueva deja sim_velocidad_factor=None (la clave EXISTE), por lo que
@@ -848,10 +1043,20 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             estado['sim_last_tick'] = pygame.time.get_ticks()
             # v0.8.1: tracking de cambios realizados por el usuario (máx 5 por partido, como en el fútbol real).
             estado['sim_subs_realizadas'] = 0
+            estado['sim_salieron'] = []
+            estado.pop('sim_dir_snapshot', None)
+            estado['sim_alin_partido'] = (_snapshot_alineacion(user_eq, user_alin)
+                                          if user_eq is not None and user_alin is not None else None)
             # v0.8.1: tracking per-jugador para F4 (cansancio y nota).
             estado['sim_minuto_por_jugador'] = {}   # {id_jugador: minutos_en_cancha}
             estado['sim_nota_por_jugador'] = {}     # {id_jugador: nota_actual}
             estado['sim_titulares_iniciales'] = list(getattr(user_alin, 'titulares', []) or []) if user_alin else []
+            # v2.3.5: banco válido al arrancar (índices corridos por ventas, lesionados).
+            if user_alin and user_eq is not None:
+                try:
+                    F.normalizar_convocados(user_alin, user_eq.jugadores)
+                except Exception as e_conv:
+                    logger.error(f"No se pudieron normalizar convocados: {e_conv}")
 
         minuto = estado['sim_minuto']
         goles_l = estado['sim_goles_l']
@@ -861,7 +1066,10 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         # 2. Lógica del Ticker del Reloj
         now = pygame.time.get_ticks()
         if (sim_state in ('jugando', 'segundo_tiempo') and estado['sim_flash_goles'] == 0
-                and not estado.get('sim_tactico_abierto')):
+                and now >= estado.get('sim_pausa_hasta', 0)                # v4.1.0
+                and estado.get('sim_cambio_forzado') is None
+                and not estado.get('sim_tactico_abierto')
+                and not estado.get('ayuda_abierta')):          # v3.9.0: con la ayuda H abierta el reloj se pausa
             if now - estado['sim_last_tick'] >= estado['sim_speed']:
                 estado['sim_minuto'] += 1
                 minuto = estado['sim_minuto']
@@ -872,8 +1080,9 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                     if user_eq is not None and user_alin is not None:
                         mins = estado.setdefault('sim_minuto_por_jugador', {})
                         js = list(getattr(user_eq, 'jugadores', []) or [])
+                        fuera = getattr(estado.get('sim_ctx'), 'fuera', set())
                         for idx in user_alin.titulares:
-                            if 0 <= idx < len(js):
+                            if 0 <= idx < len(js) and id(js[idx]) not in fuera:   # v4.1.0: expulsados/lesionados no suman
                                 jid = getattr(js[idx], 'id', None)
                                 if jid is not None:
                                     mins[jid] = mins.get(jid, 0) + 1
@@ -889,76 +1098,31 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                         # Agregar comentario a la lista de scroll
                         detalle = e['detalle']
                         tipo = e['tipo']
-                        
+                        # v4.1.0: el ctx revelado sigue exactamente lo que se ve en pantalla
+                        if not e.get('_aplicado'):
+                            try:
+                                from alpha_football.partido_ctx import aplicar_evento as _aplicar
+                                _aplicar(estado['sim_ctx'], e)
+                            except Exception as e_ap:
+                                logger.error(f"No se pudo aplicar el evento revelado: {e_ap}")
+                        lado_ev = e.get('lado') or ('l' if e.get('equipo_id') == local.id else 'v')
+                        eq_ev = local if lado_ev == 'l' else visitante
+                        j_ev = e.get('jugador')
+                        nombre_ev = getattr(j_ev, 'nombre_completo', None) or "Jugador"
+
                         if tipo == 'gol':
-                            # Determinar quién anotó
-                            equipo_gol_id = e['equipo_id']
-                            goleador = "Goleador estrella"
-                            scoring_team = local if equipo_gol_id == local.id else visitante
-                            if scoring_team and scoring_team.jugadores:
-                                # v0.8.1: priorizar el jugador_id del evento (asignado por el
-                                # motor). Si no está (saves viejos), cae a uno aleatorio entre
-                                # los titulares DEL/MED/DEF — ya no del banco.
-                                j_score = None
-                                jid = e.get('jugador_id')
-                                if jid is not None:
-                                    j_score = next((j for j in scoring_team.jugadores
-                                                    if getattr(j, 'id', None) == jid), None)
-                                if j_score is None:
-                                    # Fallback: titulares que pueden hacer gol (incluye DEF para
-                                    # honrar el 8% de gol de central del motor).
-                                    try:
-                                        from alpha_football.engine import _once_titular
-                                        titulares = _once_titular(scoring_team)
-                                    except Exception:
-                                        titulares = list(scoring_team.jugadores)
-                                    possible_scorers = [j for j in titulares
-                                                        if getattr(j, 'posicion', '') in ('DEL', 'MED', 'DEF')]
-                                    if possible_scorers:
-                                        j_score = random.choice(possible_scorers)
-                                    else:
-                                        j_score = random.choice(list(scoring_team.jugadores))
-                                goleador = j_score.nombre_completo
-                                # Tracking de nota: gol = +0.6 al anotador
-                                try:
-                                    notas = estado.setdefault('sim_nota_por_jugador', {})
-                                    jid_key = getattr(j_score, 'id', None)
-                                    if jid_key is not None:
-                                        notas[jid_key] = notas.get(jid_key, 6.0) + 0.6
-                                except Exception:
-                                    pass
-                                # v0.8.2: tracking de asistencia — elegir un compañero MED/DEL al azar
-                                # y subir +0.3 a su nota. Persistir también en
-                                # sim_asist_por_jugador para mostrarlo en la transmisión.
-                                try:
-                                    posibles_asist = [j for j in scoring_team.jugadores
-                                                        if getattr(j, 'id', None) is not None
-                                                        and j.id != getattr(j_score, 'id', None)
-                                                        and getattr(j, 'posicion', '') in ('MED', 'DEL')]
-                                    if posibles_asist:
-                                        j_asist = random.choice(posibles_asist)
-                                        notas[getattr(j_asist, 'id', None)] = notas.get(getattr(j_asist, 'id', None), 6.0) + 0.3
-                                        asist_acum = estado.setdefault('sim_asist_por_jugador', {})
-                                        asist_acum[getattr(j_asist, 'id', None)] = asist_acum.get(getattr(j_asist, 'id', None), 0) + 1
-                                        # Texto del detalle incluye el asistente
-                                        detalle = f"⚽ ¡GOOOL de {scoring_team.nombre}! {goleador} marca con clase (asist. {j_asist.apellido}). ({goles_l}-{goles_v})"
-                                except Exception:
-                                    pass
-                                
-                            if equipo_gol_id == local.id:
+                            # v4.1.0: goleador y asistente vienen del motor (ya no se sortean aquí)
+                            if e.get('equipo_id') == local.id:
                                 estado['sim_goles_l'] += 1
                                 goles_l = estado['sim_goles_l']
                             else:
                                 estado['sim_goles_v'] += 1
                                 goles_v = estado['sim_goles_v']
-                                
-                            # Modificar detalle para incluir goleador
-                            detalle = f"⚽ ¡GOOOL de {scoring_team.nombre}! {goleador} marca con clase. ({goles_l}-{goles_v})"
-                            
-                            # Disparar flash de gol
+                            detalle = f"{e['detalle']} ({goles_l}-{goles_v})"
                             estado['sim_flash_goles'] = 25 # frames de duración
-                            estado['sim_goleador_flash'] = f"{goleador.upper()} ({scoring_team.nombre.upper()})"
-                            
+                            estado['sim_goleador_flash'] = f"{nombre_ev.upper()} ({eq_ev.nombre.upper()})"
+                            _pausar(estado, 'gol', f"{nombre_ev} ({eq_ev.nombre})", 'verde')
+
                             # Inicializar confeti y animación alegre
                             try:
                                 estado['sim_confeti'] = []
@@ -980,19 +1144,54 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                                     })
                             except Exception as e_confetti:
                                 logger.error(f"Error al inicializar confeti de gol: {e_confetti}")
-                                
+
+                        elif tipo in ('amarilla', 'roja', 'lesion'):
+                            # v4.1.0: tarjetas y lesiones detienen el reloj con un aviso
+                            _pausar(estado, tipo, f"{nombre_ev} ({eq_ev.nombre})",
+                                    'dorado' if tipo == 'amarilla' else 'rojo')
+                            detalle = {'amarilla': "AMARILLA: ", 'roja': "ROJA: ", 'lesion': "LESIÓN: "}[tipo] + detalle
+                            if tipo == 'lesion' and lado_ev == _lado_user(local, user_eq):
+                                try:
+                                    from alpha_football.engine import suplentes_disponibles
+                                    from alpha_football.partido_ctx import clave as _clave
+                                    if (int(estado.get('sim_subs_realizadas', 0) or 0) < 5
+                                            and suplentes_disponibles(estado['sim_ctx'], lado_ev, user_eq)):
+                                        estado['sim_cambio_forzado'] = _clave(j_ev)
+                                        estado['sim_cambio_sel'] = 0
+                                    else:
+                                        estado['sim_comentarios'].append(
+                                            f"Min {minuto}: Sin cambios disponibles: {eq_ev.nombre} sigue con uno menos")
+                                except Exception as e_les:
+                                    logger.error(f"Error al preparar el cambio por lesión: {e_les}")
+                        elif tipo == 'cambio':
+                            detalle = f"CAMBIO: {detalle}"
                         elif tipo == 'caotico':
-                            detalle = f"⚠️ {detalle}"
+                            detalle = f"(!) {detalle}"   # v4.1.0: sin emoji (la fuente no lo tiene)
+                        elif tipo == 'mentalidad':
+                            # v2.5.0: la IA cambió de mentalidad (se ve en el marcador).
+                            estado.setdefault('sim_ment', {})[e.get('equipo_id')] = e.get('mentalidad')
+                            detalle = f"» {detalle}"
                             
                         estado['sim_comentarios'].append(f"Min {minuto}: {detalle}")
                 
+                # v4.1.0: nota en vivo del user desde el ctx (la muestra la dirección en vivo)
+                try:
+                    from alpha_football.partido_ctx import nota_en_vivo as _nv
+                    _c, _lu = estado['sim_ctx'], _lado_user(local, user_eq)
+                    estado['sim_nota_por_jugador'] = {getattr(jj, 'id', None): _nv(_c, k)
+                                                      for k, jj in _c.jugadores.items() if _c.lado_jugador.get(k) == _lu}
+                except Exception as e_nv:
+                    logger.error(f"No se pudo actualizar la nota en vivo: {e_nv}")
+
                 # Medio tiempo
                 if minuto == 45 and sim_state == 'jugando':
                     estado['sim_estado'] = 'medio_tiempo'
                     sim_state = 'medio_tiempo'
                     
+                if minuto == 90 and estado.get('sim_fin', 90) > 90:   # v4.4.0
+                    estado['sim_comentarios'].append(f"Min 90: Se adicionan {estado['sim_fin'] - 90} minutos.")
                 # Fin del partido
-                if minuto == 90:
+                if minuto >= estado.get('sim_fin', 90):
                     estado['sim_estado'] = 'finalizado'
                     sim_state = 'finalizado'
                     
@@ -1000,7 +1199,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         draw_happy_pitch(screen)
         
         # A. Scoreboard Grande con Glassmorphism y borde neón dorado
-        board_rect = pygame.Rect(40, 20, 1200, 150)
+        board_rect = R_MARCADOR
         draw_glass_panel(screen, board_rect, bg_color=(10, 25, 20), border_color=(255, 215, 0), alpha=210)
         
         # Nombre corto (v0.7) para evitar solapamiento con el marcador.
@@ -1024,17 +1223,36 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         draw_text(screen, marcador_str, (SCREEN_W // 2 - m_w // 2, 35), size='xl', color='dorado')
         
         # Reloj
-        reloj_str = f"{minuto}'" if minuto < 90 else "FINAL"
+        _fin = int(estado.get('sim_fin', 90))   # v4.4.0: 90+X' en la adición
+        reloj_str = ("FINAL" if minuto >= _fin else f"90+{minuto - 90}'" if minuto > 90 else f"{minuto}'")
         r_w = get_font('md').size(reloj_str)[0]
         draw_text(screen, reloj_str, (SCREEN_W // 2 - r_w // 2, 115), size='md', color='azul')
 
+        # v2.5.0: mentalidad actual de cada equipo bajo su nombre (la del user es la suya;
+        # la del rival, la del último cambio revelado o la que decide la IA al empezar).
+        try:
+            from alpha_football.engine import NOMBRE_MENTALIDAD, mentalidad_ia
+            ments_vis = estado.setdefault('sim_ment', {})
+            for eq, rival, es_local in ((local, visitante, True), (visitante, local, False)):
+                if user_eq is not None and getattr(eq, 'id', None) == getattr(user_eq, 'id', None):
+                    m = getattr(user_eq, 'mentalidad', 'normal')
+                else:
+                    if eq.id not in ments_vis:
+                        ments_vis[eq.id] = mentalidad_ia(eq, rival, 1, 0, 0, es_local)
+                    m = ments_vis[eq.id]
+                txt = NOMBRE_MENTALIDAD.get(m, 'NORMAL')
+                x = 95 if es_local else 1220 - get_font('sm').size(txt)[0]
+                draw_text(screen, txt, (x, 84), size='sm', color='rojo' if m == 'todo_o_nada' else 'azul')
+        except Exception as e_ment:
+            logger.error(f"Error al dibujar mentalidades: {e_ment}")
+
         # Botón de velocidad: cicla x1 / x2 / x5 para acelerar la simulación.
         factor_vel = estado.get('sim_velocidad_factor', 1)
-        rect_velocidad = pygame.Rect(1085, 112, 115, 42)
+        rect_velocidad = R_VELOCIDAD
         draw_button(screen, rect_velocidad, f"VEL x{factor_vel}", rect_velocidad.collidepoint(pygame.mouse.get_pos()))
 
         # Botón TÁCTICA: abre el menú de formación/táctica/dirección durante el partido.
-        rect_tactica = pygame.Rect(948, 112, 128, 42)
+        rect_tactica = R_TACTICA
         mostrar_tactica = (user_eq is not None and sim_state in ('jugando', 'segundo_tiempo')
                            and not estado.get('sim_tactico_abierto'))
         if mostrar_tactica:
@@ -1051,7 +1269,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             pygame.draw.line(screen, (40, 70, 50), (progress_x_start, progress_y), (progress_x_end, progress_y), width=6)
             
             # Progreso verde neón
-            progreso_actual = min(1.0, max(0.0, minuto / 90.0))
+            progreso_actual = min(1.0, max(0.0, minuto / float(estado.get('sim_fin', 90))))
             current_ball_x = int(progress_x_start + progreso_actual * progress_width)
             pygame.draw.line(screen, (0, 255, 136), (progress_x_start, progress_y), (current_ball_x, progress_y), width=6)
             
@@ -1062,7 +1280,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             logger.error(f"Error al dibujar barra de progreso del marcador: {e_progress}")
             
         # B. Panel de Comentarios Scrolling con Glassmorphism y borde azul
-        comm_rect = pygame.Rect(40, 190, 1200, 360)
+        comm_rect = R_TRANSMISION
         draw_glass_panel(screen, comm_rect, bg_color=(12, 18, 36), border_color=(0, 191, 255), alpha=210)
         draw_text(screen, "TRANSMISIÓN MINUTO A MINUTO", (60, 205), size='sm', color='dorado')
         
@@ -1111,11 +1329,26 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         click_pos = None
         
         # Procesar eventos
+        teclas = []
+        teclas_ev = []     # v4.2.0: los eventos completos van al menú táctico (dirección en vivo)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return "menu"
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 click_pos = event.pos
+            elif event.type == pygame.KEYDOWN:
+                teclas.append(event.key)
+                teclas_ev.append(event)
+
+        # v4.1.0: Enter/Espacio salta la pausa del aviso (con el selector abierto, las teclas son suyas)
+        if estado.get('sim_cambio_forzado') is not None:
+            estado['sim_pausa_hasta'] = 0
+        elif (any(k in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE) for k in teclas)
+              and (pygame.time.get_ticks() < estado.get('sim_pausa_hasta', 0) or estado['sim_flash_goles'] > 0)):
+            estado['sim_pausa_hasta'] = 0
+            estado['sim_flash_goles'] = 0
+            teclas = [k for k in teclas if k not in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE)]
+            teclas_ev = [ev for ev in teclas_ev if ev.key not in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE)]
 
         # Clic en velocidad: cicla x1 -> x2 -> x5 y actualiza el ritmo del reloj al instante.
         if click_pos and rect_velocidad.collidepoint(click_pos):
@@ -1123,6 +1356,45 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             estado['sim_velocidad_factor'] = nuevo_factor
             estado['sim_speed'] = max(40, MS_POR_MINUTO // nuevo_factor)
             click_pos = None  # consumir el clic para que no active otra cosa debajo
+
+        # v4.2.0: teclado en vivo: V velocidad, T táctica, 1-5 mentalidad
+        if (sim_state in ('jugando', 'segundo_tiempo') and not estado.get('sim_tactico_abierto')
+                and estado.get('sim_cambio_forzado') is None):
+            for k in teclas:
+                if k == pygame.K_v:
+                    nuevo_factor = {1: 2, 2: 5, 5: 1}.get(estado.get('sim_velocidad_factor', 1), 1)
+                    estado['sim_velocidad_factor'] = nuevo_factor
+                    estado['sim_speed'] = max(40, MS_POR_MINUTO // nuevo_factor)
+                elif k == pygame.K_t and mostrar_tactica:
+                    estado['sim_tactico_abierto'] = True
+                elif pygame.K_1 <= k <= pygame.K_5 and mostrar_tactica:
+                    try:
+                        from alpha_football.engine import MENTALIDADES
+                        nueva_m = MENTALIDADES[k - pygame.K_1]
+                        if nueva_m != getattr(user_eq, 'mentalidad', 'normal'):
+                            _cambiar_mentalidad_en_vivo(estado, user_eq, local, visitante, nueva_m, minuto)
+                    except Exception as e_tm:
+                        logger.error(f"Error al cambiar la mentalidad con el teclado: {e_tm}")
+        if sim_state in ('jugando', 'segundo_tiempo') and not estado.get('sim_tactico_abierto'):
+            draw_text(screen, "V Velocidad · T Táctica · 1-5 Mentalidad · Enter Saltar aviso · H Ayuda",
+                      (60, 612), size='sm', color='blanco')
+
+        # v2.5.0: tira de MENTALIDAD (sin pausar; re-simula el resto de la mitad).
+        if mostrar_tactica:
+            try:
+                from alpha_football.engine import MENTALIDADES, NOMBRE_MENTALIDAD
+                draw_text(screen, "MENTALIDAD", (60, 572), size='sm', color='dorado')
+                actual = getattr(user_eq, 'mentalidad', 'normal')
+                for m, r in zip(MENTALIDADES, _rects_tira_mentalidad()):
+                    draw_button(screen, r, NOMBRE_MENTALIDAD[m], r.collidepoint(pygame.mouse.get_pos()) or m == actual)
+                    if m == actual:
+                        pygame.draw.rect(screen, (255, 215, 0), r, width=3, border_radius=8)
+                    if click_pos and r.collidepoint(click_pos):
+                        click_pos = None
+                        if m != actual:
+                            _cambiar_mentalidad_en_vivo(estado, user_eq, local, visitante, m, minuto)
+            except Exception as e_tira:
+                logger.error(f"Error en la tira de mentalidad: {e_tira}")
 
         # Clic en TÁCTICA: abre el overlay de ajuste táctico en vivo (pausa el reloj).
         if mostrar_tactica and click_pos and rect_tactica.collidepoint(click_pos):
@@ -1189,55 +1461,45 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             draw_text(screen, t2, (SCREEN_W // 2 - t2_w // 2, SCREEN_H // 2 + 15), size='lg', color='bg', shadow=False)
             
         # B. Ajuste táctico EN VIVO (botón TÁCTICA durante el juego) — pausa el reloj.
-        elif estado.get('sim_tactico_abierto') and user_eq is not None:
+        elif (estado.get('sim_tactico_abierto') and user_eq is not None
+              and estado.get('sim_cambio_forzado') is None):   # v4.1.0: primero el cambio por lesión
             res = _menu_tactico(screen, estado, user_eq, user_alin, mouse_pos, click_pos,
-                                "AJUSTE TÁCTICO EN VIVO")
+                                "AJUSTE TÁCTICO EN VIVO", key_events=teclas_ev)
             if res == 'reanudar':
                 estado['sim_tactico_abierto'] = False
                 # Re-simular SOLO el tramo restante de la mitad en curso con la nueva config.
-                fin = 45 if minuto < 45 else 90
-                try:
-                    from alpha_football.engine import simular_rango
-                    if minuto < fin:
-                        _gl, _gv, nuevos = simular_rango(local, visitante, minuto + 1, fin)
-                        estado['sim_eventos'] = [e for e in estado['sim_eventos'] if e['minuto'] <= minuto] + nuevos
-                except Exception as e_resim:
-                    logger.error(f"Error al re-simular tras cambio táctico: {e_resim}")
+                _resimular(estado, local, visitante, user_eq, minuto)   # v4.1.0: desde lo revelado
                 estado['sim_last_tick'] = pygame.time.get_ticks()
 
         # C. Medio Tiempo: menú de formación / táctica / dirección + REANUDAR.
-        elif sim_state == 'medio_tiempo':
+        elif sim_state == 'medio_tiempo' and estado.get('sim_cambio_forzado') is None:
             if user_eq is not None:
                 res = _menu_tactico(screen, estado, user_eq, user_alin, mouse_pos, click_pos,
-                                    "MEDIO TIEMPO — FORMACIÓN / TÁCTICA / DIRECCIÓN")
+                                    "MEDIO TIEMPO — FORMACIÓN / TÁCTICA / DIRECCIÓN", key_events=teclas_ev)
                 if res == 'reanudar':
                     estado['sim_comentarios'].append(
                         f"DT: {user_eq.estilo_dt} en {user_alin.formacion}. ¡A la segunda mitad!")
-                    try:
-                        from alpha_football.engine import simular_rango
-                        _gl2, _gv2, ev2 = simular_rango(local, visitante, 46, 90)
-                        estado['sim_eventos'].extend(ev2)
-                    except Exception as e_2t:
-                        logger.error(f"Error al simular la segunda mitad: {e_2t}")
+                    _resimular(estado, local, visitante, user_eq, 45, int(estado.get('sim_fin', 90)))   # v4.1.0: 2ª mitad desde lo revelado
                     estado['sim_estado'] = 'segundo_tiempo'
                     estado['sim_last_tick'] = pygame.time.get_ticks()
             else:
                 # Sin equipo controlable (caso raro): simular la 2ª mitad y continuar.
-                try:
-                    from alpha_football.engine import simular_rango
-                    _gl2, _gv2, ev2 = simular_rango(local, visitante, 46, 90)
-                    estado['sim_eventos'].extend(ev2)
-                except Exception:
-                    pass
+                _resimular(estado, local, visitante, user_eq, 45, int(estado.get('sim_fin', 90)))
                 estado['sim_estado'] = 'segundo_tiempo'
                 estado['sim_last_tick'] = pygame.time.get_ticks()
 
         # D. Pantalla Finalizada
         elif sim_state == 'finalizado':
-            # v0.7: definición por penales (eliminatoria de copa del usuario que terminó en empate).
-            es_bracket_copa = (match_mode == 'copa' and estado.get('partido_copa_dict') is None)
-            if es_bracket_copa and user_eq is not None and goles_l == goles_v and not estado.get('sim_penales_resuelto'):
-                cobradores = _menu_penales(screen, estado, user_eq, mouse_pos, click_pos)
+            # v3.8.0: definición por penales si el motor lo pide (final empatada o global empatado).
+            es_bracket_copa = False
+            if match_mode == 'copa' and not estado.get('sim_penales_resuelto'):
+                try:
+                    from alpha_football.ui.copa_screen import necesita_penales
+                    es_bracket_copa = necesita_penales(estado, goles_l, goles_v)
+                except Exception as e_np:
+                    logger.error(f"Error al consultar si hay penales: {e_np}")
+            if es_bracket_copa and user_eq is not None and not estado.get('sim_penales_resuelto'):
+                cobradores = _menu_penales(screen, estado, user_eq, mouse_pos, click_pos, teclas)
                 if cobradores is not None:
                     try:
                         from alpha_football.engine import tanda_penales_jugadores
@@ -1259,185 +1521,24 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                         estado['sim_penales_resuelto'] = True
                 return None  # mientras se eligen cobradores no se dibuja el panel final
 
-            # Fase 3: aplicar el desarrollo de los jugadores del usuario UNA sola vez al terminar.
+            # v4.1.0: cierre UNA sola vez (desarrollo con lo que pasó en la cancha, físico,
+            # jornada o copa) y pantalla post-partido: calificaciones + tabla antes de continuar.
             if not estado.get('sim_desarrollo_done'):
                 estado['sim_desarrollo_done'] = True
-                try:
-                    if match_mode != 'amistoso' and mi_equipo and local and visitante and mi_equipo.id in (local.id, visitante.id):
-                        from alpha_football.desarrollo import desarrollar_plantilla_post_partido
-                        # v0.8.6 (Tarea 4+5): desarrollar AMBOS equipos y registrar stats de copa
-                        rep_l = desarrollar_plantilla_post_partido(local, goles_l, goles_v)
-                        rep_v = desarrollar_plantilla_post_partido(visitante, goles_v, goles_l)
-                        # El reporte del usuario se usa para la UI de resumen
-                        user_is_local = mi_equipo.id == local.id
-                        estado['sim_desarrollo'] = rep_l if user_is_local else rep_v
-                        # Registrar estadísticas de copa si estamos en modo copa
-                        if match_mode == 'copa':
-                            try:
-                                from alpha_football.ui.copa_screen import registrar_stats_copa
-                                registrar_stats_copa(estado, getattr(local, 'nombre', ''), goles_v, rep_l)
-                                registrar_stats_copa(estado, getattr(visitante, 'nombre', ''), goles_l, rep_v)
-                            except Exception:
-                                pass
-                except Exception as e_dev:
-                    logger.error(f"Error al aplicar desarrollo post-partido: {e_dev}")
+                _cerrar_partido_vivo(estado, match_mode, liga, mi_equipo, partido, local, visitante,
+                                     user_eq, user_alin, goles_l, goles_v)
+            from alpha_football.ui import postpartido as _pp
+            if _pp.render(screen, estado, mouse_pos, click_pos, teclas) == 'continuar':
+                return _salir_partido(estado, match_mode)
+            return None
 
-            # Panel inferior de navegación para volver con estilo Glassmorphism
-            panel_vol = pygame.Rect(40, 570, 1200, 80)
-            draw_glass_panel(screen, panel_vol, bg_color=(20, 30, 50), border_color=(255, 215, 0), alpha=210)
+        # v4.1.0: selector de cambio por lesión o aviso de incidencia (encima de todo)
+        if estado.get('sim_cambio_forzado') is not None and user_eq is not None:
+            _selector_cambio(screen, estado, user_eq, local, visitante, teclas, mouse_pos, click_pos)
+        elif (pygame.time.get_ticks() < estado.get('sim_pausa_hasta', 0) and estado['sim_flash_goles'] == 0
+              and estado.get('sim_aviso')):
+            _dibujar_aviso(screen, estado)
 
-            draw_text(screen, "¡PARTIDO FINALIZADO!", (60, 595), size='lg', color='dorado')
-
-            # Resumen de desarrollo (Fase 3): jugadores que subieron de OVR y mejor nota.
-            try:
-                rep = estado.get('sim_desarrollo') or []
-                if rep:
-                    subieron = [r['jugador'] for r in rep if r.get('subio_ovr')]
-                    mejor = max(rep, key=lambda r: r.get('nota', 0))
-                    if subieron:
-                        txt_sub = "Subio OVR: " + ", ".join(subieron[:2]) + ("..." if len(subieron) > 2 else "")
-                    else:
-                        txt_sub = f"Figura: {mejor['jugador']} ({mejor['nota']})"
-                    draw_text(screen, txt_sub[:70], (60, 625), size='sm', color='verde')
-            except Exception as e_repdev:
-                logger.error(f"Error al mostrar resumen de desarrollo: {e_repdev}")
-            
-            # Mostrar resumen del resultado para el usuario de forma vistosa
-            try:
-                if mi_equipo is not None and local is not None:
-                    user_is_local = (mi_equipo.id == local.id)
-                    user_goles = goles_l if user_is_local else goles_v
-                    rival_goles = goles_v if user_is_local else goles_l
-
-                    if user_goles > rival_goles:
-                        resultado_str = "🏆 ¡VICTORIA DE ALTA CLASE!"
-                        res_color = 'verde'
-                    elif user_goles < rival_goles:
-                        resultado_str = "💔 DERROTA... ¡A SEGUIR LUCHANDO!"
-                        res_color = 'rojo'
-                    else:
-                        resultado_str = "🤝 EMPATE DISPUTADO Y VALIOSO"
-                        res_color = 'azul'
-                    draw_text(screen, resultado_str, (320, 595), size='md', color=res_color)
-            except Exception as e_res_summary:
-                logger.error(f"Error al resumir resultado en pantalla finalizada: {e_res_summary}")
-            
-            btn_exit = pygame.Rect(1000, 585, 220, 50)
-            hov_exit = btn_exit.collidepoint(mouse_pos)
-            draw_button(screen, btn_exit, "VOLVER A LA LIGA", hov_exit)
-            
-            if click_pos and btn_exit.collidepoint(click_pos):
-                if match_mode == 'amistoso':
-                    # Fase 6: amistoso sin consecuencias; limpiar y volver al menú.
-                    for k in ('sim_resultado', 'sim_eventos', 'sim_desarrollo', 'sim_desarrollo_done',
-                              'sim_minuto', 'sim_goles_l', 'sim_goles_v', 'sim_comentarios',
-                              'sim_eventos_procesados', 'sim_estado', 'match_mode', 'sim_tactico_abierto',
-                              'sim_sub_out', 'amis_local', 'amis_visitante', 'amistoso_liga'):
-                        estado.pop(k, None)
-                    return "menu"
-                if match_mode == 'copa':
-                    # Guardar resultado del partido de copa
-                    partido_copa = estado.get('partido_copa_dict')
-                    if partido_copa: # Fase de grupos
-                        partido_copa['goles_l'] = goles_l
-                        partido_copa['goles_v'] = goles_v
-                        partido_copa['jugado'] = True
-                        recalcular_standings_copa(estado)
-                    else: # Fase de eliminatoria directa
-                        fase_actual = estado.get('partido_copa_bracket_fase')
-                        if fase_actual and 'copa_bracket' in estado:
-                            fase_data = estado['copa_bracket'][fase_actual]
-                            fase_data['goles_l'] = goles_l
-                            fase_data['goles_v'] = goles_v
-                            fase_data['jugado'] = True
-                            
-                            if goles_l == goles_v:
-                                # v0.7: usar el resultado de la tanda elegida por el usuario.
-                                gana_user = estado.get('sim_penales_gana_user', random.random() < 0.55)
-                                fase_data['avanza'] = 'user' if gana_user else 'rival'
-                                fase_data['penales'] = estado.get('sim_penales_marcador',
-                                                                  '5-4' if gana_user else '4-5')
-                            else:
-                                if goles_l > goles_v:
-                                    fase_data['avanza'] = 'user'
-                                else:
-                                    fase_data['avanza'] = 'rival'
-                                    
-                            # v0.8.6 (Tarea 5): si el usuario avanza, llamar a avanzar_fase_bracket
-                            # para simular los OTROS partidos de esta fase y construir la siguiente llave.
-                            if fase_data['avanza'] == 'user':
-                                if fase_actual in ('cuartos', 'semis'):
-                                    # avanzar_fase_bracket simula los otros partidos de la fase,
-                                    # construye la siguiente llave y fija copa_fase_actual.
-                                    try:
-                                        from alpha_football.ui.copa_screen import avanzar_fase_bracket
-                                        avanzar_fase_bracket(estado)
-                                    except Exception as e_avz:
-                                        logger.error(f"Error al avanzar fase del bracket: {e_avz}")
-                                        # Fallback: bump manual como antes
-                                        fases = ['cuartos', 'semis', 'final']
-                                        curr_idx = fases.index(fase_actual)
-                                        if curr_idx < len(fases) - 1:
-                                            estado['copa_fase_actual'] = fases[curr_idx + 1]
-                                elif fase_actual == 'final':
-                                    estado['copa_fase_actual'] = 'campeon'
-                                    estado['copa_mejor_fase_temp'] = 'Campeón'
-                            else:
-                                estado['copa_fase_actual'] = 'eliminado'
-                                # v0.8.1: el usuario cayó en esta fase — guardamos
-                                # la mejor fase alcanzada para el resumen de carrera.
-                                # v0.8.2: defensivo contra None/valores no-string para evitar
-                                # TypeError en `fase_actual not in ...` cuando copa_mejor_fase_temp
-                                # es None (al inicio de la temporada).
-                                fase_label = {'cuartos': 'Cuartos', 'semis': 'Semifinal',
-                                              'final': 'Finalista', 'grupos': 'Fase de grupos'}
-                                _mejor_fase_actual = estado.get('copa_mejor_fase_temp') or ''
-                                if not _mejor_fase_actual or _mejor_fase_actual in ('No clasificó', 'Fase de grupos') or fase_actual not in _mejor_fase_actual:
-                                    estado['copa_mejor_fase_temp'] = fase_label.get(fase_actual, 'Fase de grupos')
-
-                    # Limpiar variables de simulación de este partido
-                    estado.pop('sim_resultado', None)
-                    estado.pop('sim_eventos', None)
-                    estado.pop('sim_desarrollo', None)
-                    estado.pop('sim_desarrollo_done', None)
-                    estado.pop('sim_minuto', None)
-                    estado.pop('sim_goles_l', None)
-                    estado.pop('sim_goles_v', None)
-                    estado.pop('sim_comentarios', None)
-                    estado.pop('sim_eventos_procesados', None)
-                    estado.pop('sim_estado', None)
-                    estado.pop('match_mode', None)
-                    estado.pop('partido_local_obj', None)
-                    estado.pop('partido_visitante_obj', None)
-                    estado.pop('partido_copa_dict', None)
-                    estado.pop('partido_copa_bracket_fase', None)
-                    estado.pop('sim_penales_resuelto', None)
-                    estado.pop('sim_penales_marcador', None)
-                    estado.pop('sim_penales_gana_user', None)
-                    estado.pop('sim_penales_sel', None)
-                    estado.pop('sim_tactico_abierto', None)
-
-                    return "copa_screen"
-                else:
-                    # Cierre de la jornada de liga (helper reutilizado por la sim instantánea).
-                    finalizar_jornada_liga(estado, liga, mi_equipo, partido, goles_l, goles_v)
-
-                    # Limpiar variables de simulación de este partido
-                    estado.pop('sim_tactico_abierto', None)
-                    estado.pop('sim_sub_out', None)
-                    estado.pop('sim_resultado', None)
-                    estado.pop('sim_eventos', None)
-                    estado.pop('sim_desarrollo', None)
-                    estado.pop('sim_desarrollo_done', None)
-                    estado.pop('sim_minuto', None)
-                    estado.pop('sim_goles_l', None)
-                    estado.pop('sim_goles_v', None)
-                    estado.pop('sim_comentarios', None)
-                    estado.pop('sim_eventos_procesados', None)
-                    estado.pop('sim_estado', None)
-
-                    return "league_screen"
-                
         return None
     except Exception as e:
         logger.error(f"Error crítico en render de match_screen: {e}")

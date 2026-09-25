@@ -40,7 +40,8 @@ def escalar_presupuestos(liga: Any) -> None:
     try:
         # Detectar el tipo de liga para determinar el factor de escala
         tipo_liga = getattr(liga, "tipo", "")
-        if tipo_liga in ("betplay", "brasil", "argentina"):
+        from alpha_football.paises import SUDAMERICA   # v3.7.0: uruguay/ecuador también son LatAm
+        if tipo_liga in SUDAMERICA:
             factor_escala = 3  # Mantener balanceado con los precios LatAm (0.35)
         else:
             factor_escala = BUDGET_SCALE
@@ -61,6 +62,7 @@ FUERZA_LIGA = {
     "betplay": 76,
     "argentina": 80, "brasil": 80, "libertadores": 82,
     "laliga": 85, "premier": 85, "champions": 88,
+    "seriea": 85, "uruguay": 76, "ecuador": 76,   # v3.7.0: Italia como LaLiga; UY/EC como BetPlay
 }
 
 
@@ -91,6 +93,7 @@ def asignar_valores_iniciales(liga: Any) -> None:
             from alpha_football.desarrollo import calcular_potencial
         except Exception:
             calcular_potencial = None  # type: ignore
+        registrar_region_liga(liga)  # v2.3.7: valorar según la región de SU liga
         for equipo in getattr(liga, "equipos", []) or []:
             for j in getattr(equipo, "jugadores", []) or []:
                 try:
@@ -180,8 +183,42 @@ def _quitar_jugador_de_equipo(equipo: Any, jugador_id: int | str) -> Optional[An
 
 ACTIVE_ESTADO: Optional[dict] = None
 
+# v2.3.7: región de cada jugador según la liga de su club (clave = identidad del objeto,
+# porque hay `id` de jugador repetidos entre ligas). Antes solo se miraba la liga del
+# user: los jugadores de Brasil/Argentina/BetPlay de las ligas de fondo se valoraban
+# como europeos (~3x más caros).
+from alpha_football.paises import SUDAMERICA as _SUDAMERICA  # noqa: E402
+TIPOS_LATAM = _SUDAMERICA + ('libertadores',)   # v3.7.0: del registro de países
+_REGION_LATAM: dict = {}
+
+
+def registrar_region_jugador(jugador: Any, tipo_liga: str) -> None:
+    _REGION_LATAM[id(jugador)] = tipo_liga in TIPOS_LATAM
+
+
+def registrar_region_liga(liga: Any) -> None:
+    tipo = getattr(liga, 'tipo', '')
+    for eq in getattr(liga, 'equipos', []) or []:
+        for j in getattr(eq, 'jugadores', []) or []:
+            registrar_region_jugador(j, tipo)
+
+
+def registrar_regiones(estado: dict) -> None:
+    """Reconstruye la región de todos los jugadores de las 10 ligas de la partida."""
+    _REGION_LATAM.clear()
+    ligas = [estado.get('liga')]
+    for clave in ('primera_division', 'segunda_division'):
+        ligas += list((estado.get(clave) or {}).values())
+    for liga in ligas:
+        if liga is not None:
+            registrar_region_liga(liga)
+
+
 def es_jugador_latam(jugador: Any) -> bool:
     """Detecta de forma resiliente si un jugador pertenece a un club o pool de Latinoamérica."""
+    region = _REGION_LATAM.get(id(jugador))
+    if region is not None:
+        return region
     try:
         j_id = _campo(jugador, "id", None)
         if j_id is None:
@@ -192,7 +229,7 @@ def es_jugador_latam(jugador: Any) -> bool:
             # 1. Buscar en la liga activa
             liga = ACTIVE_ESTADO.get('liga')
             if liga:
-                es_sud = getattr(liga, "tipo", "") in ['betplay', 'brasil', 'argentina']
+                es_sud = getattr(liga, "tipo", "") in _SUDAMERICA   # v3.7.0
                 for eq in getattr(liga, "equipos", []):
                     for j in getattr(eq, "jugadores", []):
                         if _campo(j, "id", None) == j_id:
@@ -203,7 +240,7 @@ def es_jugador_latam(jugador: Any) -> bool:
             for l in ligas:
                 try:
                     l_tipo = l.tipo if hasattr(l, "tipo") else l.get("tipo", "")
-                    es_sud = l_tipo in ['betplay', 'brasil', 'argentina']
+                    es_sud = l_tipo in _SUDAMERICA   # v3.7.0
                     l_equipos = l.equipos if hasattr(l, "equipos") else l.get("equipos", [])
                     for eq in l_equipos:
                         eq_jugadores = eq.jugadores if hasattr(eq, "jugadores") else eq.get("jugadores", [])
@@ -267,6 +304,17 @@ def calcular_valor(jugador: Any) -> int:
             return max(50_000, int(ovr * ovr * 1000))
         except Exception:
             return 50000
+
+DESCUENTO_ULTIMO_ANIO = 0.75
+
+
+def factor_contrato(jugador: Any) -> float:
+    """v3.5.0: en el último año de contrato el jugador vale 25% menos (la cláusula no cambia)."""
+    try:
+        return DESCUENTO_ULTIMO_ANIO if int(getattr(jugador, 'contrato_anios', 0) or 0) == 1 else 1.0
+    except Exception:
+        return 1.0
+
 
 def precio_compra(jugador: Any) -> int:
     """Precio de fichaje (valor + recargo)."""
@@ -504,6 +552,9 @@ def mercado_de_pases(mi_equipo: Equipo, liga: Liga) -> None:
 # --- Fase 4: Ofertas recibidas por jugadores del usuario (IA compradora) -------
 
 PROB_OFERTA_POR_JORNADA = 0.15  # 15% por jornada con mercado abierto
+# v2.6.0: con transferibles la IA oferta mucho más y casi siempre por ellos.
+PROB_OFERTA_CON_TRANSFERIBLES = 0.45
+PROB_OFERTA_POR_TRANSFERIBLE = 0.75
 
 
 def ventana_mercado_abierta(jornada: int, num_jornadas: int) -> bool:
@@ -585,7 +636,9 @@ def crear_oferta_ui(mi_equipo: Any, rivales: list, jornada: int, num_jornadas: i
     try:
         if not ventana_mercado_abierta(jornada, num_jornadas):
             return None
-        if azar.random() > prob:
+        transferibles = [j for j in getattr(mi_equipo, "jugadores", []) or []
+                         if getattr(j, "transferible", False) or getattr(j, "pide_salir", False)]   # v3.1.0
+        if azar.random() > (max(prob, PROB_OFERTA_CON_TRANSFERIBLES) if transferibles else prob):
             return None
         if not mi_equipo or len(getattr(mi_equipo, "jugadores", [])) <= PLANTILLA_MINIMA:
             return None
@@ -601,6 +654,8 @@ def crear_oferta_ui(mi_equipo: Any, rivales: list, jornada: int, num_jornadas: i
                 recent_ids.clear()
             candidatos = list(mi_equipo.jugadores)
         objetivo = azar.choice(candidatos)
+        if transferibles and azar.random() < PROB_OFERTA_POR_TRANSFERIBLE:
+            objetivo = azar.choice(transferibles)
         if isinstance(recent_ids, list):
             recent_ids.append(objetivo.id)
             if len(recent_ids) > 4:
@@ -613,7 +668,10 @@ def crear_oferta_ui(mi_equipo: Any, rivales: list, jornada: int, num_jornadas: i
             setattr(objetivo, "valor", valor)
         except Exception:
             pass
-        monto = int(valor * azar.uniform(0.95, 1.5))
+        monto = int(valor * azar.uniform(0.95, 1.5) * factor_contrato(objetivo))   # v3.5.0
+        from alpha_football.data.clasicos import es_clasico    # v3.5.0: el clásico solo paga cláusula
+        if getattr(objetivo, 'moral', 70) >= 40:
+            rivales = [r for r in rivales if not es_clasico(r, mi_equipo)]
         rivales_ok = [r for r in rivales if getattr(r, "balance", 0) >= monto] or list(rivales)
         if not rivales_ok:
             return None
@@ -716,7 +774,7 @@ def pool_internacional(estado: Any) -> list:
     candidatos: list = []
 
     # Ligas domésticas más fuertes
-    fuentes = ("betplay", "argentina", "brasil", "laliga", "premier")
+    from alpha_football.paises import TIPOS_LIGA as fuentes   # v3.7.0: los 8 países
     for tipo in fuentes:
         if fuerza_liga(tipo) <= user_fuerza:
             continue
@@ -756,7 +814,7 @@ def pool_internacional(estado: Any) -> list:
 
 
 def crear_oferta_exterior(mi_equipo: Any, estado: Any,
-                          rng: Optional[random.Random] = None, prob: float = 0.12) -> Optional[dict]:
+                          rng: Optional[random.Random] = None, prob: float = 0.25) -> Optional[dict]:
     """
     Si un jugador del usuario rinde muy bien, un club de una liga MÁS FUERTE puede ofertar
     (monto mayor: valor * Random(1.3, 2.2)). Devuelve dict {jugador, comprador, monto, exterior}.
@@ -771,6 +829,10 @@ def crear_oferta_exterior(mi_equipo: Any, estado: Any,
             if getattr(j, "promedio_nota", 0) >= 7.2
             or (getattr(j, "goles", 0) + getattr(j, "asistencias", 0)) >= 4
         ]
+        # v3.5.0: además de los que rinden, tus 3 mejores por media siempre interesan afuera
+        for j in sorted(jugadores, key=lambda x: -getattr(x, 'overall', 0))[:3]:
+            if j not in buenos:
+                buenos.append(j)
         if not buenos or azar.random() > prob:
             return None
 
@@ -784,7 +846,7 @@ def crear_oferta_exterior(mi_equipo: Any, estado: Any,
             return getattr(j, "promedio_nota", 0) + (getattr(j, "goles", 0) + getattr(j, "asistencias", 0)) * 0.3
 
         # Ordenar y seleccionar de forma aleatoria de los mejores
-        candidatos.sort(key=_rend, reverse=True)
+        candidatos.sort(key=lambda j: (_rend(j), getattr(j, 'overall', 0)), reverse=True)   # v3.5.0
         top_candidates = candidatos[:max(1, min(3, len(candidatos)))]
         objetivo = azar.choice(top_candidates)
         
@@ -810,7 +872,7 @@ def crear_oferta_exterior(mi_equipo: Any, estado: Any,
             setattr(objetivo, "valor", valor)
         except Exception:
             pass
-        monto = int(valor * azar.uniform(1.3, 2.2))
+        monto = int(valor * azar.uniform(1.3, 2.2) * factor_contrato(objetivo))   # v3.5.0
         return {"jugador": objetivo, "comprador": comprador, "monto": monto, "exterior": True}
     except Exception as e:
         logger.error(f"Error al crear oferta del exterior: {e}")

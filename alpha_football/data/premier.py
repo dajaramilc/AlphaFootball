@@ -65,14 +65,25 @@ except ImportError as error_importacion:
         num_jornadas: int
 
 # Constantes del juego para estilos tácticos de los directores técnicos y rasgos especiales
-ESTILOS_TACTICOS = ["haramball", "cruyffismo", "flickismo", "anchelottismo"]
+# v3.3.0: los 9 estilos del motor (sorteo del estilo de los equipos sin estilo fijo).
+from alpha_football.estilos import ESTILOS_DT as ESTILOS_TACTICOS  # noqa: E402
 RASGOS_DISPONIBLES = ["regateador", "lider", "rustico", "pulmon_de_hierro"]
 
 NOMBRES_CORTOS = {
     "Manchester Billete": "Man Billete", "Arsenal Pechofrio": "Arsenal", "Pool de Higado": "Pool",
     "Manchester Desunido": "Man Desunido", "Chelsea Guarderia": "Chelsea", "Spurs sin Copas": "Spurs",
+    # v3.7.0: 6 clubes más (liga de 12)
+    "Newcastle Petrodolar": "Newcastle", "Aston Villano": "Villano", "Nottingham Deforestado": "Forest",
+    "Brighton Algoritmo": "Brighton", "Crystal Palacete": "Palacete", "Everton Caramelo": "Everton",
 }
 ESTILO_FIJO = {
+    # v3.7.0: clubes nuevos (liga de 12)
+    "Newcastle Petrodolar": "kloppismo",
+    "Aston Villano": "artetismo",
+    "Nottingham Deforestado": "haramball",
+    "Brighton Algoritmo": "dezerbismo",
+    "Crystal Palacete": "fullbackismo",
+    "Everton Caramelo": "haramball",
     "Manchester Billete": "cruyffismo",
     "Arsenal Pechofrio": "cruyffismo",
     "Pool de Higado": "flickismo",
@@ -298,7 +309,165 @@ DATOS_PREMIER = {
             ("Brennan", "Johnsonazo", "DEL", 80, "pulmon_de_hierro", 23),
             ("Dominic", "Solankazo", "DEL", 86, None, 26),
         ]
-    }
+    },
+    # v3.7.0: 6 clubes reales 2025-26 más (liga de 12), jugadores reales parodiados.
+    "Newcastle Petrodolar": {
+        "ciudad": "Newcastle",
+        "estrellas": 4.3,
+        "jugadores": [
+            ("Nick", "Papa", "POR", 84, "lider", 33),
+            ("Aaron", "Ramsdalito", "POR", 80, None, 27),
+            ("Kieran", "Tripiero", "DEF", 83, "lider", 35),
+            ("Sven", "Botmanazo", "DEF", 84, "rustico", 25),
+            ("Fabian", "Schartazo", "DEF", 81, "rustico", 33),
+            ("Dan", "Burnout", "DEF", 82, "rustico", 33),
+            ("Malick", "Thiawaii", "DEF", 82, None, 24),
+            ("Tino", "Livramiento", "DEF", 83, "pulmon_de_hierro", 22),
+            ("Lewis", "Hallazgo", "DEF", 80, None, 20),
+            ("Bruno", "Guimaraesquisito", "MED", 88, "lider", 27),
+            ("Sandro", "Tonalidad", "MED", 87, "pulmon_de_hierro", 25),
+            ("Joelinton", "Toro", "MED", 85, "rustico", 29),
+            ("Jacob", "Ramsiempre", "MED", 80, None, 24),
+            ("Joe", "Willockazo", "MED", 79, None, 26),
+            ("Lewis", "Mileyito", "MED", 76, None, 19),
+            ("Anthony", "Gordoon", "DEL", 87, "regateador", 24),
+            ("Nick", "Woltemadera", "DEL", 84, None, 23),
+            ("Yoane", "Wissaguas", "DEL", 83, None, 29),
+            ("Harvey", "Barniz", "DEL", 81, "regateador", 28),
+            ("Anthony", "Elangosta", "DEL", 82, "regateador", 23),
+        ]
+    },
+    "Aston Villano": {
+        "ciudad": "Birmingham",
+        "estrellas": 4.2,
+        "jugadores": [
+            ("Emiliano", "Dibu-Bailarin", "POR", 87, "lider", 33),
+            ("Marco", "Bizcocho", "POR", 76, None, 34),
+            ("Ezri", "Konsagrado", "DEF", 83, None, 27),
+            ("Pau", "Torreta", "DEF", 83, None, 28),
+            ("Tyrone", "Mingote", "DEF", 80, "rustico", 32),
+            ("Matty", "Cashback", "DEF", 81, "pulmon_de_hierro", 28),
+            ("Lucas", "Dignidad", "DEF", 80, None, 32),
+            ("Ian", "Maatsenado", "DEF", 79, None, 23),
+            ("Victor", "Lindelento", "DEF", 78, "lider", 31),
+            ("Youri", "Tielemaniaco", "MED", 85, None, 28),
+            ("Boubacar", "Kamarada", "MED", 84, "rustico", 25),
+            ("John", "McGinebra", "MED", 83, "lider", 30),
+            ("Amadou", "Onanana", "MED", 83, "pulmon_de_hierro", 24),
+            ("Morgan", "Rogelio", "MED", 85, "regateador", 23),
+            ("Ross", "Barquito", "MED", 76, None, 31),
+            ("Emiliano", "Buendiario", "MED", 78, "regateador", 28),
+            ("Ollie", "Guatkins", "DEL", 85, None, 29),
+            ("Donyell", "Malentendido", "DEL", 80, None, 26),
+            ("Evann", "Guessandia", "DEL", 79, None, 24),
+            ("Jadon", "Sanchocho", "DEL", 79, "regateador", 25),
+        ]
+    },
+    "Nottingham Deforestado": {
+        "ciudad": "Nottingham",
+        "estrellas": 3.9,
+        "jugadores": [
+            ("Matz", "Selfie", "POR", 83, None, 33),
+            ("John", "Victorioso", "POR", 74, None, 29),
+            ("Murillo", "Murallito", "DEF", 84, "rustico", 23),
+            ("Nikola", "Milenkobrick", "DEF", 83, "rustico", 27),
+            ("Ola", "Aina-hola", "DEF", 81, "pulmon_de_hierro", 29),
+            ("Neco", "Williamsito", "DEF", 80, None, 24),
+            ("Morato", "Moraton", "DEF", 77, None, 24),
+            ("Nicolo", "Savonata", "DEF", 77, None, 22),
+            ("Elliot", "Andersoon", "MED", 85, "pulmon_de_hierro", 22),
+            ("Morgan", "Gibbs-Blanco", "MED", 85, "regateador", 25),
+            ("Ibrahim", "Sangarage", "MED", 79, "rustico", 28),
+            ("Nicolas", "Dominguito", "MED", 79, None, 27),
+            ("James", "McAtiempo", "MED", 78, None, 22),
+            ("Omari", "Hutchinsonrisa", "MED", 78, "regateador", 22),
+            ("Chris", "Troncoso", "DEL", 83, None, 33),
+            ("Callum", "Hudson-Otroi", "DEL", 80, "regateador", 24),
+            ("Dan", "Ndoyito", "DEL", 80, "regateador", 25),
+            ("Igor", "Jesusito", "DEL", 79, None, 24),
+            ("Arnaud", "Kalimuendito", "DEL", 78, None, 23),
+            ("Dilane", "Bakwando", "DEL", 76, "regateador", 23),
+        ]
+    },
+    "Brighton Algoritmo": {
+        "ciudad": "Brighton",
+        "estrellas": 3.9,
+        "jugadores": [
+            ("Bart", "Verbruguesa", "POR", 81, None, 23),
+            ("Jason", "Stealth", "POR", 72, None, 35),
+            ("Jan Paul", "Van Heckerito", "DEF", 81, "rustico", 25),
+            ("Lewis", "Dunkeado", "DEF", 80, "lider", 34),
+            ("Joel", "Veltmano", "DEF", 77, None, 33),
+            ("Ferdi", "Kadiogluten", "DEF", 81, "pulmon_de_hierro", 26),
+            ("Maxim", "De Cuypercito", "DEF", 78, None, 24),
+            ("Olivier", "Boscaglio", "DEF", 77, None, 27),
+            ("Carlos", "Balebalazo", "MED", 84, "pulmon_de_hierro", 21),
+            ("Mats", "Wiefferino", "MED", 79, None, 25),
+            ("Yasin", "Ayarigato", "MED", 79, None, 22),
+            ("Jack", "Hinshelguau", "MED", 77, None, 20),
+            ("James", "Milnerario", "MED", 75, "lider", 39),
+            ("Diego", "Gomezclado", "MED", 78, None, 22),
+            ("Tommy", "Watsonrisa", "MED", 76, "regateador", 19),
+            ("Kaoru", "Mitomate", "DEL", 83, "regateador", 28),
+            ("Danny", "Welbecario", "DEL", 79, None, 34),
+            ("Yankuba", "Mintehado", "DEL", 81, "regateador", 21),
+            ("Stefanos", "Tzimasas", "DEL", 76, None, 19),
+            ("Brajan", "Grudazo", "DEL", 77, "regateador", 21),
+        ]
+    },
+    "Crystal Palacete": {
+        "ciudad": "Londres",
+        "estrellas": 3.9,
+        "jugadores": [
+            ("Dean", "Hendersonrisa", "POR", 83, "lider", 28),
+            ("Walter", "Benitezcito", "POR", 75, None, 32),
+            ("Marc", "Guehielo", "DEF", 84, "lider", 25),
+            ("Maxence", "Lacruz", "DEF", 82, "rustico", 25),
+            ("Chris", "Riquezas", "DEF", 79, None, 25),
+            ("Daniel", "Muñoztang", "DEF", 82, "pulmon_de_hierro", 29),
+            ("Tyrick", "Mitchellin", "DEF", 79, None, 25),
+            ("Borna", "Sosaso", "DEF", 76, None, 27),
+            ("Nathaniel", "Clynazo", "DEF", 72, None, 34),
+            ("Jaydee", "Canvoto", "DEF", 74, None, 19),
+            ("Adam", "Whartonazo", "MED", 84, None, 21),
+            ("Jefferson", "Lermita", "MED", 80, "rustico", 30),
+            ("Will", "Hughesito", "MED", 77, None, 30),
+            ("Daichi", "Kamadita", "MED", 80, None, 29),
+            ("Justin", "Devenido", "MED", 74, None, 22),
+            ("Christantus", "Uchepa", "MED", 76, None, 22),
+            ("Ismaila", "Sarrampion", "DEL", 83, "regateador", 27),
+            ("Jean-Philippe", "Mateteta", "DEL", 83, None, 28),
+            ("Yeremy", "Pinito", "DEL", 80, "regateador", 23),
+            ("Eddie", "Nketiahora", "DEL", 76, None, 26),
+        ]
+    },
+    "Everton Caramelo": {
+        "ciudad": "Liverpool",
+        "estrellas": 3.8,
+        "jugadores": [
+            ("Jordan", "Pickfuria", "POR", 84, "lider", 31),
+            ("Mark", "Traversura", "POR", 74, None, 26),
+            ("James", "Tarkowskazo", "DEF", 81, "rustico", 32),
+            ("Jarrad", "Branthwaitazo", "DEF", 82, "rustico", 23),
+            ("Michael", "Keanejo", "DEF", 77, None, 32),
+            ("Vitalii", "Mykolenkito", "DEF", 78, None, 26),
+            ("Jake", "O'Brienazo", "DEF", 77, None, 24),
+            ("Nathan", "Pattersonrisa", "DEF", 75, None, 23),
+            ("Seamus", "Colemanazo", "DEF", 71, "lider", 37),
+            ("James", "Garnacha", "MED", 80, "pulmon_de_hierro", 24),
+            ("Idrissa", "Gueyeperro", "MED", 79, "rustico", 36),
+            ("Tim", "Iroegbunombre", "MED", 74, None, 22),
+            ("Kiernan", "Dewsbury-Mall", "MED", 79, None, 27),
+            ("Carlos", "Alcaraqueta", "MED", 75, None, 22),
+            ("Jack", "Grealishampu", "MED", 83, "regateador", 30),
+            ("Merlin", "Rolito", "MED", 74, None, 23),
+            ("Iliman", "Ndiayeah", "DEL", 81, "regateador", 25),
+            ("Beto", "Betoven", "DEL", 77, None, 27),
+            ("Thierno", "Barrial", "DEL", 77, None, 23),
+            ("Dwight", "McNeilson", "DEL", 78, "regateador", 25),
+            ("Tyler", "Diblingo", "DEL", 75, "regateador", 19),
+        ]
+    },
 }
 
 def crear_liga_fallback() -> Liga:
@@ -339,7 +508,7 @@ def crear_liga_fallback() -> Liga:
             nombre="Premier League Parodia (Fallback)",
             tipo="premier",
             equipos=equipos_fallback,
-            num_jornadas=10
+            num_jornadas=max(2, 2 * (len(equipos_fallback) - 1))  # v3.7.0
         )
     except Exception as error_fallback:
         logging.critical(f"Fallo critico doble en fallback: {error_fallback}. Retornando objeto estatico basico.")
@@ -352,7 +521,7 @@ def crear_liga_fallback() -> Liga:
 
 def get_liga() -> Liga:
     """
-    Construye y retorna la instancia de la Liga con sus 6 equipos y jugadores parodiados.
+    Construye y retorna la instancia de la Liga con sus 12 equipos y jugadores parodiados (v3.7.0).
     """
     try:
         equipos_list = []
@@ -417,7 +586,7 @@ def get_liga() -> Liga:
             nombre="Premier League Parodia",
             tipo="premier",
             equipos=equipos_list,
-            num_jornadas=10
+            num_jornadas=max(2, 2 * (len(equipos_list) - 1))  # v3.7.0: ida y vuelta (12 → 22)
         )
         
     except Exception as error_global:

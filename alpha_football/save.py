@@ -48,6 +48,19 @@ _CLAVE_CHECKSUM = "checksum"
 _CLAVE_META = "meta"  # cabecera de visualización del slot (no entra en el checksum)
 
 
+def campos_divisiones(estado: dict) -> dict:
+    """v2.3.5: campos de 1ª/2ª división del estado en vivo, listos para EstadoJuego.from_dict.
+    Lo usan los 3 puntos de guardado (salir, slots, fin de temporada)."""
+    liga = estado.get('liga')
+    return {
+        "liga_usuario_division": int(getattr(liga, 'division', estado.get('liga_usuario_division', 1)) or 1),
+        "segunda_division": {t: l.to_dict() for t, l in (estado.get('segunda_division') or {}).items() if l},
+        "primera_division": {t: l.to_dict() for t, l in (estado.get('primera_division') or {}).items() if l},
+        # v2.3.6: clasificación real a copas + Balón de Oro
+        "datos_carrera": dict(estado.get('datos_carrera') or {}),
+    }
+
+
 def _checksum(estado_dict: dict) -> str:
     """SHA-256 del bloque de estado (orden estable) para validar integridad."""
     serial = json.dumps(estado_dict, ensure_ascii=False, sort_keys=True)

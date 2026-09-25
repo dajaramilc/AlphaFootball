@@ -189,433 +189,164 @@ def draw_styled_button(screen: pygame.Surface, rect: pygame.Rect, text: str, hov
             pass
         return rect
 
+def _norm_str(s) -> str:
+    """Normaliza string removiendo acentos para comparaciones robustas."""
+    return (
+        str(s).lower()
+        .replace('á', 'a').replace('é', 'e').replace('í', 'i')
+        .replace('ó', 'o').replace('ú', 'u').replace('ñ', 'n')
+    )
+
+
+def _resumen_historial(historial: list) -> dict:
+    """Totales de la carrera a partir del historial por temporada."""
+    tot = {'temporadas': len(historial), 'ligas': 0, 'copas': 0, 'pts': 0, 'gf': 0, 'gc': 0,
+           'mejor_pts': 0, 'mejor_temp': '-'}
+    for h in historial:
+        try:
+            if h.get('pos', 99) == 1:
+                tot['ligas'] += 1
+            lib = _norm_str(h.get('libertadores', ''))
+            if 'campeon' in lib and 'sub' not in lib:
+                tot['copas'] += 1
+            tot['pts'] += h.get('pts', 0)
+            tot['gf'] += h.get('gf', 0)
+            tot['gc'] += h.get('gc', 0)
+            if h.get('pts', 0) > tot['mejor_pts']:
+                tot['mejor_pts'] = h.get('pts', 0)
+                tot['mejor_temp'] = f"T{h.get('temporada', 1)}"
+        except Exception as e_calc:
+            logger.error(f"Error procesando registro de historial de carrera: {e_calc}")
+    return tot
+
+
+# v3.9.0: rects expuestos (ayuda H). Las cajas terminan en y=696 (antes 700: pisaban la barra de atajos).
+R_VOLVER = pygame.Rect(SCREEN_W - 230, 22, 200, 48)
+R_TOTALES = pygame.Rect(30, 105, 360, 290)
+R_BALON_ORO = pygame.Rect(30, 410, 360, 286)
+R_TEMPORADAS = pygame.Rect(410, 105, SCREEN_W - 440, 591)
+
+
 def render(screen: pygame.Surface, estado: dict) -> str | None:
     """
-    Renderiza la pantalla de Carrera del DT en Pygame.
-    Muestra estadísticas agregadas y la lista de temporadas históricas.
-    Incorpora la barra lateral izquierda y los colores oficiales de la nueva identidad visual.
-    Previene bugs de clics al utilizar una única definición consistente del menú lateral.
+    Pantalla de Historial de Carrera del DT.
+    v2.3.6: solo el historial (sin el menú lateral viejo, que ahora vive en la barra
+    superior de la liga): totales, temporada por temporada y palmarés del Balón de Oro.
+    VOLVER / Esc regresa a la liga. Rueda o flechas para desplazar las temporadas.
     """
     try:
-        # Recuperación segura del estado principal
         liga = estado.get('liga')
         mi_equipo = estado.get('mi_equipo')
-        historial = estado.get('historial', [])
-        
-        # Resiliencia si no se han cargado datos clave
+        historial = [h for h in (estado.get('historial') or []) if isinstance(h, dict)]
         if not liga or not mi_equipo:
-            logger.error("Error resiliente: No hay liga o equipo cargado en el estado de carrera.")
+            logger.error("No hay liga o equipo cargado en el estado de carrera.")
             return "menu"
-            
-        # Inicialización segura de offsets temporales de scroll para evitar nulos
-        estado.setdefault('career_scroll_offset', 0)
-        
-        # 1. Dibujar fondo base con gradiente y marcas del campo de fútbol alegre
-        try:
-            draw_gradient_bg(screen)
-            draw_pitch_lines(screen)
-        except Exception as e_bg:
-            logger.error(f"Error al dibujar fondo: {str(e_bg)}. Rellenando con color plano.")
-            screen.fill(COLORS.get('bg', (10, 14, 26)))
-            
-        # Decoración visual RGB tricolor alegre en el borde superior de la pantalla
-        try:
-            pygame.draw.rect(screen, COLORS.get('rojo', (255, 68, 68)), pygame.Rect(0, 0, SCREEN_W, 4))
-            pygame.draw.rect(screen, COLORS.get('verde', (0, 255, 136)), pygame.Rect(0, 4, SCREEN_W, 4))
-            pygame.draw.rect(screen, COLORS.get('azul', (0, 191, 255)), pygame.Rect(0, 8, SCREEN_W, 4))
-        except Exception as e_deco:
-            logger.warning(f"No se pudieron dibujar las franjas decorativas: {str(e_deco)}")
-            
-        # --- MENÚ LATERAL IZQUIERDO (Consistencia visual 100% con league_screen) ---
-        menu_rect = pygame.Rect(20, 20, 260, 680)
-        try:
-            draw_panel(screen, menu_rect)
-            # Decoración vertical RGB dentro del panel izquierdo
-            pygame.draw.rect(screen, COLORS.get('rojo', (255, 68, 68)), pygame.Rect(22, 22, 4, 676))
-            pygame.draw.rect(screen, COLORS.get('verde', (0, 255, 136)), pygame.Rect(26, 22, 4, 676))
-            pygame.draw.rect(screen, COLORS.get('azul', (0, 191, 255)), pygame.Rect(30, 22, 4, 676))
-        except Exception as e_menu_panel:
-            logger.error(f"Error al dibujar panel de menú: {str(e_menu_panel)}")
-            
-        # Logo de Fútbol Alegre (Temática tricolor) y Datos del club
-        try:
-            draw_text(screen, "★ ALPHA ★", (45, 45), size='lg', color='verde')
-            draw_text(screen, "FOOTBALL", (45, 80), size='md', color='blanco')
-            pygame.draw.line(screen, COLORS.get('azul', (0, 191, 255)), (40, 120), (260, 120), 1)
-            
-            # Datos del club
-            draw_text(screen, mi_equipo.nombre.upper()[:18], (45, 135), size='sm', color='verde')
-            pres_m = getattr(mi_equipo, 'balance', 0) / 1_000_000
-            draw_text(screen, f"Presupuesto: ${pres_m:.1f}M", (45, 160), size='sm', color='blanco')
-            draw_text(screen, f"Temporada: {estado.get('temporada', 1)}", (45, 185), size='sm', color='azul')
-            jornada_actual = getattr(liga, "jornada_actual", 1)
-            draw_text(screen, f"Jornada: {jornada_actual}/{getattr(liga, 'num_jornadas', 14)}", (45, 210), size='sm', color='dorado')
-        except Exception as e_logo:
-            logger.error(f"Error al dibujar textos de logo/datos en lateral: {str(e_logo)}")
-            
-        # --- ENCABEZADO DE CONTENIDO PRINCIPAL (DERECHA) ---
-        draw_text(screen, "PERFIL DE CARRERA DEL DT", (300, 20), size='xl', color='dorado')
-        dt_desc = f"Historial y logros de {estado.get('dt_nombre', 'Mister')[:16]} con {mi_equipo.nombre}"
-        draw_text(screen, dt_desc, (300, 65), size='sm', color='azul')
-        
-        # --- CÁLCULO DE ESTADÍSTICAS AGREGADAS (Resiliente) ---
-        # v0.8.7.1: helper local para normalizar strings y quitar acentos.
-        # Los valores de mejor fase se guardan como "Campeón" (con acento);
-        # comparar contra 'campeon' (ASCII) fallaba siempre.
-        def _norm_str(s):
-            """Normaliza string removiendo acentos para comparaciones robustas."""
-            return (
-                str(s).lower()
-                .replace('á', 'a').replace('é', 'e').replace('í', 'i')
-                .replace('ó', 'o').replace('ú', 'u').replace('ñ', 'n')
-            )
 
-        seasons_count = len(historial)
-        leagues_won = 0
-        copas_won = 0
-        total_pts = 0
-        total_gf = 0
-        total_gc = 0
-        best_pts = 0
-        best_season = "-"
-        
-        for h in historial:
-            try:
-                pos = h.get('pos', 8)
-                pts = h.get('pts', 0)
-                gf = h.get('gf', 0)
-                gc = h.get('gc', 0)
-                lib = h.get('libertadores', '')
-                temp = h.get('temporada', 1)
-                
-                if pos == 1:
-                    leagues_won += 1
-                _lib_norm = _norm_str(lib)
-                if 'campeon' in _lib_norm and 'sub' not in _lib_norm:
-                    copas_won += 1
-                    
-                total_pts += pts
-                total_gf += gf
-                total_gc += gc
-                
-                if pts > best_pts:
-                    best_pts = pts
-                    best_season = f"T{temp}"
-            except Exception as e_calc:
-                logger.error(f"Error procesando registro de historial de carrera: {e_calc}. Continuando con datos restantes.")
-                
-        dg_total = total_gf - total_gc
-        
-        # --- DETECCIÓN Y ADVERTENCIA DE FECHA INTERNACIONAL ---
-        tiene_copa_pendiente = False
-        fase_nombre_pend = None
-        try:
-            from alpha_football.ui.copa_screen import obtener_partido_copa_pendiente
-            fase_nombre_pend, _ = obtener_partido_copa_pendiente(estado)
-            tiene_copa_pendiente = (fase_nombre_pend is not None)
-        except Exception as error_copas:
-            logger.error(f"Error al verificar advertencia de copa en carrera: {error_copas}")
-            
-        # Banner de advertencia parpadeante en la esquina superior derecha (Consistente con league_screen)
-        if tiene_copa_pendiente and fase_nombre_pend:
-            try:
-                alert_rect = pygame.Rect(820, 20, 420, 65)
-                pulso = (pygame.time.get_ticks() // 500) % 2
-                color_borde = COLORS.get('rojo', (255, 68, 68)) if pulso == 0 else COLORS.get('dorado', (255, 215, 0))
-                pygame.draw.rect(screen, (35, 15, 15), alert_rect, border_radius=6)
-                pygame.draw.rect(screen, color_borde, alert_rect, width=2, border_radius=6)
-                draw_text(screen, "⚠️ ¡FECHA INTERNACIONAL DETECTADA!", (835, 25), size='sm', color='rojo')
-                draw_text(screen, f"Copa pendiente: {fase_nombre_pend}. Juega Copa primero.", (835, 48), size='sm', color='blanco')
-            except Exception as e_alert:
-                logger.error(f"Error al renderizar banner de alerta en carrera: {str(e_alert)}")
-                
-        # --- BOTONES EN EL MENÚ IZQUIERDO (Mismas posiciones que league_screen) ---
-        btn_liga = pygame.Rect(40, 240, 220, 45)
-        btn_mercado = pygame.Rect(40, 295, 220, 45)
-        btn_copa = pygame.Rect(40, 350, 220, 45)
-        btn_career = pygame.Rect(40, 405, 220, 45)
-        btn_equipo = pygame.Rect(40, 460, 220, 45)
-        btn_opciones = pygame.Rect(40, 515, 220, 45)
-        btn_salir = pygame.Rect(40, 620, 220, 45)
-        
-        # Procesar hovers de los botones
         mouse_pos = pygame.mouse.get_pos()
         click_pos = None
-        key_events = []
+        scroll_delta = 0
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return "quit"
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                click_pos = event.pos
+            elif event.type == pygame.MOUSEWHEEL:
+                scroll_delta -= event.y
+            elif event.type == pygame.KEYDOWN:
+                if event.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE, pygame.K_RETURN):
+                    estado.pop('career_scroll_offset', None)
+                    return "volver"
+                if event.key == pygame.K_UP:
+                    scroll_delta -= 1
+                elif event.key == pygame.K_DOWN:
+                    scroll_delta += 1
 
-        # Consumir eventos del frame de forma limpia
-        try:
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    return "quit"
-                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    click_pos = event.pos
-                elif event.type == pygame.KEYDOWN:
-                    key_events.append(event)
-        except Exception as e_events:
-            logger.error(f"Error al procesar eventos en career_screen: {str(e_events)}")
+        draw_gradient_bg(screen)
+        draw_text(screen, "HISTORIAL DE CARRERA", (30, 18), size='xl', color='dorado')
+        draw_text(screen, f"{estado.get('dt_nombre', 'Mister')[:20]} con {mi_equipo.nombre[:28]}  ·  "
+                          f"Temporada actual {estado.get('temporada', 1)}", (32, 70), size='sm', color='azul')
+        btn_volver = R_VOLVER
+        draw_styled_button(screen, btn_volver, "VOLVER", btn_volver.collidepoint(mouse_pos), COLORS['verde'])
 
-        # v2.3.3: navegacion por teclado del sidebar.
-        career_sidebar = [
-            (btn_liga, 'liga'),
-            (btn_mercado, 'mercado'),
-            (btn_copa, 'copa'),
-            (btn_career, 'career'),  # siempre activo (es donde estamos)
-            (btn_equipo, 'equipo'),
-            (btn_opciones, 'opciones'),
-            (btn_salir, 'salir'),
+        # --- Totales ---
+        tot = _resumen_historial(historial)
+        dg = tot['gf'] - tot['gc']
+        caja_tot = R_TOTALES
+        draw_panel(screen, caja_tot)
+        draw_text(screen, "TOTALES", (caja_tot.x + 18, caja_tot.y + 12), size='md', color='azul')
+        filas_tot = [
+            ("Temporadas", str(tot['temporadas']), 'blanco'),
+            ("Ligas ganadas", str(tot['ligas']), 'dorado' if tot['ligas'] else 'blanco'),
+            ("Copas internacionales", str(tot['copas']), 'dorado' if tot['copas'] else 'blanco'),
+            ("Puntos totales", str(tot['pts']), 'blanco'),
+            ("Goles (GF-GC)", f"{tot['gf']}-{tot['gc']} ({'+' if dg > 0 else ''}{dg})", 'verde' if dg >= 0 else 'rojo'),
+            ("Récord de puntos", f"{tot['mejor_pts']} ({tot['mejor_temp']})", 'blanco'),
         ]
-        if 'career_kbd_focus' not in estado:
-            estado['career_kbd_focus'] = 3  # default en la pestaña activa
+        for i, (k, v, col) in enumerate(filas_tot):
+            yy = caja_tot.y + 50 + i * 38
+            draw_text(screen, k, (caja_tot.x + 18, yy), size='sm', color='blanco')
+            draw_text(screen, v, (caja_tot.x + 220, yy), size='sm', color=col)
 
-        try:
-            _career_kbd = int(estado.get('career_kbd_focus', 3))
-            for ev in key_events:
-                if ev.key == pygame.K_UP:
-                    estado['career_kbd_focus'] = (_career_kbd - 1) % len(career_sidebar)
-                elif ev.key == pygame.K_DOWN:
-                    estado['career_kbd_focus'] = (_career_kbd + 1) % len(career_sidebar)
-                elif ev.key in (pygame.K_RETURN, pygame.K_SPACE):
-                    rect, _name = career_sidebar[_career_kbd]
-                    click_pos = (rect.x + rect.width // 2, rect.y + rect.height // 2)
-                elif ev.key == pygame.K_l:
-                    click_pos = (btn_liga.x + btn_liga.width // 2, btn_liga.y + btn_liga.height // 2)
-                    estado['career_kbd_focus'] = 0
-                elif ev.key == pygame.K_m:
-                    click_pos = (btn_mercado.x + btn_mercado.width // 2, btn_mercado.y + btn_mercado.height // 2)
-                    estado['career_kbd_focus'] = 1
-                elif ev.key == pygame.K_c:
-                    click_pos = (btn_copa.x + btn_copa.width // 2, btn_copa.y + btn_copa.height // 2)
-                    estado['career_kbd_focus'] = 2
-                elif ev.key == pygame.K_e:
-                    click_pos = (btn_equipo.x + btn_equipo.width // 2, btn_equipo.y + btn_equipo.height // 2)
-                    estado['career_kbd_focus'] = 4
-                elif ev.key == pygame.K_o:
-                    click_pos = (btn_opciones.x + btn_opciones.width // 2, btn_opciones.y + btn_opciones.height // 2)
-                    estado['career_kbd_focus'] = 5
-                elif ev.key == pygame.K_ESCAPE:
-                    estado['current_screen'] = 'league_screen'
-                    return 'league_screen'
-        except Exception as e_kbd_career:
-            logger.error(f"Error en teclado de career_screen: {e_kbd_career}")
-            
-        hov_liga = btn_liga.collidepoint(mouse_pos)
-        hov_mercado = btn_mercado.collidepoint(mouse_pos)
-        hov_copa = btn_copa.collidepoint(mouse_pos)
-        hov_equipo = btn_equipo.collidepoint(mouse_pos)
-        hov_opciones = btn_opciones.collidepoint(mouse_pos)
-        hov_salir = btn_salir.collidepoint(mouse_pos)
-        
-        # Renderizar botones en menú lateral
-        draw_styled_button(screen, btn_liga, "VOLVER A LIGA", hov_liga, COLORS.get('verde', (0, 255, 136)))
-        draw_styled_button(screen, btn_mercado, "MERCADO DE PASES", hov_mercado, COLORS.get('azul', (0, 191, 255)))
-        draw_styled_button(screen, btn_copa, "COPA INTERNACIONAL", hov_copa, COLORS.get('dorado', (255, 215, 0)))
-        # Pestaña activa (resaltada en dorado)
-        draw_styled_button(screen, btn_career, "HISTORIAL CARRERA", True, COLORS.get('dorado', (255, 215, 0)))
-        draw_styled_button(screen, btn_equipo, "DIRECCIÓN EQUIPO", hov_equipo, COLORS.get('azul', (0, 191, 255)))
-        draw_styled_button(screen, btn_opciones, "OPCIONES", hov_opciones, COLORS.get('verde', (0, 255, 136)))
-        draw_styled_button(screen, btn_salir, "GUARDAR Y SALIR", hov_salir, COLORS.get('rojo', (255, 68, 68)))
+        # --- Balón de Oro (palmarés de todas las ligas) ---
+        balones = list(((estado.get('datos_carrera') or {}).get('balon_oro') or []))
+        caja_bo = R_BALON_ORO
+        draw_panel(screen, caja_bo)
+        draw_text(screen, "BALÓN DE ORO", (caja_bo.x + 18, caja_bo.y + 12), size='md', color='dorado')
+        if not balones:
+            draw_text(screen, "Se entrega al cerrar cada", (caja_bo.x + 18, caja_bo.y + 56), size='sm', color='blanco')
+            draw_text(screen, "temporada al mejor de las 10 ligas.", (caja_bo.x + 18, caja_bo.y + 80), size='sm', color='blanco')
+        for i, b in enumerate(reversed(balones[-6:])):
+            g = b.get('ganador') or {}
+            yy = caja_bo.y + 50 + i * 38
+            es_mio = g.get('equipo') == mi_equipo.nombre
+            draw_text(screen, f"T{b.get('temporada', '?')}  {str(g.get('nombre', '?'))[:22]}", (caja_bo.x + 18, yy),
+                      size='sm', color='verde' if es_mio else 'blanco')
+            draw_text(screen, f"{str(g.get('equipo', '?'))[:18]} · {g.get('goles', 0)} G · {g.get('nota', 0):.1f}",
+                      (caja_bo.x + 40, yy + 18), size='sm', color='azul', shadow=False)
 
-        # v2.3.3: indicador de foco por teclado sobre el boton enfocado del sidebar
-        try:
-            _career_kbd_idx = int(estado.get('career_kbd_focus', 3))
-            if 0 <= _career_kbd_idx < len(career_sidebar):
-                kbd_rect, _n = career_sidebar[_career_kbd_idx]
-                if not kbd_rect.collidepoint(mouse_pos):
-                    pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)),
-                                     kbd_rect, width=3, border_radius=8)
-                    draw_text(screen, "▶", (kbd_rect.x - 22, kbd_rect.y + 14), size='lg', color='dorado')
-        except Exception:
-            pass
-        
-        # --- PANEL CENTRAL: ESTADÍSTICAS GLOBALES ---
-        left_rect = pygame.Rect(300, 100, 380, 580)
-        try:
-            draw_panel(screen, left_rect)
-            draw_text(screen, "ESTADÍSTICAS GLOBALES", (320, 115), size='md', color='azul')
-            pygame.draw.line(screen, COLORS.get('azul', (0, 191, 255)), (320, 145), (660, 145), 1)
-            
-            stats_data = [
-                ("Temporadas Jugadas:", str(seasons_count), 'blanco'),
-                ("Ligas Ganadas:", f"{leagues_won} 🏆", 'dorado' if leagues_won > 0 else 'blanco'),
-                ("Copas Internacionales:", f"{copas_won} 🌎", 'dorado' if copas_won > 0 else 'blanco'),
-                ("Puntos Totales:", str(total_pts), 'blanco'),
-                ("Goles a Favor (GF):", str(total_gf), 'verde'),
-                ("Goles en Contra (GC):", str(total_gc), 'rojo'),
-                ("Diferencia de Goles:", f"{'+' if dg_total > 0 else ''}{dg_total}", 'verde' if dg_total >= 0 else 'rojo'),
-                ("Récord de Puntos:", f"{best_pts} ({best_season})", 'dorado' if best_pts > 0 else 'blanco')
-            ]
-            
-            y_stat = 175
-            for label, val, color in stats_data:
-                draw_text(screen, label, (320, y_stat), size='sm', color='blanco')
-                draw_text(screen, val, (550, y_stat), size='md', color=color)
-                y_stat += 48
-        except Exception as e_left_panel:
-            logger.error(f"Error al renderizar panel de estadísticas globales: {e_left_panel}")
-            
-        # --- PANEL DERECHO: HISTORIAL POR TEMPORADA ---
-        right_rect = pygame.Rect(700, 100, 560, 580)
-        try:
-            draw_panel(screen, right_rect)
-            draw_text(screen, "HISTORIAL POR TEMPORADA", (720, 115), size='md', color='azul')
-            
-            # Encabezados de columnas del historial
-            headers = ["Temp", "Posición", "PTS", "GF-GC", "Liga", "Copa Internac."]
-            header_x = [720, 775, 865, 920, 990, 1115]
-            for h, x_pos in zip(headers, header_x):
-                draw_text(screen, h, (x_pos, 150), size='sm', color='dorado')
-                
-            pygame.draw.line(screen, COLORS.get('azul', (0, 191, 255)), (720, 170), (1240, 170), 1)
+        # --- Temporada por temporada ---
+        caja_h = R_TEMPORADAS
+        draw_panel(screen, caja_h)
+        draw_text(screen, "TEMPORADA POR TEMPORADA", (caja_h.x + 18, caja_h.y + 12), size='md', color='azul')
+        cols = [("Temp", 18), ("Equipo", 80), ("Pos.", 300), ("PTS", 370), ("GF-GC", 430),
+                ("Campeón de liga", 520), ("Copa internac.", 700)]
+        for titulo, dx in cols:
+            draw_text(screen, titulo, (caja_h.x + dx, caja_h.y + 48), size='sm', color='dorado')
+        pygame.draw.line(screen, COLORS.get('azul', (0, 191, 255)),
+                         (caja_h.x + 16, caja_h.y + 72), (caja_h.right - 16, caja_h.y + 72), 1)
 
-            # v0.8.3.4: inicializar ANTES del if/else para que las refs de
-            # las líneas 452, 513, 518 no rompan cuando historial está vacío.
-            items_visibles = 11
-            scroll = estado.get('career_scroll_offset', 0)
+        visibles = 13
+        max_scroll = max(0, len(historial) - visibles)
+        scroll = max(0, min(max_scroll, int(estado.get('career_scroll_offset', 0) or 0) + scroll_delta))
+        estado['career_scroll_offset'] = scroll
+        if not historial:
+            draw_text(screen, "Aún no has completado ninguna temporada.", (caja_h.x + 18, caja_h.y + 96),
+                      size='md', color='blanco')
+        for i, h in enumerate(historial[scroll:scroll + visibles]):
+            try:
+                yy = caja_h.y + 84 + i * 38
+                pos = h.get('pos', h.get('posicion', '?'))
+                lib = str(h.get('libertadores', '-') or '-')
+                lib_n = _norm_str(lib)
+                lib_col = 'dorado' if ('campeon' in lib_n or 'final' in lib_n) else 'blanco'
+                pos_col = 'dorado' if pos == 1 else ('verde' if isinstance(pos, int) and pos <= 3 else 'blanco')
+                draw_text(screen, f"T{h.get('temporada', '?')}", (caja_h.x + 18, yy), size='sm', color='azul')
+                draw_text(screen, str(h.get('equipo', mi_equipo.nombre))[:20], (caja_h.x + 80, yy), size='sm', color='blanco')
+                draw_text(screen, f"{pos}º", (caja_h.x + 300, yy), size='sm', color=pos_col)
+                draw_text(screen, str(h.get('pts', h.get('puntos', 0))), (caja_h.x + 370, yy), size='sm', color='blanco')
+                draw_text(screen, f"{h.get('gf', 0)}-{h.get('gc', 0)}", (caja_h.x + 430, yy), size='sm', color='blanco')
+                draw_text(screen, str(h.get('campeon_liga', '-'))[:18], (caja_h.x + 520, yy), size='sm', color='blanco')
+                draw_text(screen, lib[:18], (caja_h.x + 700, yy), size='sm', color=lib_col)
+            except Exception as e_row:
+                logger.error(f"Error al dibujar fila de historial: {e_row}")
+        if max_scroll:
+            draw_text(screen, f"Flechas / rueda: {scroll + 1}-{min(len(historial), scroll + visibles)} de {len(historial)}",
+                      (caja_h.right - 280, caja_h.bottom - 30), size='sm', color='azul', shadow=False)
 
-            if not historial:
-                draw_text(screen, "Aún no has completado ninguna temporada.", (720, 200), size='md', color='blanco')
-                draw_text(screen, "¡El historial se llenará al completar una temporada!", (720, 230), size='sm', color='azul')
-            else:
-                y_row = 185
-                row_height = 37
-                scroll = estado.get('career_scroll_offset', 0)
-                
-                # Control de límites de scroll seguro
-                if scroll < 0:
-                    scroll = 0
-                if scroll > max(0, len(historial) - items_visibles):
-                    scroll = max(0, len(historial) - items_visibles)
-                estado['career_scroll_offset'] = scroll
-                
-                temp_list = historial[scroll:scroll + items_visibles]
-                
-                for h in temp_list:
-                    try:
-                        temp_num = f"T{h.get('temporada', 1)}"
-                        pos = h.get('pos', 8)
-                        pts = h.get('pts', 0)
-                        gf = h.get('gf', 0)
-                        gc = h.get('gc', 0)
-                        campeon = h.get('campeon_liga', 'Desconocido')
-                        lib = h.get('libertadores', '-')
-                        
-                        lib_txt = str(lib)
-                        lib_color = 'blanco'
-                        # v0.8.7.1: normalizar acentos antes de comparar
-                        # (mejor_fase viene como "Campeón", no "Campeon").
-                        _lib_norm = _norm_str(lib)
-                        if 'campeon' in _lib_norm and 'sub' not in _lib_norm:
-                            lib_txt = "¡CAMPEÓN! 🌎"
-                            lib_color = 'dorado'
-                        elif 'subcampeon' in _lib_norm:
-                            lib_txt = "Subcampeón 🥈"
-                            lib_color = 'dorado'
-                            
-                        pos_txt = f"{pos}° Lugar"
-                        pos_color = 'dorado' if pos == 1 else ('verde' if pos <= 2 else ('rojo' if pos >= 7 else 'blanco'))
-                        
-                        draw_text(screen, temp_num, (720, y_row), size='sm', color='azul')
-                        draw_text(screen, pos_txt, (775, y_row), size='sm', color=pos_color)
-                        draw_text(screen, str(pts), (865, y_row), size='sm', color='blanco')
-                        draw_text(screen, f"{gf}-{gc}", (920, y_row), size='sm', color='blanco')
-                        draw_text(screen, campeon[:14], (990, y_row), size='sm', color='blanco')
-                        draw_text(screen, lib_txt[:14], (1115, y_row), size='sm', color=lib_color)
-                        
-                        y_row += row_height
-                    except Exception as e_row:
-                        logger.error(f"Error al renderizar fila de historial: {e_row}")
-                        
-                # Controles de scroll en el historial
-                if len(historial) > items_visibles:
-                    btn_up = pygame.Rect(1215, 185, 22, 22)
-                    btn_down = pygame.Rect(1215, 550, 22, 22)
-                    
-                    up_hover = btn_up.collidepoint(mouse_pos)
-                    down_hover = btn_down.collidepoint(mouse_pos)
-                    
-                    try:
-                        pygame.draw.rect(screen, (30, 45, 75) if up_hover else (20, 26, 46), btn_up, border_radius=4)
-                        pygame.draw.rect(screen, COLORS.get('azul', (0, 191, 255)), btn_up, width=1, border_radius=4)
-                        
-                        pygame.draw.rect(screen, (30, 45, 75) if down_hover else (20, 26, 46), btn_down, border_radius=4)
-                        pygame.draw.rect(screen, COLORS.get('azul', (0, 191, 255)), btn_down, width=1, border_radius=4)
-                    except TypeError:
-                        pygame.draw.rect(screen, (20, 26, 46), btn_up)
-                        pygame.draw.rect(screen, (20, 26, 46), btn_down)
-                        
-                    draw_text(screen, "▲", (1220, 187), size='sm', color='verde' if up_hover else 'blanco')
-                    draw_text(screen, "▼", (1220, 552), size='sm', color='verde' if down_hover else 'blanco')
-        except Exception as e_right_panel:
-            logger.error(f"Error al renderizar panel de historial por temporada: {e_right_panel}")
-            
-        # --- PROCESAMIENTO DE CLICS Y NAVEGACIÓN ---
-        if click_pos:
-            # Volver a Liga
-            if btn_liga.collidepoint(click_pos):
-                estado.pop('career_scroll_offset', None)
-                return "volver"
-                
-            # Ir a Mercado de Pases
-            elif btn_mercado.collidepoint(click_pos):
-                estado.pop('career_scroll_offset', None)
-                return "market_screen"
-                
-            # Ir a Copa Internacional
-            elif btn_copa.collidepoint(click_pos):
-                estado.pop('career_scroll_offset', None)
-                return "copa_screen"
-                
-            # Pestaña activa actual (Historial carrera)
-            elif btn_career.collidepoint(click_pos):
-                pass
-                
-            # Ir a Dirección de Equipo
-            elif btn_equipo.collidepoint(click_pos):
-                estado.pop('career_scroll_offset', None)
-                estado['team_contexto'] = 'carrera'  # v0.8.5: dirección de carrera (no amistoso)
-                return "team_screen"
-                
-            # Ir a Opciones (música, volumen)
-            elif btn_opciones.collidepoint(click_pos):
-                estado.pop('career_scroll_offset', None)
-                estado['options_return'] = 'career_screen'
-                return "options_screen"
-                
-            # Guardar partida y salir al menú principal
-            elif btn_salir.collidepoint(click_pos):
-                estado.pop('career_scroll_offset', None)
-                estado['save_slots_return'] = 'career_screen'
-                return "save_slots_screen"
-                
-            # Lógica de Scroll en el historial
-            if len(historial) > items_visibles:
-                btn_up = pygame.Rect(1215, 185, 22, 22)
-                btn_down = pygame.Rect(1215, 550, 22, 22)
-                if btn_up.collidepoint(click_pos) and scroll > 0:
-                    estado['career_scroll_offset'] -= 1
-                elif btn_down.collidepoint(click_pos) and scroll < len(historial) - items_visibles:
-                    estado['career_scroll_offset'] += 1
-                    
-    except Exception as general_error:
-        # En caso de error inesperado, loggeamos la excepción real e intentamos dibujar pantalla de recuperación
-        logger.error(f"Error general en career_screen.py renderizado: {general_error}. Intentando recuperación de UI.")
-        try:
-            screen.fill((10, 20, 30))
-            emerg_rect = pygame.Rect(490, 330, 300, 60)
-            pygame.draw.rect(screen, (255, 68, 68), emerg_rect, border_radius=8)
-            font = pygame.font.Font(None, 24)
-            txt = font.render(f"ERROR: {str(general_error)[:25]}. VOLVER", True, (255, 255, 255))
-            screen.blit(txt, txt.get_rect(center=emerg_rect.center))
-            
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    return "quit"
-                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    if emerg_rect.collidepoint(event.pos):
-                        return "volver"
-        except Exception as error_emergencia:
-            logger.critical(f"Fallo crítico en pantalla de emergencia de carrera: {error_emergencia}")
+        if click_pos and btn_volver.collidepoint(click_pos):
+            estado.pop('career_scroll_offset', None)
             return "volver"
-            
+    except Exception as general_error:
+        logger.error(f"Error en career_screen: {general_error}", exc_info=True)
+        return "volver"
     return None

@@ -100,7 +100,7 @@ PLANTILLAS_PARODIA = {
             ("Tomas", "Belmonte", "MED", 74, "rustico", 26),
             ("Exequiel", "Zeballos Roto", "MED", 77, "regateador", 22),
             ("Ignacio", "Miramon", "MED", 73, None, 21),
-            ("Edinson", "Matador Viejito", "DEL", 82, "lider", 37),
+            ("Edinson", "Matador Viejito", "DEL", 81, "lider", 37),
             ("Miguel", "Bestia Triste", "DEL", 81, "pulmon_de_hierro", 28),
             ("Brian", "Aguirre", "DEL", 75, "regateador", 21),
             ("Milton", "Gimenez", "DEL", 76, None, 27),
@@ -129,7 +129,7 @@ PLANTILLAS_PARODIA = {
             ("Maxi", "Meza", "MED", 76, None, 31),
             ("Matias", "Kranevitter", "MED", 74, "rustico", 31),
             ("Santiago", "Simon", "MED", 75, "pulmon_de_hierro", 22),
-            ("Miguel", "Borjita Colibri", "DEL", 83, "lider", 31),
+            ("Miguel", "Borjita Colibri", "DEL", 81, "lider", 31),
             ("Facundo", "Colidio Frio", "DEL", 78, None, 24),
             ("Pablo", "Solari Sinmira", "DEL", 77, "regateador", 23),
             ("Adam", "Bareiro", "DEL", 76, None, 27)
@@ -152,11 +152,11 @@ PLANTILLAS_PARODIA = {
             ("Leonardo", "Sigali Viejo", "DEF", 71, "lider", 37),
             ("Bruno", "Zuculini Tronco", "MED", 73, "rustico", 31),
             ("Agustin", "Almendra Rancia", "MED", 77, "regateador", 24),
-            ("Juanfer", "Quintero Panza", "MED", 82, "regateador", 31),
+            ("Juanfer", "Quintero Panza", "MED", 81, "regateador", 31),
             ("Santiago", "Sosa Pulmon", "MED", 78, "pulmon_de_hierro", 25),
             ("Baltasar", "Rodriguez", "MED", 75, None, 21),
             ("Juan", "Nardoni", "MED", 77, "pulmon_de_hierro", 21),
-            ("Adrian", "Maravilla Martinez", "DEL", 82, "lider", 31),
+            ("Adrian", "Maravilla Martinez", "DEL", 81, "lider", 31),
             ("Roger", "Martinez Frio", "DEL", 78, None, 30),
             ("Johan", "Carbonero Humo", "DEL", 77, "regateador", 24),
             ("Maximiliano", "Salas", "DEL", 75, None, 26),
@@ -240,19 +240,199 @@ PLANTILLAS_PARODIA = {
             ("Juan", "Camilo Portilla", "MED", 77, "pulmon_de_hierro", 25),
             ("Bruno", "Barticciotto", "MED", 75, None, 23),
             ("Sebastian", "Palacios", "DEL", 75, "regateador", 32),
-            ("Ramon", "Sosa Vendido", "DEL", 82, "regateador", 24),
+            ("Ramon", "Sosa Vendido", "DEL", 81, "regateador", 24),
             ("Valentin", "Depietri", "DEL", 73, None, 23),
             ("Alejandro", "Martinez", "DEL", 75, None, 26),
             ("Federico", "Girotti", "DEL", 76, None, 25),
             ("Cristian", "Tarragona", "DEL", 74, None, 33)
         ]
-    }
+    },
+    # ── v3.7.0: clubes nuevos (Liga Profesional 2025, liga de 12) ──
+    "Pincharratas de La Plata": {
+        "ciudad": "La Plata",
+        "estrellas": 3.9,
+        "estilo_dt": "choloismo",
+        "balance": 11000000,
+        "jugadores": [
+            ("Fernando", "Muslerazo", "POR", 77, "lider", 39),
+            ("Matias", "Mansillita", "POR", 71, None, 28),
+            ("Santiago", "Nuñez Nube", "DEF", 74, None, 23),
+            ("Leandro", "Gonzalez Pirex", "DEF", 74, "rustico", 33),
+            ("Eric", "Meza Mesita", "DEF", 73, "pulmon_de_hierro", 26),
+            ("Gaston", "Benedetti Bendito", "DEF", 72, None, 24),
+            ("Roman", "Gomez Goma", "DEF", 71, None, 21),
+            ("Facundo", "Rodriguez Rudo", "DEF", 72, "rustico", 25),
+            ("Tomas", "Palacios Palacete", "DEF", 72, None, 22),
+            ("Santiago", "Ascacibar Pitbull", "MED", 77, "rustico", 28),
+            ("Alexis", "Manyoma Mañoso", "MED", 74, "regateador", 29),
+            ("Mikel", "Amondarain Vasco", "MED", 72, None, 23),
+            ("Gabriel", "Neves Nieve", "MED", 72, None, 28),
+            ("Ezequiel", "Piovi Pioja", "MED", 72, None, 33),
+            ("Tiago", "Palacios Principe", "MED", 73, "regateador", 24),
+            ("Jose", "Sosa Principito", "MED", 74, "lider", 40),
+            ("Edwuin", "Cetre Cetro", "DEL", 77, "regateador", 27),
+            ("Guido", "Carrillazo", "DEL", 75, "lider", 34),
+            ("Lucas", "Alario Alarma", "DEL", 74, None, 32),
+            ("Fabricio", "Perez Pereza", "DEL", 70, None, 20),
+        ]
+    },
+    "Vélez Sarsfall": {
+        "ciudad": "Buenos Aires",
+        "estrellas": 3.8,
+        "estilo_dt": "cruyffismo",
+        "balance": 10000000,
+        "jugadores": [
+            ("Tomas", "Marchiori Martillo", "POR", 76, None, 29),
+            ("Alvaro", "Montero Montaña", "POR", 74, "lider", 30),
+            ("Emanuel", "Mammana Mañana", "DEF", 75, "rustico", 29),
+            ("Jano", "Gordon Gordo", "DEF", 72, None, 21),
+            ("Joaquin", "Garcia Gancho", "DEF", 73, "pulmon_de_hierro", 24),
+            ("Elias", "Gomez Goleta", "DEF", 72, None, 30),
+            ("Damian", "Fernandez Fideo", "DEF", 72, None, 24),
+            ("Aaron", "Quiros Quirofano", "DEF", 70, None, 20),
+            ("Lautaro", "Garzon Garza", "DEF", 70, None, 20),
+            ("Agustin", "Bouzat Buzo", "MED", 74, "pulmon_de_hierro", 31),
+            ("Christian", "Ordoñez Ordeño", "MED", 72, None, 21),
+            ("Rodrigo", "Aliendro Aliento", "MED", 74, None, 34),
+            ("Claudio", "Baeza Bajo", "MED", 72, "rustico", 31),
+            ("Tomas", "Galvan Galope", "MED", 72, None, 24),
+            ("Manuel", "Lanzini Lanza", "MED", 76, "regateador", 32),
+            ("Diego", "Valdes Valde", "MED", 74, "regateador", 31),
+            ("Braian", "Romero Romerito", "DEL", 76, "lider", 34),
+            ("Michael", "Santos Sanito", "DEL", 73, None, 32),
+            ("Imanol", "Machuca Machaca", "DEL", 73, "regateador", 25),
+            ("Maher", "Carrizo Carrusel", "DEL", 72, "regateador", 19),
+            ("Matias", "Pellegrini Peregrino", "DEL", 71, None, 25),
+        ]
+    },
+    "Rosario Canalla": {
+        "ciudad": "Rosario",
+        "estrellas": 3.8,
+        "estilo_dt": "kloppismo",
+        "balance": 10000000,
+        "jugadores": [
+            ("Jorge", "Fatura Broun", "POR", 76, "lider", 39),
+            ("Axel", "Werner Suplente", "POR", 69, None, 29),
+            ("Carlos", "Quintana Quinta", "DEF", 74, "rustico", 37),
+            ("Facundo", "Mallo Malla", "DEF", 73, None, 30),
+            ("Juan", "Cruz Komarca", "DEF", 72, None, 29),
+            ("Agustin", "Sandez Sandia", "DEF", 73, "pulmon_de_hierro", 24),
+            ("Emanuel", "Coronel Coronado", "DEF", 72, None, 28),
+            ("Ignacio", "Ovando Ovalo", "DEF", 70, None, 23),
+            ("Gaston", "Avila Avioneta", "DEF", 70, None, 23),
+            ("Angel", "Di Maria Fideo", "MED", 81, "regateador", 37),
+            ("Ignacio", "Malcorra Malcorre", "MED", 76, "lider", 37),
+            ("Franco", "Ibarra Barra", "MED", 73, "rustico", 24),
+            ("Jaminton", "Campaz Campeon", "MED", 75, "regateador", 25),
+            ("Julian", "Fernandez Fernet", "MED", 72, None, 30),
+            ("Tomas", "OConnor Irlandes", "MED", 71, None, 29),
+            ("Kevin", "Ortiz Ortiga", "MED", 72, None, 28),
+            ("Enzo", "Copetti Copete", "DEL", 74, None, 29),
+            ("Alejo", "Veliz Velero", "DEL", 72, None, 22),
+            ("Maximiliano", "Lovera Lluvia", "DEL", 72, "regateador", 26),
+            ("Enzo", "Gimenez Gemelo", "DEL", 68, None, 20),
+            ("Lautaro", "Giaccone Giacomo", "DEL", 70, None, 25),
+        ]
+    },
+    "Lanús Granate Oxidado": {
+        "ciudad": "Lanús",
+        "estrellas": 3.7,
+        "estilo_dt": "artetismo",
+        "balance": 9000000,
+        "jugadores": [
+            ("Nahuel", "Losa Rota", "POR", 76, "lider", 27),
+            ("Franco", "Petroleo", "POR", 68, None, 27),
+            ("Carlos", "Izquierdazo", "DEF", 75, "lider", 36),
+            ("Jose", "Canale Canal", "DEF", 72, None, 29),
+            ("Armando", "Mendez Mendigo", "DEF", 72, None, 25),
+            ("Sasha", "Marcich Marcha", "DEF", 71, "pulmon_de_hierro", 22),
+            ("Gonzalo", "Perez Perezoso", "DEF", 70, None, 26),
+            ("Nicolas", "Morgantini Morgan", "DEF", 70, None, 31),
+            ("Ronaldo", "De Jesus Milagro", "DEF", 70, None, 26),
+            ("Agustin", "Cardozo Cardo", "MED", 73, "rustico", 28),
+            ("Felipe", "Peña Biafore Peñasco", "MED", 73, None, 24),
+            ("Marcelino", "Moreno Morocho", "MED", 76, "regateador", 30),
+            ("Ramiro", "Carrera Corrida", "MED", 72, None, 32),
+            ("Raul", "Loaiza Loza", "MED", 71, "rustico", 30),
+            ("Agustin", "Medina Medialuna", "MED", 70, None, 26),
+            ("Eduardo", "Toto Salvio", "DEL", 75, "regateador", 34),
+            ("Walter", "Bou Bu", "DEL", 76, "lider", 31),
+            ("Rodrigo", "Castillo Castle", "DEL", 73, None, 26),
+            ("Lautaro", "Laucha Acosta", "DEL", 73, "regateador", 37),
+            ("Dylan", "Aquino Acuario", "DEL", 71, "regateador", 21),
+            ("Franco", "Watson Sherlock", "DEL", 70, None, 20),
+        ]
+    },
+    "Argentinos Juniorsitos": {
+        "ciudad": "Buenos Aires",
+        "estrellas": 3.4,
+        "estilo_dt": "flickismo",
+        "balance": 7000000,
+        "jugadores": [
+            ("Diego", "Rodriguez Ruso", "POR", 73, None, 36),
+            ("Gonzalo", "Siri Siri", "POR", 68, None, 36),
+            ("Francisco", "Alvarez Alvaro", "DEF", 72, None, 25),
+            ("Erik", "Godoy Goya", "DEF", 72, "rustico", 31),
+            ("Sebastian", "Prieto Prisa", "DEF", 71, None, 32),
+            ("Roman", "Vega Vegano", "DEF", 70, None, 21),
+            ("Leandro", "Lozano Lozana", "DEF", 70, None, 30),
+            ("Kevin", "Coronel Corona", "DEF", 71, None, 25),
+            ("Mateo", "Antoni Antonio", "DEF", 69, None, 20),
+            ("Alan", "Lescano Lesionado", "MED", 76, "regateador", 23),
+            ("Hernan", "Lopez Muñeco", "MED", 74, None, 25),
+            ("Nicolas", "Oroz Oro", "MED", 73, None, 31),
+            ("Gonzalo", "Maroni Marron", "MED", 73, "regateador", 26),
+            ("Franco", "Moyano Moyo", "MED", 71, "rustico", 27),
+            ("Jose", "Herrera Herrero", "MED", 71, None, 23),
+            ("Federico", "Fattori Fatiga", "MED", 71, "pulmon_de_hierro", 32),
+            ("Lucas", "Gonzalez Pibito", "MED", 67, None, 18),
+            ("Tomas", "Molina Molino", "DEL", 75, "lider", 30),
+            ("Diego", "Porcel Porcelana", "DEL", 72, "regateador", 21),
+            ("Emiliano", "Viveros Vivero", "DEL", 71, "regateador", 23),
+            ("Alan", "Rodriguez Rodilla", "DEL", 70, None, 25),
+        ]
+    },
+    "Huracán Brisa": {
+        "ciudad": "Buenos Aires",
+        "estrellas": 3.3,
+        "estilo_dt": "haramball",
+        "balance": 6500000,
+        "jugadores": [
+            ("Hernan", "Galindez Galan", "POR", 76, "lider", 38),
+            ("Sebastian", "Meza Mesero", "POR", 68, None, 25),
+            ("Hernan", "De la Fuente Fontana", "DEF", 72, None, 28),
+            ("Cesar", "Ibañez Iban", "DEF", 72, "pulmon_de_hierro", 26),
+            ("Fernando", "Tobio Tobogan", "DEF", 73, "rustico", 35),
+            ("Marco", "Pellegrino Pelegrin", "DEF", 72, None, 23),
+            ("Lucas", "Carrizo Carrizal", "DEF", 72, "rustico", 27),
+            ("Nehuen", "Paz Tranquila", "DEF", 71, None, 32),
+            ("Guillermo", "Soto Sotana", "DEF", 70, None, 31),
+            ("Emmanuel", "Ojeda Ojera", "MED", 73, "rustico", 28),
+            ("Leonardo", "Gil Gilito", "MED", 73, None, 34),
+            ("Rodrigo", "Echeverria Echenique", "MED", 74, "pulmon_de_hierro", 29),
+            ("Matko", "Miljevic Milagro", "MED", 72, "regateador", 24),
+            ("Agustin", "Urzi Urgente", "MED", 71, "regateador", 25),
+            ("Emanuel", "Beltran Beltranito", "MED", 70, None, 26),
+            ("Facundo", "Waller Walla", "MED", 69, None, 27),
+            ("Eric", "Ramirez Ramillete", "DEL", 73, None, 26),
+            ("Walter", "Mazzantti Mazapan", "DEL", 75, "regateador", 29),
+            ("Jordy", "Caicedo Cacao", "DEL", 72, None, 27),
+            ("Leandro", "Garate Garita", "DEL", 70, None, 32),
+            ("Ignacio", "Pussetto Pusheta", "DEL", 70, None, 29),
+        ]
+    },
 }
+
+# v3.7.0: alias con el nombre común de los datos de liga (tests y merge).
+DATOS_ARGENTINA = PLANTILLAS_PARODIA
 
 NOMBRES_CORTOS = {
     "Boca Grande": "Boca Grande", "River Au": "River Au",
     "Corriendo": "Corriendo", "Desindependiente": "Independiente",
     "San Lorenzont": "Lorenzont", "Talleres de tallarines": "Talleres",
+    # v3.7.0: clubes nuevos
+    "Pincharratas de La Plata": "Pincha", "Vélez Sarsfall": "Vélez", "Rosario Canalla": "Central",
+    "Lanús Granate Oxidado": "Lanús", "Argentinos Juniorsitos": "Argentinos", "Huracán Brisa": "Huracán",
 }
 ESTILO_OVERRIDE = {
     "Boca Grande": "anchelottismo",
@@ -267,7 +447,7 @@ def get_liga() -> Liga:
     """
     try:
         equipos = []
-        id_counter = 300
+        id_counter = 3000  # v3.7.0: rango propio (12 clubes)
         
         for nombre_parodia, datos in PLANTILLAS_PARODIA.items():
             jugadores = []
@@ -309,7 +489,7 @@ def get_liga() -> Liga:
             nombre="Liga Profesional Argentina",
             tipo="argentina",
             equipos=equipos,
-            num_jornadas=10
+            num_jornadas=max(2, 2 * (len(equipos) - 1))  # v3.7.0: 12 clubes -> 22
         )
     except Exception as e:
         logger.critical(f"Error crítico al construir Liga Argentina: {e}. Retornando fallback.")

@@ -40,6 +40,18 @@ TABS = [
 ]
 
 
+# v3.9.0: rects expuestos (ayuda H)
+R_ALCANCE_LIGA = pygame.Rect(760, 20, 230, 40)
+R_ALCANCE_MI = pygame.Rect(1000, 20, 230, 40)
+R_TABLA = pygame.Rect(40, 140, 1200, 510)
+R_VOLVER = pygame.Rect(40, 656, 200, 40)
+
+
+def rect_tab(i: int) -> pygame.Rect:
+    """v3.9.0: pestaña i (GOLEADORES, ASISTENCIAS, VALLAS, NOTAS)."""
+    return pygame.Rect(40 + i * 260, 80, 250, 38)
+
+
 def _jugadores_con_club(estado: dict) -> list:
     """Lista de (jugador, club_corto) de todos los equipos de la liga del usuario."""
     out = []
@@ -72,11 +84,10 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 key_events.append(event)
 
         draw_gradient_bg(screen)
-        draw_text(screen, "ESTADÍSTICAS DE LA TEMPORADA", (40, 22), size='xl', color='dorado')
+        draw_text(screen, "ESTADÍSTICAS DE LA TEMPORADA", (40, 26), size='lg', color='dorado')   # v3.9.0: en xl pisaba TODA LA LIGA
 
         # Alcance: TODA LA LIGA (por defecto) / MI EQUIPO
-        sc_liga = pygame.Rect(760, 20, 230, 40)
-        sc_mi = pygame.Rect(1000, 20, 230, 40)
+        sc_liga, sc_mi = R_ALCANCE_LIGA, R_ALCANCE_MI
         # v2.3.3: visualizacion del foco por teclado en scope
         _stats_kbd = int(estado.get('stats_kbd_focus', 0))
         scope_focus_liga = (_stats_kbd == -1)
@@ -101,7 +112,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         tab_rects = {}
         tx = 40
         for idx_t, (clave, etiqueta, _attr, _h, _m) in enumerate(TABS):
-            r = pygame.Rect(tx, 80, 250, 38)
+            r = rect_tab(idx_t)
             tab_rects[clave] = r
             activo = (estado['stats_tab'] == clave)
             is_kbd = (_stats_kbd == idx_t)
@@ -131,7 +142,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         jugadores.sort(key=lambda t: float(getattr(t[0], attr, 0)), reverse=True)
 
         # Tabla
-        panel = pygame.Rect(40, 140, 1200, 510)
+        panel = R_TABLA
         draw_panel(screen, panel)
         draw_text(screen, "#", (panel.x + 20, panel.y + 15), size='sm', color='dorado')
         draw_text(screen, "Jugador", (panel.x + 70, panel.y + 15), size='sm', color='dorado')
@@ -157,7 +168,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             draw_text(screen, val_txt, (panel.x + 1050, y), size='sm', color='verde')
             y += 35
 
-        btn_volver = pygame.Rect(40, 660, 200, 48)
+        btn_volver = R_VOLVER   # v3.6.0: sobre la barra de atajos
         # v2.3.3: foco en volver = -3
         _kbd_volver = (_stats_kbd == -3)
         draw_button(screen, btn_volver, "VOLVER", btn_volver.collidepoint(mouse_pos) or _kbd_volver)

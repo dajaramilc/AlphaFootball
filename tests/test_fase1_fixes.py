@@ -9,6 +9,23 @@ from alpha_football.data import betplay, segunda_betplay
 from alpha_football.plantilla import expandir_liga
 from alpha_football.ui.resumen_temporada_screen import avanzar_nueva_temporada
 
+# v2.3.5: avanzar_nueva_temporada autoguarda en un slot; en tests va a una carpeta
+# temporal para NO pisar las partidas reales de saves/.
+import tempfile
+from alpha_football import save as _save_mod
+_TMP_SAVES = tempfile.mkdtemp(prefix="af_test_saves_")
+_orig_guardar_en_slot = _save_mod.guardar_en_slot
+_save_mod.guardar_en_slot = lambda estado, n, nombre, carpeta=None: _orig_guardar_en_slot(estado, n, nombre, _TMP_SAVES)
+
+from alpha_football.ui.league_screen import inicializar_calendario_liga
+
+def _temporada_jugada(*ligas):
+    """Marca el calendario como jugado para que la simulación de fondo no altere la tabla del test."""
+    for l in ligas:
+        inicializar_calendario_liga(l)
+        for p in l.calendario:
+            p.jugado = True
+
 def test_user_en_1a_asciende_alguien():
     """User en 1a: bottom-2 de 1a descienden, top-2 de 2a ascienden."""
     liga1 = betplay.get_liga()
@@ -36,13 +53,16 @@ def test_user_en_1a_asciende_alguien():
     n_1a_before = len(liga1.equipos)
     n_2a_before = len(liga2.equipos)
 
+    _temporada_jugada(liga1, liga2)
+    if estado['liga'] is liga2:
+        estado['primera_division'] = {'betplay': liga1}
     avanzar_nueva_temporada(estado)
 
     assert estado['temporada'] == 2
-    assert 'promo_releg_resultado' in estado
-    pr = estado['promo_releg_resultado']
-    assert len(pr['ascendieron']) == 2, f"Ascendieron {len(pr['ascendieron'])} equipos"
-    assert len(pr['descendieron']) == 2, f"Descendieron {len(pr['descendieron'])} equipos"
+    assert 'promo_releg_data' in estado
+    pr = estado['promo_releg_data']
+    assert len(pr['ascendidos']) == 2, f"Ascendieron {len(pr['ascendidos'])} equipos"
+    assert len(pr['descendidos']) == 2, f"Descendieron {len(pr['descendidos'])} equipos"
     assert pr['user_ascendio'] == False, "User no debio ascender (ya estaba en 1a)"
     assert pr['user_descendio'] == False, "User no debio descender (es top)"
 
@@ -76,12 +96,15 @@ def test_user_en_2a_puede_ascender():
         'historial': [], 'transfer_log': [],
     }
 
+    _temporada_jugada(liga1, liga2)
+    if estado['liga'] is liga2:
+        estado['primera_division'] = {'betplay': liga1}
     avanzar_nueva_temporada(estado)
 
     assert estado['temporada'] == 2
-    assert 'promo_releg_resultado' in estado
-    pr = estado['promo_releg_resultado']
-    assert len(pr['ascendieron']) == 2
+    assert 'promo_releg_data' in estado
+    pr = estado['promo_releg_data']
+    assert len(pr['ascendidos']) == 2
     assert pr['user_ascendio'] == True, "¡User debio ascender de 2a a 1a!"
     assert pr['user_descendio'] == False
     assert estado['liga_usuario_division'] == 1, f"Division deberia ser 1, es {estado['liga_usuario_division']}"

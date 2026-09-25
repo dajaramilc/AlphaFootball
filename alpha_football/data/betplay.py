@@ -97,7 +97,7 @@ PLANTILLAS_PARODIA = {
         "estilo_dt": "cruyffismo",
         "balance": 15000000,
         "jugadores": [
-            ("David", "Espina", "POR", 82, "lider", 37),
+            ("David", "Espina", "POR", 81, "lider", 37),
             ("Harlen", "Castillo (Chipi)", "POR", 72, None, 30),
             ("Felipe", "Romano", "DEF", 76, "pulmon_de_hierro", 28),
             ("Alvaro", "Angulo Muerto", "DEF", 74, None, 27),
@@ -107,7 +107,7 @@ PLANTILLAS_PARODIA = {
             ("Simón", "García", "DEF", 69, None, 21),
             ("Robert", "Miedito", "MED", 74, "pulmon_de_hierro", 24),
             ("Jhojan", "Amargo", "MED", 70, None, 22),
-            ("Edwin", "Cartona", "MED", 83, "lider", 32),
+            ("Edwin", "Cartona", "MED", 81, "lider", 32),
             ("Juan Manuel", "Zapato", "MED", 74, None, 23),
             ("Pablo", "Pincelini", "MED", 75, "regateador", 33),
             ("Kevin", "Parado", "MED", 71, None, 21),
@@ -125,7 +125,7 @@ PLANTILLAS_PARODIA = {
         "estilo_dt": "flickismo",
         "balance": 12000000,
         "jugadores": [
-            ("Alvaro", "Montonero", "POR", 83, "lider", 29),
+            ("Alvaro", "Montonero", "POR", 81, "lider", 29),
             ("Diego", "Novato", "POR", 70, None, 34),
             ("Juan Pablo", "Vargas Lentas", "DEF", 81, "lider", 29),
             ("Andres", "Llantas", "DEF", 76, "rustico", 28),
@@ -139,7 +139,7 @@ PLANTILLAS_PARODIA = {
             ("Stiven", "Vegano", "MED", 74, "pulmon_de_hierro", 27),
             ("Felix", "Chatarra", "MED", 69, None, 22),
             ("Juan Carlos", "Pereza", "MED", 73, None, 33),
-            ("Radamel", "Falso", "DEL", 83, "lider", 39),
+            ("Radamel", "Falso", "DEL", 81, "lider", 39),
             ("Leonardo", "Castrado", "DEL", 78, "pulmon_de_hierro", 31),
             ("Santiago", "Jordán", "DEL", 74, "rustico", 29),
             ("Daniel", "Castaño", "MED", 76, "regateador", 32),
@@ -170,7 +170,7 @@ PLANTILLAS_PARODIA = {
             ("Adrian", "Ramitos", "DEL", 81, "lider", 39),
             ("Cristian", "Vecindario", "DEL", 77, "regateador", 26),
             ("Rodrigo", "Arena", "DEL", 75, "rustico", 29),
-            ("Duvan", "Verdulero", "DEL", 83, "regateador", 29),
+            ("Duvan", "Verdulero", "DEL", 81, "regateador", 29),
             ("Pipe", "Gomecito", "DEL", 70, None, 24),
             ("Yohan", "Garcita", "DEL", 69, None, 19)
         ]
@@ -181,7 +181,7 @@ PLANTILLAS_PARODIA = {
         "estilo_dt": "cruyffismo",
         "balance": 18000000,
         "jugadores": [
-            ("Santiago", "Miel", "POR", 83, "lider", 28),
+            ("Santiago", "Miel", "POR", 81, "lider", 28),
             ("Jefferson", "Martin", "POR", 70, None, 31),
             ("Emmanuel", "Olivera (Rustico)", "DEF", 77, "rustico", 33),
             ("Jermein", "Penas", "DEF", 75, "rustico", 24),
@@ -195,7 +195,7 @@ PLANTILLAS_PARODIA = {
             ("Leider", "Birra", "MED", 71, None, 26),
             ("Yimmi", "Chatarra", "MED", 81, "regateador", 34),
             ("Roberto", "Hinojo", "MED", 73, "regateador", 25),
-            ("Carlos", "Vaca", "DEL", 83, "lider", 38),
+            ("Carlos", "Vaca", "DEL", 81, "lider", 38),
             ("Jose", "Enamorado (Rapido)", "DEL", 78, "regateador", 25),
             ("Deiber", "Caido", "DEL", 75, "regateador", 25),
             ("Marco", "Perezoso", "DEL", 74, "rustico", 34),
@@ -231,7 +231,7 @@ PLANTILLAS_PARODIA = {
             ("Jaider", "Morado", "DEL", 67, None, 20)
         ]
     },
-    "Independiente Casi Fue": {
+    "Independiente Chanda fe": {
         "ciudad": "Bogotá",
         "estrellas": 3.0,
         "estilo_dt": "haramball",
@@ -314,19 +314,142 @@ PLANTILLAS_PARODIA = {
             ("David", "Lemos", "DEL", 70, None, 30),
             ("Lucho", "Palacio", "DEL", 69, None, 26)
         ]
-    }
+    },
+    # ── v3.7.0: clubes nuevos (Liga BetPlay 2025, liga de 12) ──
+    "Poderoso de la Montaña Rusa": {
+        "ciudad": "Medellín",
+        "estrellas": 3.5,
+        "estilo_dt": "cruyffismo",
+        "balance": 9000000,
+        "jugadores": [
+            ("Eder", "Chaux Chao", "POR", 75, "lider", 34),
+            ("Alejandro", "Hernandez Guante", "POR", 67, None, 25),
+            ("Andres", "Cadavid Cadaver", "DEF", 72, "rustico", 38),
+            ("Juan Carlos", "Diaz Festivo", "DEF", 71, None, 26),
+            ("Daniel", "Londoño Londres", "DEF", 72, "pulmon_de_hierro", 29),
+            ("Cristian", "Tovar Tovarich", "DEF", 72, None, 30),
+            ("Yhormar", "Hernandez Hervido", "DEF", 70, None, 22),
+            ("Victor", "Moreno Mora", "DEF", 69, None, 25),
+            ("Jhon", "Palacios Palito", "DEF", 69, None, 23),
+            ("Baldomero", "Perlaza Perla", "MED", 75, "pulmon_de_hierro", 32),
+            ("Jaime", "Alvarado Alvarito", "MED", 73, None, 26),
+            ("Felipe", "Pardo Pardito", "MED", 73, "regateador", 34),
+            ("Brayan", "Castrillon Castillo", "MED", 71, None, 25),
+            ("Jarlan", "Barrera Barrerita", "MED", 74, "regateador", 30),
+            ("Kevin", "Mantilla Mantel", "MED", 70, None, 24),
+            ("Jordy", "Monroy Monroe", "MED", 70, None, 29),
+            ("Luciano", "Pons Poncho", "DEL", 76, "lider", 35),
+            ("Brayan", "Leon Leoncito", "DEL", 75, "regateador", 25),
+            ("Leider", "Berrio Berrinche", "DEL", 72, "regateador", 30),
+            ("Diber", "Cambindo Cambio", "DEL", 73, None, 25),
+            ("Hayen", "Palacios Palomo", "DEL", 70, None, 26),
+        ]
+    },
+    "Leopardos Desmanchados": {
+        "ciudad": "Bucaramanga",
+        "estrellas": 3.2,
+        "estilo_dt": "choloismo",
+        "balance": 7000000,
+        "jugadores": [
+            ("Aldair", "Quintana Quinto", "POR", 76, "lider", 31),
+            ("Luis", "Vasquez Vasco", "POR", 68, None, 29),
+            ("Jefry", "Zapata Zapatilla", "DEF", 72, "rustico", 30),
+            ("Carlos", "Romaña Romano", "DEF", 72, None, 26),
+            ("Freddy", "Hinestroza Hinojosa", "DEF", 71, "pulmon_de_hierro", 34),
+            ("Aldair", "Gutierrez Guti", "DEF", 72, None, 25),
+            ("Jhon", "Mena Menudo", "DEF", 70, None, 28),
+            ("Kener", "Gonzalez Gonzo", "DEF", 69, None, 22),
+            ("Nelson", "Quiñones Quiñon", "DEF", 69, None, 27),
+            ("Fabian", "Sambueza Sambuca", "MED", 75, "regateador", 36),
+            ("Leonardo", "Flores Florero", "MED", 72, None, 30),
+            ("Gustavo", "Charrupi Chirrido", "MED", 71, "rustico", 27),
+            ("Flabian", "Londoño Flan", "MED", 72, None, 25),
+            ("Christian", "Mafla Mafia", "MED", 70, None, 32),
+            ("Jhon", "Cordoba Cordobes", "MED", 70, None, 28),
+            ("Sherman", "Cardenas Cardenal", "MED", 70, None, 36),
+            ("Frank", "Castañeda Castaña", "DEL", 75, "regateador", 31),
+            ("Kevin", "Londoño Leopardo", "DEL", 72, None, 23),
+            ("Fabry", "Castro Castor", "DEL", 71, None, 29),
+            ("Ruyery", "Blanco Blanquito", "DEL", 69, None, 24),
+            ("Johan", "Rojas Semaforo", "DEL", 70, None, 24),
+        ]
+    },
+    "Matecaña Averiada": {
+        "ciudad": "Pereira",
+        "estrellas": 2.8,
+        "estilo_dt": "haramball",
+        "balance": 6000000,
+        "jugadores": [
+            ("Neto", "Volpi Volpe", "POR", 74, "lider", 33),
+            ("Aldair", "Bolaños Bolillo", "POR", 67, None, 25),
+            ("Walmer", "Pacheco Pachanga", "DEF", 71, "rustico", 34),
+            ("Cesar", "Quintero Quintal", "DEF", 70, None, 30),
+            ("Jhon", "Largacha Larguero", "DEF", 70, None, 32),
+            ("Yuber", "Quiñones Quiñonero", "DEF", 71, None, 32),
+            ("Juan", "Mosquera Mosca", "DEF", 69, "pulmon_de_hierro", 26),
+            ("Anderson", "Plata Platino", "DEF", 69, None, 24),
+            ("Luis", "Zapata Zapateo", "DEF", 68, None, 21),
+            ("Jhonny", "Vasquez Vasija", "MED", 72, None, 37),
+            ("Carlos", "Ramirez Ramal", "MED", 71, None, 28),
+            ("Arley", "Rodriguez Rodado", "MED", 71, "rustico", 33),
+            ("Jorge", "Aguirre Matecaña", "MED", 70, None, 27),
+            ("Kevin", "Ceballos Cebolla", "MED", 70, None, 24),
+            ("Brayan", "Rovira Rueda", "MED", 69, None, 25),
+            ("Yerson", "Candelo Candela", "MED", 72, "regateador", 32),
+            ("Darwin", "Quintero Show", "DEL", 76, "regateador", 37),
+            ("Angelo", "Rodriguez Angelito", "DEL", 73, "lider", 35),
+            ("Ever", "Valencia Valenciano", "DEL", 71, None, 23),
+            ("Juan Pablo", "Nieto Nietito", "DEL", 70, None, 30),
+            ("Daniel", "Mosquera Mosquito", "DEL", 69, None, 21),
+        ]
+    },
+    "Volcánico Apagado de Pasto": {
+        "ciudad": "Pasto",
+        "estrellas": 2.6,
+        "estilo_dt": "kloppismo",
+        "balance": 5500000,
+        "jugadores": [
+            ("Diego", "Martinez Volcan", "POR", 73, "lider", 32),
+            ("Kevin", "Rendon Nevado", "POR", 66, None, 24),
+            ("Jhon", "Montaño Montañero", "DEF", 70, "rustico", 29),
+            ("Brayan", "Rodallega Rodaja", "DEF", 69, None, 27),
+            ("Yeison", "Guzman Guzmancito", "DEF", 70, None, 30),
+            ("Andres", "Ricaurte Rico", "DEF", 69, "pulmon_de_hierro", 26),
+            ("Luis", "Cuy Asado", "DEF", 68, None, 23),
+            ("Carlos", "Paz Nariño", "DEF", 68, None, 31),
+            ("Harold", "Rivas Rival", "DEF", 67, None, 20),
+            ("Juan", "Galeras Humeante", "MED", 72, "regateador", 28),
+            ("Sebastian", "Guerrero Guerra", "MED", 71, None, 26),
+            ("Miguel", "Nazarit Nazareno", "MED", 70, "rustico", 29),
+            ("Camilo", "Ayala Ayalita", "MED", 70, None, 24),
+            ("Diego", "Chica Chicle", "MED", 71, None, 30),
+            ("Jonathan", "Obando Obelisco", "MED", 69, None, 25),
+            ("Felipe", "Jaramillo Jaramago", "MED", 68, None, 22),
+            ("Ray", "Vanegas Vanidoso", "DEL", 72, None, 30),
+            ("Bayron", "Garces Frio", "DEL", 71, "regateador", 26),
+            ("Kevin", "Salazar Salero", "DEL", 70, None, 23),
+            ("Eduar", "Caicedo Pastuso", "DEL", 71, "lider", 29),
+            ("Jhon", "Pajoy Paja", "DEL", 69, None, 31),
+        ]
+    },
 }
 
 # v0.7: nombre corto (anti-solapamiento) y override de estilo (algunos equipos equilibrados).
+# v3.7.0: alias con el nombre común de los datos de liga (tests y merge).
+DATOS_BETPLAY = PLANTILLAS_PARODIA
+
 NOMBRES_CORTOS = {
     "Narconal": "Narconal", "Pobres Vagos": "Pobres Vagos",
     "ABerica de Cali": "ABerica", "Junior daddy": "Junior",
-    "Deportivo Casi": "Depor Casi", "Independiente Casi Fue": "Casi Fue",
+    "Deportivo Casi": "Depor Casi", "Independiente Chanda fe": "Chanda fe",
     "Deportes Llorima": "Llorima", "Once Faldas": "Once Faldas",
+    # v3.7.0: clubes nuevos
+    "Poderoso de la Montaña Rusa": "DIM", "Leopardos Desmanchados": "Bucaramanga",
+    "Matecaña Averiada": "Pereira", "Volcánico Apagado de Pasto": "Pasto",
 }
 ESTILO_OVERRIDE = {
     "Junior daddy": "anchelottismo",
-    "Independiente Casi Fue": "anchelottismo",
+    "Independiente Chanda fe": "anchelottismo",
 }
 
 
@@ -337,7 +460,7 @@ def get_liga() -> Liga:
     """
     try:
         equipos = []
-        id_counter = 100
+        id_counter = 1000  # v3.7.0: rango propio (12 clubes)
         
         for nombre_parodia, datos in PLANTILLAS_PARODIA.items():
             jugadores = []
@@ -379,7 +502,7 @@ def get_liga() -> Liga:
             nombre="Liga BetPlay Colombia",
             tipo="betplay",
             equipos=equipos,
-            num_jornadas=14
+            num_jornadas=max(2, 2 * (len(equipos) - 1))  # v3.7.0: 12 clubes -> 22
         )
     except Exception as e:
         logger.critical(f"Error crítico al construir Liga BetPlay: {e}. Retornando liga vacía.")

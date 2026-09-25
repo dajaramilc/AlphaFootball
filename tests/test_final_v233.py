@@ -9,6 +9,23 @@ from alpha_football.data import betplay, segunda_betplay
 from alpha_football.plantilla import expandir_liga
 from alpha_football.ui.resumen_temporada_screen import avanzar_nueva_temporada
 
+# v2.3.5: avanzar_nueva_temporada autoguarda en un slot; en tests va a una carpeta
+# temporal para NO pisar las partidas reales de saves/.
+import tempfile
+from alpha_football import save as _save_mod
+_TMP_SAVES = tempfile.mkdtemp(prefix="af_test_saves_")
+_orig_guardar_en_slot = _save_mod.guardar_en_slot
+_save_mod.guardar_en_slot = lambda estado, n, nombre, carpeta=None: _orig_guardar_en_slot(estado, n, nombre, _TMP_SAVES)
+
+from alpha_football.ui.league_screen import inicializar_calendario_liga
+
+def _temporada_jugada(*ligas):
+    """Marca el calendario como jugado para que la simulación de fondo no altere la tabla del test."""
+    for l in ligas:
+        inicializar_calendario_liga(l)
+        for p in l.calendario:
+            p.jugado = True
+
 FAILS = []
 
 def check(cond, msg):
@@ -29,12 +46,15 @@ def test_user_en_1a_no_desciende_si_top():
               'segunda_division': {'betplay': liga2},
               'copa_user_en_copa': True, 'copa_clasificado': True,
               'historial': [], 'transfer_log': []}
+    _temporada_jugada(liga1, liga2)
+    if estado['liga'] is liga2:
+        estado['primera_division'] = {'betplay': liga1}
     avanzar_nueva_temporada(estado)
-    pr = estado.get('promo_releg_resultado', {})
+    pr = estado.get('promo_releg_data', {})
     check(pr.get('user_ascendio') == False, "User no debio ascender")
     check(pr.get('user_descendio') == False, "User no debio descender")
-    check(len(pr.get('ascendieron', [])) == 2, "Deben ascender 2")
-    check(len(pr.get('descendieron', [])) == 2, "Deben descender 2")
+    check(len(pr.get('ascendidos', [])) == 2, "Deben ascender 2")
+    check(len(pr.get('descendidos', [])) == 2, "Deben descender 2")
     print("  test_user_en_1a_no_desciende_si_top: OK")
 
 def test_user_en_2a_asciende():
@@ -49,8 +69,11 @@ def test_user_en_2a_asciende():
               'segunda_division': {'betplay': liga2},
               'copa_user_en_copa': False, 'copa_clasificado': False,
               'historial': [], 'transfer_log': []}
+    _temporada_jugada(liga1, liga2)
+    if estado['liga'] is liga2:
+        estado['primera_division'] = {'betplay': liga1}
     avanzar_nueva_temporada(estado)
-    pr = estado.get('promo_releg_resultado', {})
+    pr = estado.get('promo_releg_data', {})
     check(pr.get('user_ascendio') == True, "User en 2a debio ascender")
     check(estado.get('liga_usuario_division') == 1, f"Division={estado.get('liga_usuario_division')}")
     check(estado['liga'].division == 1, "Liga debe ser 1a division")
@@ -75,8 +98,11 @@ def test_user_en_1a_desciende_si_bottom():
               'segunda_division': {'betplay': liga2},
               'copa_user_en_copa': True, 'copa_clasificado': True,
               'historial': [], 'transfer_log': []}
+    _temporada_jugada(liga1, liga2)
+    if estado['liga'] is liga2:
+        estado['primera_division'] = {'betplay': liga1}
     avanzar_nueva_temporada(estado)
-    pr = estado.get('promo_releg_resultado', {})
+    pr = estado.get('promo_releg_data', {})
     check(pr.get('user_descendio') == True, "User debio descender")
     check(estado.get('liga_usuario_division') == 2, f"Division={estado.get('liga_usuario_division')}")
     check(estado.get('copa_user_en_copa') == False, "Sin copa en 2a")

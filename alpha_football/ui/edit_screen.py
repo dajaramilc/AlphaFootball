@@ -32,9 +32,87 @@ except Exception:
 logger = logging.getLogger(__name__)
 
 # Opciones de los dropdowns
-ESTILOS_TACTICOS = ["anchelottismo", "guardiolismo", "flickismo", "cruyffismo", "mourinhismo", "simeonismo", "bielsismo", "chapecoense"]
+# v3.3.0: los 9 estilos del motor (los viejos del editor se mapean con normalizar_estilo).
+from alpha_football.estilos import ESTILOS_UI as ESTILOS_TACTICOS, NOMBRE_ESTILO, normalizar_estilo
 RASGOS_JUGADOR = ["ninguno", "regateador", "pulmon_de_hierro", "rustico", "lider"]
 POSICIONES = ["POR", "DEF", "MED", "DEL"]
+
+# v3.6.0: RESTAURAR BASE y las listas de los dropdowns con rects fijos, para despachar el clic
+# ANTES que cualquier otro control (con un dropdown abierto el clic es solo suyo).
+R_RESTAURAR = pygame.Rect(530, 505, 200, 36)
+
+# v3.9.0: resto de rects del editor expuestos (los usa la ayuda H); render los usa tal cual.
+R_COL_LISTAS = pygame.Rect(40, 100, 450, 500)
+R_NOMBRE_LIGA = pygame.Rect(155, 146, 315, 28)
+R_EQ_UP, R_EQ_DOWN = pygame.Rect(440, 180, 30, 30), pygame.Rect(440, 315, 30, 30)
+R_JUG_UP, R_JUG_DOWN = pygame.Rect(440, 405, 30, 30), pygame.Rect(440, 540, 30, 30)
+R_FORMULARIO = pygame.Rect(510, 100, 730, 500)
+R_EQ_NOMBRE = pygame.Rect(530, 205, 350, 38)
+R_EQ_PRESUPUESTO = pygame.Rect(530, 290, 350, 38)
+R_EQ_ESTILO = pygame.Rect(530, 375, 350, 38)
+R_EQ_DT = pygame.Rect(900, 375, 320, 38)
+R_J_NOMBRE = pygame.Rect(530, 195, 300, 36)
+R_J_APELLIDO = pygame.Rect(860, 195, 300, 36)
+R_J_OVR = pygame.Rect(530, 275, 140, 36)
+R_J_EDAD = pygame.Rect(700, 275, 130, 36)
+R_J_POSICION = pygame.Rect(860, 275, 300, 36)
+R_J_RASGO = pygame.Rect(530, 360, 300, 36)
+R_J_POTENCIAL = pygame.Rect(860, 360, 140, 36)
+R_ARCHIVO = pygame.Rect(530, 455, 400, 36)
+R_EXPORTAR = pygame.Rect(950, 455, 120, 36)
+R_IMPORTAR = pygame.Rect(1085, 455, 120, 36)
+R_APLICAR = pygame.Rect(40, 615, 300, 50)
+R_VOLVER = pygame.Rect(360, 615, 240, 50)          # v3.9.0: 240 (en 200 no cabía "VOLVER AL MENÚ")
+
+
+def rect_tab_liga(i: int) -> pygame.Rect:
+    """v3.9.0: pestaña i de ligas/copas (ING, ESP, ... LIB, UCL)."""
+    return pygame.Rect(50 + i * 44, 110, 41, 30)
+
+
+def rect_division(k: int) -> pygame.Rect:
+    """v3.9.0: selector de 1ª (k=1) / 2ª (k=2) división."""
+    return pygame.Rect(55 + (k - 1) * 46, 146, 42, 28)
+
+
+def rect_fila(lista: str, i: int) -> pygame.Rect:
+    """v3.9.0: fila visible i (0-4) de la lista 'equipos' (y=180) o 'jugadores' (y=405)."""
+    return pygame.Rect(55, (180 if lista == 'equipos' else 405) + i * 36, 380, 32)
+
+
+def _boton(screen, rect, texto: str, hover: bool, size: str = 'sm', color: str = 'blanco') -> None:
+    """v3.9.0: botón con el texto UNA sola vez y en un tamaño que cabe (antes se escribía dos veces)."""
+    draw_button(screen, rect, "", hover)
+    col = COLORS['verde'] if hover else COLORS.get(color, COLORS['blanco'])
+    txt = get_font(size).render(texto, True, col)
+    screen.blit(txt, txt.get_rect(center=rect.center))
+
+
+def _opciones_dropdown(tipo: str) -> list:
+    """v3.6.0: [(valor, texto, rect)] de la lista desplegada del dropdown `tipo`."""
+    if tipo == 'estilo_dt':
+        return [(est, NOMBRE_ESTILO.get(est, est).upper(), pygame.Rect(530, 413 + i * 30, 350, 30))
+                for i, est in enumerate(ESTILOS_TACTICOS)]
+    if tipo == 'posicion':
+        return [(pos, pos.upper(), pygame.Rect(860, 311 + i * 30, 300, 30)) for i, pos in enumerate(POSICIONES)]
+    if tipo == 'rasgo':
+        return [(rsg, rsg.upper(), pygame.Rect(530, 396 + i * 30, 300, 30)) for i, rsg in enumerate(RASGOS_JUGADOR)]
+    return []
+
+
+def _dibujar_dropdown(screen, estado: dict, mouse_pos, modo_jugador: bool) -> None:
+    """v3.6.0: dibuja la lista del dropdown abierto AL FINAL (encima de IMPORTAR/RESTAURAR BASE)."""
+    try:
+        drop = estado.get('edit_dropdown_activo')
+        if not drop or (drop == 'estilo_dt') == modo_jugador:
+            return
+        foco_d = int(estado.get('edit_drop_foco', 0) or 0)   # v4.2.0: opción con foco de teclado
+        for i, (_valor, texto, r) in enumerate(_opciones_dropdown(drop)):
+            pygame.draw.rect(screen, (30, 40, 70) if r.collidepoint(mouse_pos) or i == foco_d else (10, 14, 26), r)
+            pygame.draw.rect(screen, (0, 191, 255), r, width=1)
+            draw_text(screen, texto, (r.x + 12, r.y + 5), size='sm', color='blanco')
+    except Exception as e:
+        logger.error(f"No se pudo dibujar el dropdown del editor: {e}")
 
 def _backfill_internacionales(db: dict) -> None:
     """
@@ -85,6 +163,95 @@ def _backfill_potenciales(db: dict) -> None:
                     logger.debug(f"No se pudo sembrar potencial de {j.get('nombre', '?')}: {e_pot}")
 
 
+from alpha_football import paises as _paises
+
+MAX_NOMBRE_LIGA = 40   # v3.7.0
+
+
+def pestanas_editor() -> list:
+    """v3.7.0: [(clave, texto)] = los 8 países (1ª; la 2ª con el selector) + las 2 copas."""
+    return [(p['liga_id'], p['corto']) for p in _paises.PAISES] + [('libertadores', 'LIB'), ('champions', 'UCL')]
+
+
+def _tipo_div(clave: str) -> tuple:
+    """v3.7.0: 'segunda_seriea' -> ('seriea', 2); 'premier' -> ('premier', 1); copas -> (clave, None)."""
+    clave = str(clave or '')
+    if clave.startswith('segunda_') and clave[len('segunda_'):] in _paises.TIPOS_LIGA:
+        return clave[len('segunda_'):], 2
+    if clave in _paises.TIPOS_LIGA:
+        return clave, 1
+    return clave, None
+
+
+def _backfill_ligas(db: dict) -> None:
+    """
+    v3.7.0: la base del editor tiene la 1ª y la 2ª ('segunda_<tipo>') de los 8 países con 12
+    clubes: bases viejas (5 países, ligas de 6/8, sin 2ª) se completan con los datos, sin
+    repetir nombres de club en ninguna liga. Nunca pisa los clubes ya editados.
+    """
+    claves = [_paises.clave_db(t, d) for t in _paises.TIPOS_LIGA for d in (1, 2)]
+    usados = {eq.get('nombre') for c in claves for eq in (db.get(c) or []) if isinstance(eq, dict)}
+    for tipo in _paises.TIPOS_LIGA:
+        for div in (1, 2):
+            clave = _paises.clave_db(tipo, div)
+            lista = db.get(clave) if isinstance(db.get(clave), list) else []
+            if len(lista) >= _paises.EQUIPOS_POR_LIGA:
+                db[clave] = lista
+                continue
+            try:
+                liga = _paises.cargar_datos_liga(tipo, div)
+                if liga is not None:
+                    from alpha_football.plantilla import expandir_liga
+                    from alpha_football.market import escalar_presupuestos
+                    # posicional (ver menu._completar_con_datos): los editados son los primeros
+                    orden = list(liga.equipos[len(lista):]) + list(liga.equipos[:len(lista)])
+                    liga.equipos = [eq for eq in orden if eq.nombre not in usados]
+                    liga.equipos = liga.equipos[:_paises.EQUIPOS_POR_LIGA - len(lista)]
+                    expandir_liga(liga, 20)
+                    escalar_presupuestos(liga)
+                    for eq in liga.equipos:
+                        usados.add(eq.nombre)
+                        lista.append(eq.to_dict())
+            except Exception as e_bl:
+                logger.error(f"Error al completar la liga {clave} en el editor: {e_bl}")
+            db[clave] = lista
+
+
+def cambiar_division_editor(estado: dict) -> None:
+    """v3.7.0: alterna la pestaña del país entre su 1ª y su 2ª (las copas no tienen división)."""
+    tipo, div = _tipo_div(estado.get('edit_liga_sel', 'premier'))
+    if div is None:
+        return
+    estado['edit_liga_sel'] = _paises.clave_db(tipo, 2 if div == 1 else 1)
+    for k, v in (('edit_equipo_idx', 0), ('edit_jugador_idx', -1), ('edit_squad_offset', 0),
+                 ('edit_teams_offset', 0), ('edit_input_activo', None)):
+        estado[k] = v
+
+
+def nombre_liga_editor(estado: dict) -> str:
+    """v3.7.0: el nombre (editado o por defecto) de la liga de la pestaña actual."""
+    tipo, div = _tipo_div(estado.get('edit_liga_sel', 'premier'))
+    if div is None:
+        return ''
+    campo = 'nombre_2a' if div == 2 else 'nombre'
+    db = estado.get('edited_db') or {}
+    propio = ((db.get('_ligas') or {}).get(tipo) or {}).get(campo)
+    return propio if propio is not None else _paises.nombre_liga_defecto(tipo, div)
+
+
+def set_nombre_liga_editor(estado: dict, nombre: str) -> None:
+    """v3.7.0: renombra en memoria (se persiste con APLICAR Y GUARDAR); máx. 40 caracteres."""
+    try:
+        tipo, div = _tipo_div(estado.get('edit_liga_sel', 'premier'))
+        db = estado.get('edited_db')
+        if div is None or db is None:
+            return
+        campo = 'nombre_2a' if div == 2 else 'nombre'
+        db.setdefault('_ligas', {}).setdefault(tipo, {})[campo] = str(nombre or '')[:MAX_NOMBRE_LIGA]
+    except Exception as e_nl:
+        logger.error(f"No se pudo renombrar la liga en el editor: {e_nl}")
+
+
 def cargar_base_datos_inicial(estado: dict) -> dict:
     """Carga la base de datos editada desde JSON si existe, o la inicializa desde los módulos base."""
     if 'edited_db' in estado:
@@ -95,6 +262,7 @@ def cargar_base_datos_inicial(estado: dict) -> dict:
         try:
             with open(ruta_db, "r", encoding="utf-8") as f:
                 db = json.load(f)
+                _backfill_ligas(db)            # v3.7.0: 8 países × 1ª/2ª con 12 clubes
                 _backfill_internacionales(db)  # v0.8.8: añadir int'l si faltan
                 _backfill_potenciales(db)      # v0.8.9: sembrar potencial donde falte
                 estado['edited_db'] = db
@@ -104,29 +272,7 @@ def cargar_base_datos_inicial(estado: dict) -> dict:
 
     # Inicializar desde los datos base del juego
     db = {}
-    ligas_ids = ['premier', 'laliga', 'betplay', 'brasil', 'argentina']
-    for lid in ligas_ids:
-        try:
-            if lid == 'premier':
-                from alpha_football.data.premier import get_liga
-            elif lid == 'laliga':
-                from alpha_football.data.laliga import get_liga
-            elif lid == 'betplay':
-                from alpha_football.data.betplay import get_liga
-            elif lid == 'brasil':
-                from alpha_football.data.brasil import get_liga
-            elif lid == 'argentina':
-                from alpha_football.data.argentina import get_liga
-                
-            liga = get_liga()
-            from alpha_football.plantilla import expandir_liga
-            from alpha_football.market import escalar_presupuestos
-            expandir_liga(liga, 20)
-            escalar_presupuestos(liga)
-            
-            db[lid] = [eq.to_dict() for eq in liga.equipos]
-        except Exception as e:
-            logger.error(f"Error al cargar liga {lid} en editor: {e}")
+    _backfill_ligas(db)   # v3.7.0: 8 países × 1ª/2ª desde los datos
 
     # v0.8.8: añadir los equipos internacionales (Libertadores / Champions) editables.
     _backfill_internacionales(db)
@@ -144,10 +290,28 @@ def guardar_base_datos(estado: dict) -> bool:
         ruta_db = "alpha_football_edited_db.json"
         with open(ruta_db, "w", encoding="utf-8") as f:
             json.dump(db, f, ensure_ascii=False, indent=2)
+        _paises._cache_overrides['mtime'] = None   # v3.7.0: nombres de liga nuevos
         return True
     except Exception as e:
         logger.error(f"Error al guardar base de datos editada: {e}")
         return False
+
+def restaurar_base(estado: dict) -> dict:
+    """v3.6.0: borra la base editada del disco y recarga la original (antes, inline en render)."""
+    ruta_db = "alpha_football_edited_db.json"
+    if os.path.exists(ruta_db):
+        try:
+            os.remove(ruta_db)
+        except Exception as e:
+            logger.error(f"No se pudo borrar la base editada: {e}")
+    estado.pop('edited_db', None)
+    db = cargar_base_datos_inicial(estado)
+    estado['edit_equipo_idx'] = 0
+    estado['edit_jugador_idx'] = -1
+    estado['edit_mensaje'] = "Base de datos restaurada."
+    estado['edit_mensaje_ticks'] = pygame.time.get_ticks()
+    return db
+
 
 def render(screen: pygame.Surface, estado: dict) -> str | None:
     """Renderiza la pantalla de edición de base de datos."""
@@ -166,6 +330,8 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         estado.setdefault('edit_filepath', 'alpha_football_db_custom.json')
         estado.setdefault('edit_mensaje', '')
         estado.setdefault('edit_mensaje_ticks', 0)
+        # v3.9.0: con un campo de texto activo, H se escribe (no abre la ayuda)
+        estado['texto_activo'] = bool(estado.get('edit_input_activo'))
         
         liga_sel = estado['edit_liga_sel']
         equipos = db.get(liga_sel, [])
@@ -191,8 +357,10 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         # Capturar clics y entrada de teclado
         mouse_pos = pygame.mouse.get_pos()
         click_pos = None
-        
-        for event in pygame.event.get():
+        campo_inicial = estado.get('edit_input_activo')   # v4.2.0: Enter que cierra un campo no navega
+        eventos = list(pygame.event.get())
+
+        for event in eventos:
             if event.type == pygame.QUIT:
                 return "quit"
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -205,13 +373,17 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     if event.key == pygame.K_RETURN or event.key == pygame.K_KP_ENTER:
                         estado['edit_input_activo'] = None
                     elif event.key == pygame.K_BACKSPACE:
-                        if campo_activo == 'file_path':
+                        if campo_activo == 'league_name':   # v3.7.0
+                            set_nombre_liga_editor(estado, nombre_liga_editor(estado)[:-1])
+                        elif campo_activo == 'file_path':
                             estado['edit_filepath'] = estado['edit_filepath'][:-1]
                         elif campo_activo == 'team_name':
                             equipo_sel['nombre'] = equipo_sel['nombre'][:-1]
                         elif equipo_sel and campo_activo == 'team_budget':
                             val_str = str(equipo_sel.get('balance', 0))[:-1]
                             equipo_sel['balance'] = int(val_str) if val_str else 0
+                        elif equipo_sel and campo_activo == 'team_dt':   # v3.4.0
+                            equipo_sel['dt_nombre'] = str(equipo_sel.get('dt_nombre', '') or '')[:-1]
                         elif jugador_sel and campo_activo == 'player_name':
                             jugador_sel['nombre'] = jugador_sel['nombre'][:-1]
                         elif jugador_sel and campo_activo == 'player_apellido':
@@ -234,7 +406,11 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     else:
                         char = event.unicode
                         # Filtros de caracteres
-                        if campo_activo == 'file_path':
+                        if campo_activo == 'league_name':   # v3.7.0: nombre de la liga (máx. 40)
+                            actual = nombre_liga_editor(estado)
+                            if char and char.isprintable() and len(actual) < MAX_NOMBRE_LIGA:
+                                set_nombre_liga_editor(estado, actual + char)
+                        elif campo_activo == 'file_path':
                             if char in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/:\\':
                                 estado['edit_filepath'] += char
                         elif campo_activo == 'team_name':
@@ -243,6 +419,10 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                         elif campo_activo == 'team_budget':
                             if char.isdigit() and len(str(equipo_sel['balance'])) < 12:
                                 equipo_sel['balance'] = int(str(equipo_sel['balance']) + char)
+                        elif equipo_sel and campo_activo == 'team_dt':   # v3.4.0: DT puesto a mano
+                            actual = str(equipo_sel.get('dt_nombre', '') or '')
+                            if char and char.isprintable() and len(actual) < 26:
+                                equipo_sel['dt_nombre'] = actual + char
                         elif jugador_sel and campo_activo == 'player_name':
                             if len(jugador_sel['nombre']) < 25:
                                 jugador_sel['nombre'] += char
@@ -272,26 +452,61 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                                     # Clamp: [ovr_actual, 99] para que el techo SIEMPRE sea > OVR
                                     jugador_sel['potencial'] = max(ovr_actual, min(99, raw))
 
+        # v3.6.0: con un dropdown abierto el clic es SOLO del dropdown: elige una opción o, si cae
+        # fuera, lo cierra. Nunca llega a los campos/botones de abajo (p. ej. RESTAURAR BASE).
+        drop = estado.get('edit_dropdown_activo')
+        # v4.2.0: teclado en el dropdown: ↑ ↓ opción, Enter la elige, Esc lo cierra
+        if drop and campo_inicial is None:
+            opciones = _opciones_dropdown(drop)
+            foco_d = int(estado.get('edit_drop_foco', 0) or 0)
+            for ev in eventos:
+                if ev.type != pygame.KEYDOWN or not opciones:
+                    continue
+                if ev.key == pygame.K_DOWN:
+                    foco_d = (foco_d + 1) % len(opciones)
+                elif ev.key == pygame.K_UP:
+                    foco_d = (foco_d - 1) % len(opciones)
+                elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                    click_pos = opciones[foco_d % len(opciones)][2].center
+                elif ev.key == pygame.K_ESCAPE:
+                    estado['edit_dropdown_activo'] = drop = None
+                    campo_inicial = 'dropdown'   # este Esc no sale del editor
+                    break
+            estado['edit_drop_foco'] = foco_d
+        if drop and click_pos:
+            try:
+                for valor, _txt, r in _opciones_dropdown(drop):
+                    if r.collidepoint(click_pos):
+                        if drop == 'estilo_dt' and equipo_sel is not None and jugador_sel is None:
+                            equipo_sel['estilo_dt'] = valor
+                        elif drop == 'posicion' and jugador_sel is not None:
+                            jugador_sel['posicion'] = valor
+                        elif drop == 'rasgo' and jugador_sel is not None:
+                            jugador_sel['rasgo'] = None if valor == "ninguno" else valor
+                        break
+            except Exception as e_drop:
+                logger.error(f"Error en el dropdown {drop} del editor: {e_drop}")
+            estado['edit_dropdown_activo'] = None
+            click_pos = None
+
         # Dibujar fondo base
         draw_gradient_bg(screen)
-        
+
         # Título
         draw_text(screen, "MODO EDICIÓN DE BASE DE DATOS", (40, 20), size='xl', color='dorado')
         draw_text(screen, "Modifica atributos de equipos y jugadores. Guarda los cambios para que apliquen a nuevas partidas.", (40, 65), size='sm', color='azul')
         
         # --- COLUMNA 1: LIGA Y SELECCION DE EQUIPOS/JUGADORES (Ancho: 450) ---
-        col1_rect = pygame.Rect(40, 100, 450, 500)
+        col1_rect = R_COL_LISTAS
         draw_panel(screen, col1_rect)
         
-        # Selectores de Liga (v0.8.8: +LIB y UCL para editar equipos internacionales)
-        ligas_tabs = ['premier', 'laliga', 'betplay', 'brasil', 'argentina', 'libertadores', 'champions']
-        tab_names = {'premier': 'PREM', 'laliga': 'ESP', 'betplay': 'COL', 'brasil': 'BRA',
-                     'argentina': 'ARG', 'libertadores': 'LIB', 'champions': 'UCL'}
-        tab_x = 55
-        tab_w = 55
-        for l_id in ligas_tabs:
-            tab_rect = pygame.Rect(tab_x, 115, tab_w, 30)
-            is_active = (l_id == liga_sel)
+        # Selectores de Liga (v0.8.8: +LIB y UCL; v3.7.0: 8 países + selector 1ª/2ª)
+        tipo_sel, div_sel = _tipo_div(liga_sel)
+        tab_x = 50
+        tab_w = 41
+        for l_id, tab_txt in pestanas_editor():
+            tab_rect = pygame.Rect(tab_x, 110, tab_w, 30)
+            is_active = (l_id == tipo_sel)
             is_hover = tab_rect.collidepoint(mouse_pos)
 
             c_bg = (0, 191, 255) if is_active else ((20, 26, 46) if is_hover else (10, 14, 26))
@@ -299,20 +514,81 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
 
             pygame.draw.rect(screen, c_bg, tab_rect, border_radius=4)
             pygame.draw.rect(screen, c_border, tab_rect, width=1, border_radius=4)
-            draw_text(screen, tab_names[l_id], (tab_rect.x + 10, tab_rect.y + 6), size='sm', color='bg' if is_active else 'blanco')
+            draw_text(screen, tab_txt, (tab_rect.x + 5, tab_rect.y + 6), size='sm', color='bg' if is_active else 'blanco')
 
             if click_pos and tab_rect.collidepoint(click_pos):
-                estado['edit_liga_sel'] = l_id
+                # v3.7.0: al cambiar de país se conserva la división elegida
+                estado['edit_liga_sel'] = (_paises.clave_db(l_id, div_sel) if div_sel and l_id in _paises.TIPOS_LIGA
+                                           else l_id)
                 estado['edit_equipo_idx'] = 0
                 estado['edit_jugador_idx'] = -1
                 estado['edit_squad_offset'] = 0
                 estado['edit_teams_offset'] = 0
                 estado['edit_input_activo'] = None
 
-            tab_x += tab_w + 4
-            
+            tab_x += tab_w + 3
+
+        # v3.7.0: 1ª / 2ª del país + "Nombre de la liga" (tecleable, se guarda en "_ligas")
+        if div_sel is not None:
+            for k in (1, 2):
+                r_div = rect_division(k)
+                activo_div = (k == div_sel)
+                fondo_div = (0, 191, 255) if activo_div else ((20, 26, 46) if r_div.collidepoint(mouse_pos) else (10, 14, 26))
+                pygame.draw.rect(screen, fondo_div, r_div, border_radius=4)
+                pygame.draw.rect(screen, (255, 215, 0) if activo_div else (0, 191, 255), r_div, width=1, border_radius=4)
+                draw_text(screen, f"{k}ª", (r_div.x + 10, r_div.y + 5), size='sm', color='bg' if activo_div else 'blanco')
+                if click_pos and r_div.collidepoint(click_pos) and not activo_div:
+                    cambiar_division_editor(estado)
+            inp_liga = R_NOMBRE_LIGA
+            activo_nl = estado.get('edit_input_activo') == 'league_name'
+            pygame.draw.rect(screen, (20, 26, 46), inp_liga, border_radius=4)
+            pygame.draw.rect(screen, (255, 215, 0) if activo_nl else (0, 191, 255), inp_liga, width=1, border_radius=4)
+            txt_nl = nombre_liga_editor(estado)
+            txt_nl = txt_nl[-30:] if activo_nl else (txt_nl if len(txt_nl) <= 30 else txt_nl[:29] + "…")
+            draw_text(screen, txt_nl + ("|" if activo_nl else ""), (inp_liga.x + 8, inp_liga.y + 5), size='sm',
+                      color='dorado' if activo_nl else 'blanco')
+            if click_pos and inp_liga.collidepoint(click_pos):
+                estado['edit_input_activo'] = 'league_name'
+        else:
+            draw_text(screen, "Copa internacional (sin divisiones)", (55, 150), size='sm', color='azul')
+
+        # v4.2.0: teclado sin campo activo: ↑ ↓ equipo (o jugador), → entra a la plantilla,
+        # ← vuelve al equipo, Ctrl+S guarda, Esc vuelve al menú
+        if campo_inicial is None and not estado.get('edit_input_activo') and not estado.get('edit_dropdown_activo'):
+            for ev in eventos:
+                if ev.type != pygame.KEYDOWN:
+                    continue
+                if ev.key == pygame.K_ESCAPE:
+                    estado.pop('edit_mensaje', None)
+                    estado['menu_step'] = 'main'
+                    return 'menu'
+                if ev.key in (pygame.K_UP, pygame.K_DOWN):
+                    d = -1 if ev.key == pygame.K_UP else 1
+                    if estado['edit_jugador_idx'] >= 0 and jugadores:
+                        estado['edit_jugador_idx'] = max(0, min(len(jugadores) - 1, estado['edit_jugador_idx'] + d))
+                    elif equipos:
+                        estado['edit_equipo_idx'] = max(0, min(len(equipos) - 1, estado['edit_equipo_idx'] + d))
+                        estado['edit_squad_offset'] = 0
+                elif ev.key == pygame.K_RIGHT and jugadores and estado['edit_jugador_idx'] < 0:
+                    estado['edit_jugador_idx'] = 0
+                elif ev.key == pygame.K_LEFT:
+                    estado['edit_jugador_idx'] = -1
+                elif ev.key == pygame.K_s and (ev.mod & pygame.KMOD_CTRL):
+                    ok = guardar_base_datos(estado)
+                    estado['edit_mensaje'] = "¡Base de datos guardada con éxito!" if ok else "Error al escribir en disco."
+                    estado['edit_mensaje_ticks'] = pygame.time.get_ticks()
+            if equipos:   # la selección queda a la vista
+                equipo_sel = equipos[estado['edit_equipo_idx']]
+                jugadores = equipo_sel.get('jugadores', [])
+                off = estado.get('edit_teams_offset', 0)
+                if not off <= estado['edit_equipo_idx'] < off + 5:
+                    estado['edit_teams_offset'] = max(0, min(estado['edit_equipo_idx'], len(equipos) - 5))
+                off = estado.get('edit_squad_offset', 0)
+                if estado['edit_jugador_idx'] >= 0 and not off <= estado['edit_jugador_idx'] < off + 5:
+                    estado['edit_squad_offset'] = max(0, min(estado['edit_jugador_idx'], len(jugadores) - 5))
+                jugador_sel = jugadores[estado['edit_jugador_idx']] if 0 <= estado['edit_jugador_idx'] < len(jugadores) else None
+
         # Lista de Equipos (Scrollable, 5 visibles)
-        draw_text(screen, "EQUIPOS", (55, 155), size='sm', color='dorado')
         teams_offset = estado.get('edit_teams_offset', 0)
         teams_visible = 5
         
@@ -338,8 +614,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             teams_y += 36
             
         # Botones de scroll de equipos
-        btn_te_up = pygame.Rect(440, 180, 30, 30)
-        btn_te_down = pygame.Rect(440, 315, 30, 30)
+        btn_te_up, btn_te_down = R_EQ_UP, R_EQ_DOWN
         pygame.draw.rect(screen, (20, 26, 46) if btn_te_up.collidepoint(mouse_pos) else (10, 14, 26), btn_te_up, border_radius=4)
         pygame.draw.rect(screen, (20, 26, 46) if btn_te_down.collidepoint(mouse_pos) else (10, 14, 26), btn_te_down, border_radius=4)
         draw_text(screen, "▲", (448, 185), size='sm', color='blanco')
@@ -395,8 +670,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             squad_y += 36
             
         # Botones de scroll de plantilla
-        btn_sq_up = pygame.Rect(440, 405, 30, 30)
-        btn_sq_down = pygame.Rect(440, 540, 30, 30)
+        btn_sq_up, btn_sq_down = R_JUG_UP, R_JUG_DOWN
         pygame.draw.rect(screen, (20, 26, 46) if btn_sq_up.collidepoint(mouse_pos) else (10, 14, 26), btn_sq_up, border_radius=4)
         pygame.draw.rect(screen, (20, 26, 46) if btn_sq_down.collidepoint(mouse_pos) else (10, 14, 26), btn_sq_down, border_radius=4)
         draw_text(screen, "▲", (448, 410), size='sm', color='blanco')
@@ -409,7 +683,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 estado['edit_squad_offset'] = min(max(0, len(jugadores) - squad_visible), squad_offset + 1)
                 
         # --- COLUMNA 2: FORMULARIO DE EDICION (Ancho: 730) ---
-        col2_rect = pygame.Rect(510, 100, 730, 500)
+        col2_rect = R_FORMULARIO
         draw_panel(screen, col2_rect)
         
         if not equipo_sel:
@@ -420,7 +694,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             
             # Nombre del equipo
             draw_text(screen, "Nombre del Equipo:", (530, 180), size='sm', color='blanco')
-            inp_team_name = pygame.Rect(530, 205, 350, 38)
+            inp_team_name = R_EQ_NOMBRE
             is_team_name_active = (estado.get('edit_input_activo') == 'team_name')
             pygame.draw.rect(screen, (10, 14, 26) if is_team_name_active else (20, 26, 46), inp_team_name, border_radius=6)
             pygame.draw.rect(screen, (0, 255, 136) if is_team_name_active else (0, 191, 255), inp_team_name, width=1, border_radius=6)
@@ -432,7 +706,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 
             # Presupuesto (en millones)
             draw_text(screen, "Presupuesto (en enteros $, ej. 15000000 para $15M):", (530, 265), size='sm', color='blanco')
-            inp_team_budget = pygame.Rect(530, 290, 350, 38)
+            inp_team_budget = R_EQ_PRESUPUESTO
             is_team_budget_active = (estado.get('edit_input_activo') == 'team_budget')
             pygame.draw.rect(screen, (10, 14, 26) if is_team_budget_active else (20, 26, 46), inp_team_budget, border_radius=6)
             pygame.draw.rect(screen, (0, 255, 136) if is_team_budget_active else (0, 191, 255), inp_team_budget, width=1, border_radius=6)
@@ -444,32 +718,31 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 
             # Estilo Táctico (Dropdown)
             draw_text(screen, "Estilo Táctico (DT):", (530, 350), size='sm', color='blanco')
-            btn_estilo = pygame.Rect(530, 375, 350, 38)
+            btn_estilo = R_EQ_ESTILO
             is_drop_estilo = (estado.get('edit_dropdown_activo') == 'estilo_dt')
             pygame.draw.rect(screen, (20, 26, 46), btn_estilo, border_radius=6)
             pygame.draw.rect(screen, (0, 255, 136) if is_drop_estilo else (0, 191, 255), btn_estilo, width=1, border_radius=6)
-            draw_text(screen, equipo_sel.get('estilo_dt', 'Cruyffismo').upper(), (542, 383), size='sm', color='dorado')
+            draw_text(screen, NOMBRE_ESTILO.get(normalizar_estilo(equipo_sel.get('estilo_dt')), 'Ancelotismo').upper(),
+                      (542, 383), size='sm', color='dorado')   # v3.3.0
             draw_text(screen, "▼", (850, 385), size='sm', color='blanco')
             
             if click_pos and btn_estilo.collidepoint(click_pos):
                 estado['edit_dropdown_activo'] = 'estilo_dt' if not is_drop_estilo else None
                 estado['edit_input_activo'] = None
                 
-            # Dibujar dropdown de Estilos Tácticos si está abierto
-            if is_drop_estilo:
-                drop_y = 413
-                for est in ESTILOS_TACTICOS:
-                    est_rect = pygame.Rect(530, drop_y, 350, 30)
-                    hov_est = est_rect.collidepoint(mouse_pos)
-                    pygame.draw.rect(screen, (30, 40, 70) if hov_est else (10, 14, 26), est_rect)
-                    pygame.draw.rect(screen, (0, 191, 255), est_rect, width=1)
-                    draw_text(screen, est.upper(), (542, drop_y + 5), size='sm', color='blanco')
-                    
-                    if click_pos and est_rect.collidepoint(click_pos):
-                        equipo_sel['estilo_dt'] = est
-                        estado['edit_dropdown_activo'] = None
-                        
-                    drop_y += 30
+            # v3.4.0: DT (nombre) a la derecha del estilo (fuera de la lista del dropdown y
+            # lejos de RESTAURAR BASE / VOLVER). Vacío = DT real parodia de la tabla.
+            draw_text(screen, "DT (nombre, vacío = el real):", (900, 350), size='sm', color='blanco')
+            inp_team_dt = R_EQ_DT
+            is_team_dt_active = (estado.get('edit_input_activo') == 'team_dt')
+            pygame.draw.rect(screen, (10, 14, 26) if is_team_dt_active else (20, 26, 46), inp_team_dt, border_radius=6)
+            pygame.draw.rect(screen, (0, 255, 136) if is_team_dt_active else (0, 191, 255), inp_team_dt, width=1, border_radius=6)
+            draw_text(screen, str(equipo_sel.get('dt_nombre', '') or ''), (912, 383), size='sm', color='blanco')
+            if click_pos and inp_team_dt.collidepoint(click_pos):
+                estado['edit_input_activo'] = 'team_dt'
+                estado['edit_dropdown_activo'] = None
+
+            # v3.6.0: la lista del dropdown de estilos se dibuja al final (_dibujar_dropdown)
 
         else:
             # --- EDITAR JUGADOR ---
@@ -477,7 +750,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             
             # Nombre
             draw_text(screen, "Nombre:", (530, 170), size='sm', color='blanco')
-            inp_play_name = pygame.Rect(530, 195, 300, 36)
+            inp_play_name = R_J_NOMBRE
             is_play_name_act = (estado.get('edit_input_activo') == 'player_name')
             pygame.draw.rect(screen, (10, 14, 26) if is_play_name_act else (20, 26, 46), inp_play_name, border_radius=6)
             pygame.draw.rect(screen, (0, 255, 136) if is_play_name_act else (0, 191, 255), inp_play_name, width=1, border_radius=6)
@@ -489,7 +762,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 
             # Apellido
             draw_text(screen, "Apellido:", (860, 170), size='sm', color='blanco')
-            inp_play_ape = pygame.Rect(860, 195, 300, 36)
+            inp_play_ape = R_J_APELLIDO
             is_play_ape_act = (estado.get('edit_input_activo') == 'player_apellido')
             pygame.draw.rect(screen, (10, 14, 26) if is_play_ape_act else (20, 26, 46), inp_play_ape, border_radius=6)
             pygame.draw.rect(screen, (0, 255, 136) if is_play_ape_act else (0, 191, 255), inp_play_ape, width=1, border_radius=6)
@@ -500,8 +773,8 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 estado['edit_dropdown_activo'] = None
                 
             # Valoración (Overall)
-            draw_text(screen, "Valoración (OVR) (máx. 99):", (530, 250), size='sm', color='blanco')
-            inp_play_ovr = pygame.Rect(530, 275, 140, 36)
+            draw_text(screen, "OVR (máx. 99):", (530, 250), size='sm', color='blanco')   # v3.9.0: el texto largo pisaba "Edad:"
+            inp_play_ovr = R_J_OVR
             is_play_ovr_act = (estado.get('edit_input_activo') == 'player_ovr')
             pygame.draw.rect(screen, (10, 14, 26) if is_play_ovr_act else (20, 26, 46), inp_play_ovr, border_radius=6)
             pygame.draw.rect(screen, (0, 255, 136) if is_play_ovr_act else (0, 191, 255), inp_play_ovr, width=1, border_radius=6)
@@ -513,7 +786,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 
             # Edad
             draw_text(screen, "Edad:", (700, 250), size='sm', color='blanco')
-            inp_play_age = pygame.Rect(700, 275, 130, 36)
+            inp_play_age = R_J_EDAD
             is_play_age_act = (estado.get('edit_input_activo') == 'player_age')
             pygame.draw.rect(screen, (10, 14, 26) if is_play_age_act else (20, 26, 46), inp_play_age, border_radius=6)
             pygame.draw.rect(screen, (0, 255, 136) if is_play_age_act else (0, 191, 255), inp_play_age, width=1, border_radius=6)
@@ -525,7 +798,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 
             # Posición (Dropdown)
             draw_text(screen, "Posición:", (860, 250), size='sm', color='blanco')
-            btn_pos = pygame.Rect(860, 275, 300, 36)
+            btn_pos = R_J_POSICION
             is_drop_pos = (estado.get('edit_dropdown_activo') == 'posicion')
             pygame.draw.rect(screen, (20, 26, 46), btn_pos, border_radius=6)
             pygame.draw.rect(screen, (0, 255, 136) if is_drop_pos else (0, 191, 255), btn_pos, width=1, border_radius=6)
@@ -536,24 +809,11 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 estado['edit_dropdown_activo'] = 'posicion' if not is_drop_pos else None
                 estado['edit_input_activo'] = None
                 
-            if is_drop_pos:
-                drop_y = 311
-                for pos in POSICIONES:
-                    pos_rect = pygame.Rect(860, drop_y, 300, 30)
-                    hov_pos = pos_rect.collidepoint(mouse_pos)
-                    pygame.draw.rect(screen, (30, 40, 70) if hov_pos else (10, 14, 26), pos_rect)
-                    pygame.draw.rect(screen, (0, 191, 255), pos_rect, width=1)
-                    draw_text(screen, pos.upper(), (872, drop_y + 5), size='sm', color='blanco')
-                    
-                    if click_pos and pos_rect.collidepoint(click_pos):
-                        jugador_sel['posicion'] = pos
-                        estado['edit_dropdown_activo'] = None
-                        
-                    drop_y += 30
-                    
+            # v3.6.0: la lista del dropdown de posición se dibuja al final (_dibujar_dropdown)
+
             # Rasgo / Característica (Dropdown)
             draw_text(screen, "Rasgo Especial:", (530, 335), size='sm', color='blanco')
-            btn_rasgo = pygame.Rect(530, 360, 300, 36)
+            btn_rasgo = R_J_RASGO
             is_drop_rasgo = (estado.get('edit_dropdown_activo') == 'rasgo')
             pygame.draw.rect(screen, (20, 26, 46), btn_rasgo, border_radius=6)
             pygame.draw.rect(screen, (0, 255, 136) if is_drop_rasgo else (0, 191, 255), btn_rasgo, width=1, border_radius=6)
@@ -567,26 +827,13 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 estado['edit_dropdown_activo'] = 'rasgo' if not is_drop_rasgo else None
                 estado['edit_input_activo'] = None
                 
-            if is_drop_rasgo:
-                drop_y = 396
-                for rsg in RASGOS_JUGADOR:
-                    rsg_rect = pygame.Rect(530, drop_y, 300, 30)
-                    hov_rsg = rsg_rect.collidepoint(mouse_pos)
-                    pygame.draw.rect(screen, (30, 40, 70) if hov_rsg else (10, 14, 26), rsg_rect)
-                    pygame.draw.rect(screen, (0, 191, 255), rsg_rect, width=1)
-                    draw_text(screen, rsg.upper(), (542, drop_y + 5), size='sm', color='blanco')
-
-                    if click_pos and rsg_rect.collidepoint(click_pos):
-                        jugador_sel['rasgo'] = None if rsg == "ninguno" else rsg
-                        estado['edit_dropdown_activo'] = None
-
-                    drop_y += 30
+            # v3.6.0: la lista del dropdown de rasgo se dibuja al final (_dibujar_dropdown)
 
             # v0.8.x: Potencial (techo de OVR). Input numérico editable a mano, junto al Rasgo.
             # Si el dict viene sin la clave (0) mostramos el OVR como base sensata en vez de "0".
             draw_text(screen, "Potencial (máx. 99):", (860, 335), size='sm', color='blanco')
             _pot_display = jugador_sel.get('potencial') or jugador_sel.get('overall', 70) or 70
-            inp_play_pot = pygame.Rect(860, 360, 140, 36)
+            inp_play_pot = R_J_POTENCIAL
             is_play_pot_act = (estado.get('edit_input_activo') == 'player_potencial')
             pygame.draw.rect(screen, (10, 14, 26) if is_play_pot_act else (20, 26, 46), inp_play_pot, border_radius=6)
             pygame.draw.rect(screen, (0, 255, 136) if is_play_pot_act else (0, 191, 255), inp_play_pot, width=1, border_radius=6)
@@ -601,7 +848,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         draw_text(screen, "IMPORTAR / EXPORTAR BASE DE DATOS", (530, actions_y), size='sm', color='dorado')
         
         # Input ruta de archivo
-        inp_file_rect = pygame.Rect(530, actions_y + 25, 400, 36)
+        inp_file_rect = R_ARCHIVO
         is_file_act = (estado.get('edit_input_activo') == 'file_path')
         pygame.draw.rect(screen, (10, 14, 26) if is_file_act else (20, 26, 46), inp_file_rect, border_radius=6)
         pygame.draw.rect(screen, (0, 255, 136) if is_file_act else (0, 191, 255), inp_file_rect, width=1, border_radius=6)
@@ -612,23 +859,15 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             estado['edit_dropdown_activo'] = None
             
         # Botones de Importación / Exportación
-        btn_export = pygame.Rect(950, actions_y + 25, 120, 36)
-        btn_import = pygame.Rect(1085, actions_y + 25, 120, 36)
-        
-        hov_exp = btn_export.collidepoint(mouse_pos)
-        hov_imp = btn_import.collidepoint(mouse_pos)
-        
-        draw_button(screen, btn_export, "EXPORTAR", hov_exp)
-        draw_button(screen, btn_import, "IMPORTAR", hov_imp)
-        draw_text(screen, "EXPORTAR", (970, actions_y + 33), size='sm', color='bg' if hov_exp else 'blanco')
-        draw_text(screen, "IMPORTAR", (1105, actions_y + 33), size='sm', color='bg' if hov_imp else 'blanco')
-        
-        # Botón RESTAURAR BASE BASE
-        btn_reset = pygame.Rect(530, actions_y + 75, 200, 36)
-        hov_rst = btn_reset.collidepoint(mouse_pos)
-        draw_button(screen, btn_reset, "RESTAURAR BASE", hov_rst)
-        draw_text(screen, "RESTAURAR BASE BASE", (550, actions_y + 83), size='sm', color='bg' if hov_rst else 'rojo')
-        
+        btn_export, btn_import = R_EXPORTAR, R_IMPORTAR
+        # v3.9.0: un solo texto por botón (antes draw_button + draw_text lo escribían dos veces)
+        _boton(screen, btn_export, "EXPORTAR", btn_export.collidepoint(mouse_pos))
+        _boton(screen, btn_import, "IMPORTAR", btn_import.collidepoint(mouse_pos))
+
+        # Botón RESTAURAR BASE
+        btn_reset = R_RESTAURAR                                   # v3.6.0
+        _boton(screen, btn_reset, "RESTAURAR BASE", btn_reset.collidepoint(mouse_pos), color='rojo')
+
         # Mensajes de éxito / error temporales
         msg = estado.get('edit_mensaje', '')
         if msg:
@@ -657,7 +896,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                         with open(fpath, "r", encoding="utf-8") as f:
                             imported_db = json.load(f)
                             # Validar que tenga las ligas clave
-                            if any(lid in imported_db for lid in ['premier', 'laliga', 'betplay']):
+                            if any(lid in imported_db for lid in _paises.TIPOS_LIGA):   # v3.7.0
                                 estado['edited_db'] = imported_db
                                 db = imported_db
                                 # Forzar recargar standings y vistas
@@ -675,31 +914,16 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     estado['edit_mensaje_ticks'] = pygame.time.get_ticks()
                     
             elif btn_reset.collidepoint(click_pos):
-                ruta_db = "alpha_football_edited_db.json"
-                if os.path.exists(ruta_db):
-                    try:
-                        os.remove(ruta_db)
-                    except: pass
-                estado.pop('edited_db', None)
-                db = cargar_base_datos_inicial(estado)
-                estado['edit_equipo_idx'] = 0
-                estado['edit_jugador_idx'] = -1
-                estado['edit_mensaje'] = "Base de datos restaurada."
-                estado['edit_mensaje_ticks'] = pygame.time.get_ticks()
+                db = restaurar_base(estado)                       # v3.6.0
 
         # --- BOTONES PRINCIPALES INFERIORES: APLICAR Y VOLVER (X=40, Y=610) ---
-        btn_aplicar = pygame.Rect(40, 615, 300, 50)
-        btn_volver = pygame.Rect(360, 615, 200, 50)
-        
-        hov_ap = btn_aplicar.collidepoint(mouse_pos)
-        hov_vo = btn_volver.collidepoint(mouse_pos)
-        
-        draw_button(screen, btn_aplicar, "APLICAR Y GUARDAR", hov_ap)
-        draw_button(screen, btn_volver, "VOLVER AL MENÚ", hov_vo)
-        
-        draw_text(screen, "APLICAR Y GUARDAR Cambios", (70, 628), size='md', color='bg' if hov_ap else 'verde')
-        draw_text(screen, "VOLVER AL MENÚ", (390, 628), size='md', color='bg' if hov_vo else 'blanco')
-        
+        btn_aplicar, btn_volver = R_APLICAR, R_VOLVER
+        _boton(screen, btn_aplicar, "APLICAR Y GUARDAR", btn_aplicar.collidepoint(mouse_pos), 'md', 'verde')
+        _boton(screen, btn_volver, "VOLVER AL MENÚ", btn_volver.collidepoint(mouse_pos), 'md')
+
+        # v3.6.0: lista del dropdown abierto, encima de todo lo demás
+        _dibujar_dropdown(screen, estado, mouse_pos, jugador_sel is not None)
+
         if click_pos:
             if btn_aplicar.collidepoint(click_pos):
                 if guardar_base_datos(estado):

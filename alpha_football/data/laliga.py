@@ -65,14 +65,25 @@ except ImportError as error_importacion:
         num_jornadas: int
 
 # Constantes del juego para estilos tácticos de los directores técnicos y rasgos especiales
-ESTILOS_TACTICOS = ["haramball", "cruyffismo", "flickismo", "anchelottismo"]
+# v3.3.0: los 9 estilos del motor (sorteo del estilo de los equipos sin estilo fijo).
+from alpha_football.estilos import ESTILOS_DT as ESTILOS_TACTICOS  # noqa: E402
 RASGOS_DISPONIBLES = ["regateador", "lider", "rustico", "pulmon_de_hierro"]
 
 NOMBRES_CORTOS = {
     "Real Madriz": "R. Madriz", "FC Farcelona": "Farcelona", "Patetico de Madriz": "Patetico",
     "Girona Sorpresa": "Girona", "Real Suciedad": "R. Suciedad", "Athletic de Bilbao": "Athletic",
+    # v3.7.0: 6 clubes más (liga de 12)
+    "Submarino Oxidado": "Submarino", "Betis Manque Pierda": "Betis", "Sevilla Sin Monchi": "Sevilla",
+    "Valencia Sin Estadio": "Valencia", "Celta de Viejo": "Celta", "Rayo Vallecansado": "Rayo",
 }
 ESTILO_FIJO = {
+    # v3.7.0: clubes nuevos (liga de 12)
+    "Submarino Oxidado": "anchelottismo",
+    "Betis Manque Pierda": "cruyffismo",
+    "Sevilla Sin Monchi": "kloppismo",
+    "Valencia Sin Estadio": "haramball",
+    "Celta de Viejo": "fullbackismo",
+    "Rayo Vallecansado": "kloppismo",
     "Real Madriz": "anchelottismo",
     "FC Farcelona": "cruyffismo",
     "Patetico de Madriz": "haramball",
@@ -298,7 +309,164 @@ DATOS_LALIGA = {
             ("Alvaro", "Djalito", "DEL", 80, "regateador", 24),
             ("Asier", "Villalibre", "DEL", 76, "rustico", 26),
         ]
-    }
+    },
+    # v3.7.0: 6 clubes reales 2025-26 más (liga de 12), jugadores reales parodiados.
+    "Submarino Oxidado": {
+        "ciudad": "Villarreal",
+        "estrellas": 4.1,
+        "jugadores": [
+            ("Luiz", "Juniorcito", "POR", 80, None, 24),
+            ("Diego", "Condesito", "POR", 79, None, 27),
+            ("Juan", "Foytazo", "DEF", 82, None, 27),
+            ("Renato", "Veigarrote", "DEF", 81, None, 22),
+            ("Rafa", "Marinero", "DEF", 80, None, 23),
+            ("Logan", "Costanera", "DEF", 79, "rustico", 24),
+            ("Sergi", "Cardonazo", "DEF", 79, None, 26),
+            ("Alfonso", "Pedrazo", "DEF", 78, "pulmon_de_hierro", 29),
+            ("Santiago", "Mouriñito", "DEF", 76, None, 23),
+            ("Santi", "Comesanta", "MED", 81, "pulmon_de_hierro", 29),
+            ("Dani", "Parejito", "MED", 83, "lider", 36),
+            ("Pape", "Gueyeton", "MED", 80, "rustico", 26),
+            ("Alberto", "Moleirazo", "MED", 84, "regateador", 22),
+            ("Tajon", "Buchananas", "MED", 79, "regateador", 26),
+            ("Ilias", "Akhomachito", "MED", 76, "regateador", 21),
+            ("Gerard", "Morenito", "DEL", 81, None, 33),
+            ("Ayoze", "Perezoso", "DEL", 83, None, 32),
+            ("Nicolas", "Pepetazo", "DEL", 81, "regateador", 30),
+            ("Georges", "Mikautadzito", "DEL", 81, None, 25),
+            ("Tani", "Oluwaseyito", "DEL", 76, None, 25),
+        ]
+    },
+    "Betis Manque Pierda": {
+        "ciudad": "Sevilla",
+        "estrellas": 4.0,
+        "jugadores": [
+            ("Alvaro", "Vallesito", "POR", 80, None, 28),
+            ("Adrian", "San Miguelito", "POR", 72, "lider", 38),
+            ("Hector", "Bellerinazo", "DEF", 79, None, 30),
+            ("Aitor", "Ruibalazo", "DEF", 78, "pulmon_de_hierro", 29),
+            ("Diego", "Llorentejo", "DEF", 80, "rustico", 32),
+            ("Marc", "Bartrampa", "DEF", 77, "lider", 34),
+            ("Natan", "Natacion", "DEF", 80, "rustico", 24),
+            ("Valentin", "Gomezquino", "DEF", 78, None, 22),
+            ("Ricardo", "Rodriguezuela", "DEF", 76, None, 33),
+            ("Isco", "Magia Vieja", "MED", 85, "regateador", 33),
+            ("Giovani", "Lo Celsito", "MED", 83, "regateador", 29),
+            ("Sofyan", "Amrabatido", "MED", 80, "rustico", 29),
+            ("Marc", "Rocadura", "MED", 79, None, 28),
+            ("Pablo", "Fornalito", "MED", 80, None, 29),
+            ("Sergi", "Altimirador", "MED", 76, None, 24),
+            ("Nelson", "Deossito", "MED", 76, "pulmon_de_hierro", 25),
+            ("Antony", "Girotrompo", "DEL", 83, "regateador", 25),
+            ("Abde", "Ezzalzoulito", "DEL", 81, "regateador", 23),
+            ("Cucho", "Hernandito", "DEL", 81, None, 26),
+            ("Chimy", "Avilanzado", "DEL", 76, "rustico", 31),
+        ]
+    },
+    "Sevilla Sin Monchi": {
+        "ciudad": "Sevilla",
+        "estrellas": 3.8,
+        "jugadores": [
+            ("Odysseas", "Vlachodormido", "POR", 78, None, 32),
+            ("Orjan", "Nylandia", "POR", 77, None, 35),
+            ("Jose Angel", "Carmonazo", "DEF", 78, None, 23),
+            ("Kike", "Salero", "DEF", 77, "rustico", 23),
+            ("Marcao", "Marcadon", "DEF", 77, "rustico", 29),
+            ("Tanguy", "Nianzouzou", "DEF", 76, None, 23),
+            ("Cesar", "Azpilicuesta", "DEF", 77, "lider", 36),
+            ("Gabriel", "Suazorro", "DEF", 77, None, 28),
+            ("Juanlu", "Sanchezinho", "DEF", 78, "pulmon_de_hierro", 22),
+            ("Nemanja", "Gudeljazo", "MED", 79, "lider", 34),
+            ("Lucien", "Agoumetralla", "MED", 78, None, 23),
+            ("Djibril", "Sowtware", "MED", 78, None, 28),
+            ("Batista", "Mendigo", "MED", 76, "rustico", 25),
+            ("Joan", "Jordanito", "MED", 76, None, 31),
+            ("Ruben", "Vargasolina", "MED", 79, "regateador", 27),
+            ("Chidera", "Ejukebox", "DEL", 79, "regateador", 27),
+            ("Isaac", "Romerito", "DEL", 78, None, 25),
+            ("Akor", "Adamsito", "DEL", 79, None, 25),
+            ("Alexis", "Sancheztrasnochado", "DEL", 78, "regateador", 36),
+            ("Peque", "Fernandito", "DEL", 74, "regateador", 23),
+        ]
+    },
+    "Valencia Sin Estadio": {
+        "ciudad": "Valencia",
+        "estrellas": 3.7,
+        "jugadores": [
+            ("Julen", "Agirrezabalazo", "POR", 79, None, 24),
+            ("Stole", "Dimitrievsky", "POR", 77, None, 32),
+            ("Jose", "Gaya-yai", "DEF", 80, "lider", 30),
+            ("Cesar", "Tarregazo", "DEF", 78, "rustico", 23),
+            ("Jose", "Copetudo", "DEF", 76, None, 26),
+            ("Mouctar", "Diakhabyte", "DEF", 77, "rustico", 29),
+            ("Eray", "Comercial", "DEF", 75, None, 27),
+            ("Dimitri", "Foulquierda", "DEF", 76, None, 32),
+            ("Thierry", "Correita", "DEF", 76, "pulmon_de_hierro", 26),
+            ("Pepelu", "Pepelotas", "MED", 79, "lider", 27),
+            ("Javi", "Guerrilla", "MED", 80, None, 22),
+            ("Baptiste", "Santamarina", "MED", 77, "rustico", 30),
+            ("Andre", "Almeidita", "MED", 78, None, 25),
+            ("Filip", "Ugrinico", "MED", 76, None, 26),
+            ("Luis", "Riojita", "MED", 78, "regateador", 31),
+            ("Diego", "Lopezote", "MED", 78, "regateador", 23),
+            ("Hugo", "Duracel", "DEL", 79, "pulmon_de_hierro", 26),
+            ("Arnaut", "Danjumanji", "DEL", 79, "regateador", 28),
+            ("Dani", "Rabanito", "DEL", 76, None, 30),
+            ("Lucas", "Beltranquilo", "DEL", 77, None, 24),
+        ]
+    },
+    "Celta de Viejo": {
+        "ciudad": "Vigo",
+        "estrellas": 3.6,
+        "jugadores": [
+            ("Ivan", "Villarejo", "POR", 77, None, 28),
+            ("Ionut", "Raduloso", "POR", 76, None, 28),
+            ("Oscar", "Minguezazo", "DEF", 79, None, 26),
+            ("Carl", "Starfeltro", "DEF", 77, "rustico", 30),
+            ("Marcos", "Alonsete", "DEF", 76, "lider", 34),
+            ("Javi", "Rodriguito", "DEF", 76, None, 22),
+            ("Sergio", "Carreirazo", "DEF", 77, "pulmon_de_hierro", 25),
+            ("Joseph", "Aidoodoo", "DEF", 75, None, 29),
+            ("Carlos", "Dominguezin", "DEF", 76, None, 24),
+            ("Fran", "Beltranca", "MED", 78, None, 26),
+            ("Ilaix", "Moribundo", "MED", 78, "rustico", 22),
+            ("Hugo", "Sotelito", "MED", 76, None, 22),
+            ("Damian", "Rodriguezzz", "MED", 74, None, 22),
+            ("Williot", "Swedbergamota", "MED", 76, None, 21),
+            ("Hugo", "Alvarezito", "MED", 77, "regateador", 22),
+            ("Iago", "Aspasiempre", "DEL", 82, "lider", 38),
+            ("Borja", "Iglesiapanda", "DEL", 80, None, 32),
+            ("Ferran", "Jutglaaa", "DEL", 77, None, 26),
+            ("Bryan", "Zaragozano", "DEL", 77, "regateador", 24),
+            ("Pablo", "Duranguito", "DEL", 75, None, 24),
+        ]
+    },
+    "Rayo Vallecansado": {
+        "ciudad": "Madrid",
+        "estrellas": 3.6,
+        "jugadores": [
+            ("Augusto", "Batallon", "POR", 78, None, 29),
+            ("Dani", "Cardenal", "POR", 74, None, 28),
+            ("Florian", "Lejeunito", "DEF", 78, "lider", 34),
+            ("Pep", "Chavarriazo", "DEF", 77, None, 27),
+            ("Andrei", "Ratiuuu", "DEF", 78, "pulmon_de_hierro", 27),
+            ("Ivan", "Balliuna", "DEF", 75, None, 33),
+            ("Abdul", "Mumincito", "DEF", 76, "rustico", 27),
+            ("Luiz", "Felipon", "DEF", 76, None, 28),
+            ("Alfonso", "Espinoso", "DEF", 75, None, 33),
+            ("Oscar", "Valentinazo", "MED", 78, "pulmon_de_hierro", 31),
+            ("Pathe", "Cissterna", "MED", 77, "rustico", 31),
+            ("Unai", "Lopezito", "MED", 77, None, 29),
+            ("Oscar", "Trejoven", "MED", 76, "lider", 37),
+            ("Isi", "Palazonazo", "MED", 80, "regateador", 30),
+            ("Pedro", "Diazepam", "MED", 76, None, 27),
+            ("Jorge", "De Frutas", "DEL", 80, "regateador", 28),
+            ("Alvaro", "Garciatenazo", "DEL", 78, "regateador", 33),
+            ("Sergio", "Camellazo", "DEL", 77, None, 24),
+            ("Randy", "Ntekazo", "DEL", 75, None, 27),
+            ("Alemao", "Aleman", "DEL", 75, None, 27),
+        ]
+    },
 }
 
 def crear_liga_fallback() -> Liga:
@@ -339,7 +507,7 @@ def crear_liga_fallback() -> Liga:
             nombre="LaLiga EA Sports Parodia (Fallback)",
             tipo="laliga",
             equipos=equipos_fallback,
-            num_jornadas=10
+            num_jornadas=max(2, 2 * (len(equipos_fallback) - 1))  # v3.7.0
         )
     except Exception as error_fallback:
         logging.critical(f"Fallo critico doble en fallback: {error_fallback}. Retornando objeto estatico basico.")
@@ -352,7 +520,7 @@ def crear_liga_fallback() -> Liga:
 
 def get_liga() -> Liga:
     """
-    Construye y retorna la instancia de la Liga con sus 6 equipos y jugadores parodiados.
+    Construye y retorna la instancia de la Liga con sus 12 equipos y jugadores parodiados (v3.7.0).
     """
     try:
         equipos_list = []
@@ -417,7 +585,7 @@ def get_liga() -> Liga:
             nombre="LaLiga EA Sports Parodia",
             tipo="laliga",
             equipos=equipos_list,
-            num_jornadas=10
+            num_jornadas=max(2, 2 * (len(equipos_list) - 1))  # v3.7.0: ida y vuelta (12 → 22)
         )
         
     except Exception as error_global:

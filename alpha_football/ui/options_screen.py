@@ -25,6 +25,40 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
+# v3.6.0: elementos navegables con ↑/↓ (orden visual). ←/→ ajustan el volumen, Enter activa.
+ITEMS_OPCIONES = ['volumen', 'importar', 'volver', 'playlist']
+
+
+def items_opciones(estado: dict) -> list:
+    """v4.2.0: en carrera (no en amistoso) se suma GUARDAR PARTIDA (antes estaba en la barra del hub)."""
+    if estado.get('mi_equipo') is not None and estado.get('match_mode') != 'amistoso':
+        return ITEMS_OPCIONES[:3] + ['guardar'] + ITEMS_OPCIONES[3:]
+    return list(ITEMS_OPCIONES)
+
+
+def rects_opciones() -> dict:
+    """v3.9.0: rects de la pantalla de opciones (los usa también la ayuda H)."""
+    panel = pygame.Rect(SCREEN_W // 2 - 360, 90, 720, 540)
+    return {
+        'panel': panel,
+        'volumen': pygame.Rect(panel.left + 48, 168, 624, 102),
+        'menos': pygame.Rect(panel.left + 60, 210, 60, 50),
+        'mute': pygame.Rect(panel.left + 130, 210, 70, 50),
+        'mas': pygame.Rect(panel.left + 210, 210, 60, 50),
+        'barra': pygame.Rect(panel.left + 290, 225, 360, 16),
+        'input': pygame.Rect(panel.left + 60, 360, 470, 50),      # v3.9.0: "BUSCAR" no cabía en 90 px
+        'descargar': pygame.Rect(panel.left + 545, 360, 120, 50),
+        'resultados': pygame.Rect(panel.left + 60, 438, 605, 5 * 24),
+        # v4.2.0: tres botones abajo (GUARDAR en el centro, solo en carrera)
+        'volver': pygame.Rect(panel.left + 40, panel.bottom - 60, 190, 48),
+        'playlist': pygame.Rect(panel.right - 230, panel.bottom - 60, 190, 48),
+        'guardar': pygame.Rect(panel.centerx - 95, panel.bottom - 60, 190, 48),
+        # vista playlist
+        'canciones': pygame.Rect(panel.left + 60, 175, 600, 6 * 50),
+        'prev': pygame.Rect(panel.left + 60, panel.bottom - 115, 120, 36),
+        'next': pygame.Rect(panel.right - 180, panel.bottom - 115, 120, 36),
+    }
+
 
 def render(screen, estado: dict):
     """Pantalla de opciones. Retorna estado['options_return'] (def. 'menu') al salir, o None."""
@@ -38,19 +72,20 @@ def render(screen, estado: dict):
     estado.setdefault('opt_input_activo', False)
     estado.setdefault('opt_view', 'main')
     estado.setdefault('playlist_page', 0)
+    items = items_opciones(estado)   # v4.2.0: con GUARDAR en carrera
+    estado['opt_foco'] = int(estado.get('opt_foco', 0) or 0) % len(items)   # v3.6.0
 
     mouse_pos = pygame.mouse.get_pos()
     volumen = getattr(audio, 'CURRENT_VOLUME', estado.get('volumen', 0.5)) if audio else 0.5
 
     # --- Rects de la UI ---
-    panel = pygame.Rect(SCREEN_W // 2 - 360, 90, 720, 540)
-    rect_menos = pygame.Rect(panel.left + 60, 210, 60, 50)
-    rect_mute = pygame.Rect(panel.left + 130, 210, 70, 50)
-    rect_mas = pygame.Rect(panel.left + 210, 210, 60, 50)
-    rect_input = pygame.Rect(panel.left + 60, 360, 500, 50)
-    rect_descargar = pygame.Rect(panel.left + 575, 360, 90, 50)
-    rect_volver = pygame.Rect(panel.left + 60, panel.bottom - 60, 200, 48)
-    rect_playlist = pygame.Rect(panel.right - 260, panel.bottom - 60, 200, 48)
+    _r = rects_opciones()                                     # v3.9.0
+    panel = _r['panel']
+    rect_menos, rect_mute, rect_mas = _r['menos'], _r['mute'], _r['mas']
+    rect_input, rect_descargar = _r['input'], _r['descargar']
+    rect_volver, rect_playlist = _r['volver'], _r['playlist']
+    # v3.9.0: escribiendo la URL / canción, H se escribe (no abre la ayuda)
+    estado['texto_activo'] = bool(estado.get('opt_input_activo')) and estado.get('opt_view') != 'playlist'
 
     # --- VISTA: PLAYLIST INTERNA ---
     if estado.get('opt_view') == 'playlist':
@@ -80,8 +115,7 @@ def render(screen, estado: dict):
         start_idx = pagina * items_por_pagina
         actuales = canciones[start_idx : start_idx + items_por_pagina]
 
-        rect_prev = pygame.Rect(panel.left + 60, panel.bottom - 115, 120, 36)
-        rect_next = pygame.Rect(panel.right - 180, panel.bottom - 115, 120, 36)
+        rect_prev, rect_next = _r['prev'], _r['next']
         rect_volver_opts = pygame.Rect(panel.left + 60, panel.bottom - 60, 200, 48)
 
         del_rects = []
@@ -202,21 +236,47 @@ def render(screen, estado: dict):
                     _iniciar_descarga(audio, estado['opt_url'])
                     estado['opt_url'] = ""
             elif rect_playlist.collidepoint(cp):
-                if audio:
-                    _iniciar_descarga(audio, estado['opt_url'])
-                    estado['opt_url'] = ""
-            elif rect_playlist.collidepoint(cp):
                 estado['opt_view'] = 'playlist'
                 estado['playlist_page'] = 0
             elif rect_volver.collidepoint(cp):
                 _persistir(audio, estado)
                 return estado.get('options_return', 'menu')
-        elif event.type == pygame.KEYDOWN:
+            elif 'guardar' in items and rects_opciones()['guardar'].collidepoint(cp):   # v4.2.0
+                _persistir(audio, estado)
+                return _abrir_guardar(estado)
+        elif event.type == pygame.KEYDOWN and not estado['opt_input_activo']:
+            # v2.3.5: atajos solo si NO se está escribiendo en el campo de texto
+            # (v2.3.3 los puso antes y el campo quedó sin teclado ni Ctrl+V).
             # v2.3.3: atajos de teclado globales en opciones.
             # Esc vuelve al menu. - y + ajustan volumen. m = mute. Enter = pegar resultado #1.
+            item = items[estado['opt_foco']]
             if event.key == pygame.K_ESCAPE:
                 _persistir(audio, estado)
                 return estado.get('options_return', 'menu')
+            elif event.key in (pygame.K_UP, pygame.K_DOWN):          # v3.6.0: foco con ↑/↓
+                paso = -1 if event.key == pygame.K_UP else 1
+                estado['opt_foco'] = (estado['opt_foco'] + paso) % len(items)
+            elif event.key in (pygame.K_LEFT, pygame.K_RIGHT) and item == 'volumen' and audio:
+                delta = -0.1 if event.key == pygame.K_LEFT else 0.1
+                audio.set_volume(max(0.0, min(1.0, volumen + delta))); _persistir(audio, estado)
+            elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                if item == 'volumen' and audio:                       # Enter en volumen = silenciar
+                    if volumen > 0.0:
+                        estado['last_non_zero_volume'] = volumen; audio.set_volume(0.0)
+                    else:
+                        audio.set_volume(estado.get('last_non_zero_volume', 0.5))
+                    _persistir(audio, estado)
+                elif item == 'importar':
+                    estado['opt_input_activo'] = True
+                elif item == 'playlist':
+                    estado['opt_view'] = 'playlist'
+                    estado['playlist_page'] = 0
+                elif item == 'volver':
+                    _persistir(audio, estado)
+                    return estado.get('options_return', 'menu')
+                elif item == 'guardar':
+                    _persistir(audio, estado)
+                    return _abrir_guardar(estado)
             elif event.key == pygame.K_MINUS and audio:
                 audio.set_volume(max(0.0, volumen - 0.1)); _persistir(audio, estado)
             elif event.key == pygame.K_EQUALS and audio:
@@ -237,6 +297,8 @@ def render(screen, estado: dict):
                     estado['opt_url'] = (estado['opt_url'] + pegado)[:200]
             elif event.key == pygame.K_BACKSPACE:
                 estado['opt_url'] = estado['opt_url'][:-1]
+            elif event.key == pygame.K_ESCAPE:                           # v3.6.0: suelta el campo
+                estado['opt_input_activo'] = False
             elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                 if audio:
                     _iniciar_descarga(audio, estado['opt_url']); estado['opt_url'] = ""
@@ -258,14 +320,14 @@ def render(screen, estado: dict):
     pygame.draw.rect(screen, (40, 50, 75), barra, border_radius=4)
     relleno = pygame.Rect(barra.left, barra.top, int(barra.width * volumen), barra.height)
     pygame.draw.rect(screen, COLORS.get('verde', (0, 255, 136)), relleno, border_radius=4)
-    draw_text(screen, "Atajos globales en el juego: + / - / M", (panel.left + 60, 280), size='sm', color='azul')
+    draw_text(screen, "Atajos globales en el juego: + / -", (panel.left + 60, 280), size='sm', color='azul')
 
     # Importador de música
     draw_text(screen, "IMPORTAR MÚSICA (URL o nombre de canción)", (panel.left + 60, 320), size='md', color='blanco')
     borde_input = COLORS.get('verde', (0, 255, 136)) if estado['opt_input_activo'] else COLORS.get('azul', (0, 191, 255))
     pygame.draw.rect(screen, (12, 18, 36), rect_input, border_radius=6)
     pygame.draw.rect(screen, borde_input, rect_input, width=2, border_radius=6)
-    txt = estado['opt_url'] or "Pega una URL (Ctrl+V) o escribe el nombre de la canción…"
+    txt = estado['opt_url'] or "Pega una URL (Ctrl+V) o escribe una canción…"
     txt_color = 'blanco' if estado['opt_url'] else 'azul'
     mostrado = txt[-46:] if len(txt) > 46 else txt
     draw_text(screen, mostrado, (rect_input.left + 10, rect_input.top + 14), size='sm', color=txt_color)
@@ -305,7 +367,28 @@ def render(screen, estado: dict):
 
     draw_button(screen, rect_volver, "VOLVER", rect_volver.collidepoint(mouse_pos))
     draw_button(screen, rect_playlist, "VER PLAYLIST", rect_playlist.collidepoint(mouse_pos))
+    if 'guardar' in items:   # v4.2.0
+        draw_button(screen, rects_opciones()['guardar'], "GUARDAR",
+                    rects_opciones()['guardar'].collidepoint(mouse_pos))
+
+    # v3.6.0: resaltado dorado del elemento con foco de teclado
+    try:
+        zonas = {'volumen': pygame.Rect(panel.left + 48, 168, 624, 102), 'importar': rect_input.inflate(10, 10),
+                 'volver': rect_volver.inflate(10, 10), 'playlist': rect_playlist.inflate(10, 10),
+                 'guardar': rects_opciones()['guardar'].inflate(10, 10)}
+        pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), zonas[items[estado['opt_foco']]],
+                         width=2, border_radius=8)
+        draw_text(screen, "↑↓ elegir · ←→ volumen · Enter · Esc volver",
+                  (panel.left + 330, 126), size='sm', color='azul', shadow=False)
+    except Exception as e_foco:
+        logger.error(f"Error al dibujar el foco de opciones: {e_foco}")
     return None
+
+
+def _abrir_guardar(estado: dict) -> str:
+    """v4.2.0: GUARDAR PARTIDA desde opciones; al terminar (o con ESC) se vuelve a opciones."""
+    estado['save_slots_return'] = 'options_screen'
+    return 'save_slots_screen'
 
 
 def _es_url(t: str) -> bool:

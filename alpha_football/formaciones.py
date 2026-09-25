@@ -124,20 +124,21 @@ def pref(formacion: str) -> str:
     return datos["pref"] if datos else "anchelottismo"
 
 
-def mejor_once(jugadores: list, formacion: str) -> list[int]:
+def mejor_once(jugadores: list, formacion: str, puntaje=None) -> list[int]:
     """
     Devuelve los índices del mejor XI (sin lesionados) que respeta las cuotas de la
     formación; rellena a 11 con los mejores restantes si falta cubrir alguna línea.
     Reutilizado por team_screen ("AUTO ONCE") y por el menú táctico en partido.
     """
     cuo = cuotas(formacion)
+    _p = puntaje or (lambda j: getattr(j, "overall", 60))   # v3.1.0: la IA ordena con cansancio
     por_pos: dict[str, list[tuple[int, int]]] = {"POR": [], "DEF": [], "MED": [], "DEL": []}
     for idx, j in enumerate(jugadores):
-        if getattr(j, "lesion_partidos", 0) == 0:
+        if getattr(j, "lesion_partidos", 0) == 0 and getattr(j, "partidos_sancion", 0) <= 0:
             p = getattr(j, "posicion", "MED")
             if p not in por_pos:
                 p = "MED"
-            por_pos[p].append((getattr(j, "overall", 60), idx))
+            por_pos[p].append((_p(j), idx))
     for p in por_pos:
         por_pos[p].sort(reverse=True)
 
@@ -152,8 +153,8 @@ def mejor_once(jugadores: list, formacion: str) -> list[int]:
     sel = set(elegidos)
     necesita_por = len([i for i in elegidos if getattr(jugadores[i], 'posicion', '') == 'POR']) == 0
     restantes = sorted(
-        [(getattr(j, "overall", 60), idx) for idx, j in enumerate(jugadores)
-         if getattr(j, "lesion_partidos", 0) == 0
+        [(_p(j), idx) for idx, j in enumerate(jugadores)
+         if getattr(j, "lesion_partidos", 0) == 0 and getattr(j, "partidos_sancion", 0) <= 0
          and idx not in sel
          # Excluir porteros del relleno de campo (solo van al slot POR si falta portero)
          and (getattr(j, 'posicion', 'MED') != 'POR' or necesita_por)],
@@ -164,3 +165,83 @@ def mejor_once(jugadores: list, formacion: str) -> list[int]:
             break
         elegidos.append(idx)
     return elegidos[:11]
+
+
+def normalizar_convocados(alin, jugadores: list, n: int = 10) -> list[int]:
+    """
+    v2.3.5: deja `alin.convocados` con hasta `n` suplentes válidos: índices dentro de la
+    plantilla, sin repetir, sin titulares y sin lesionados. Respeta los que ya eligió
+    el DT y completa con los mejores disponibles. Arregla los índices corridos tras
+    ventas/compras y los convocados que pasaron a titulares al cambiar la formación.
+    """
+    titulares = set(getattr(alin, 'titulares', []) or [])
+    validos: list[int] = []
+    for i in getattr(alin, 'convocados', []) or []:
+        if (0 <= i < len(jugadores) and i not in titulares and i not in validos
+                and getattr(jugadores[i], 'lesion_partidos', 0) == 0):
+            validos.append(i)
+    if len(validos) < n:
+        resto = sorted(
+            (i for i, j in enumerate(jugadores)
+             if i not in titulares and i not in validos and getattr(j, 'lesion_partidos', 0) == 0),
+            key=lambda i: -getattr(jugadores[i], 'overall', 60),
+        )
+        validos += resto[:n - len(validos)]
+    alin.convocados = validos[:n]
+    return alin.convocados
+
+
+def puestos(formacion: str) -> list[str]:
+    """Tipo de puesto (POR/DEF/MED/DEL) de cada uno de los 11 slots, en el orden de `posiciones`."""
+    res: list[str] = []
+    for pos, n in cuotas(formacion).items():
+        res += [pos] * n
+    return res[:11]
+
+
+def acomodar_en_puestos(titulares: list[int], jugadores: list, formacion: str) -> list[int]:
+    """
+    v2.3.5: reordena los 11 titulares para que cada uno caiga en un slot de su
+    posición (el slot k del campo es titulares[k]). No cambia QUIÉN juega, solo dónde.
+    """
+    libres = list(titulares)
+    orden: list = [None] * len(puestos(formacion))
+    for k, tipo in enumerate(puestos(formacion)):
+        idx = next((i for i in libres if 0 <= i < len(jugadores)
+                    and getattr(jugadores[i], 'posicion', 'MED') == tipo), None)
+        if idx is not None:
+            orden[k] = idx
+            libres.remove(idx)
+    for k in range(len(orden)):
+        if orden[k] is None and libres:
+            orden[k] = libres.pop(0)
+    return [i for i in orden if i is not None] + libres
+
+
+def intercambiar(alin, a: tuple, b: tuple) -> bool:
+    """
+    v2.3.5 (dirección estilo FIFA): intercambia dos jugadores seleccionados.
+    a/b = (zona, i): ('campo', slot en titulares), ('banco', i en convocados) o
+    ('reserva', índice del jugador en la plantilla). Nunca quita a nadie: siempre
+    quedan los mismos 11 titulares y los mismos 10 convocados en número.
+    Retorna False si el intercambio no aplica (mismo jugador, reserva con reserva).
+    """
+    def _get(z, i):
+        if z == 'campo':
+            return alin.titulares[i]
+        if z == 'banco':
+            return alin.convocados[i]
+        return i
+
+    def _set(z, i, v):
+        if z == 'campo':
+            alin.titulares[i] = v
+        elif z == 'banco':
+            alin.convocados[i] = v
+
+    if a == b or (a[0] == 'reserva' and b[0] == 'reserva'):
+        return False
+    va, vb = _get(*a), _get(*b)
+    _set(a[0], a[1], vb)
+    _set(b[0], b[1], va)
+    return True

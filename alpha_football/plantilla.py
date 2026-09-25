@@ -75,10 +75,9 @@ def expandir_plantilla(equipo, objetivo: int = 25, tope: int = 40):
             # Suplentes algo por debajo del once base para que los titulares sigan siendo titulares.
             ovr = max(40, base_ovr - random.randint(3, 9))
             atk, dfs, fis, tec, men = _atributos_por_posicion(posicion, ovr)
-            if idx < len(_NOMBRES_SUPLENTES):
-                nombre, apellido = _NOMBRES_SUPLENTES[idx]
-            else:
-                nombre, apellido = (f"Sub{idx + 1}", "Banca")
+            # v4.4.0: nombre único (antes los 15 de _NOMBRES_SUPLENTES se repetían en cada club)
+            from alpha_football.nombres import nombre_unico
+            nombre, apellido = nombre_unico(getattr(jugadores[0], 'nacionalidad', '') if jugadores else '')
 
             jugadores.append(Jugador(
                 nombre=nombre,
@@ -109,3 +108,73 @@ def expandir_liga(liga, objetivo: int = 25, tope: int = 40):
     except Exception as error_liga:
         logger.error(f"Error al expandir las plantillas de la liga: {error_liga}")
     return liga
+
+
+# --- v2.3.6: techo de media por región al CREAR las ligas ────────────────────────
+# Sudamérica arranca con media máxima 81; después cada jugador puede crecer hasta su
+# potencial (o más, si su potencial dinámico sube por rendimiento).
+TECHO_SUDAMERICA = 81
+from alpha_football.paises import SUDAMERICA as _SUDAMERICA  # noqa: E402
+TIPOS_SUDAMERICA = _SUDAMERICA + ('libertadores',)   # v3.7.0: incluye uruguay y ecuador
+_ATRIBUTOS = ("ataque", "defensa", "fisico", "tecnica", "mental")
+
+
+def aplicar_techo_ovr(equipos, techo: int) -> int:
+    """
+    Baja a `techo` la media de los jugadores que lo superan (restando el exceso a sus
+    5 atributos, así conserva su perfil). Retorna cuántos jugadores se ajustaron.
+    """
+    ajustados = 0
+    for equipo in equipos or []:
+        for j in getattr(equipo, "jugadores", []) or []:
+            try:
+                exceso = int(j.overall) - techo
+                if exceso <= 0:
+                    continue
+                for attr in _ATRIBUTOS:
+                    setattr(j, attr, max(10, getattr(j, attr) - exceso))
+                # Si algún atributo topó en 10, el redondeo puede dejarlo arriba: afinar.
+                for _ in range(20):
+                    if j.overall <= techo:
+                        break
+                    mayor = max(_ATRIBUTOS, key=lambda a: getattr(j, a))
+                    setattr(j, mayor, getattr(j, mayor) - 1)
+                ajustados += 1
+            except Exception as e_techo:
+                logger.warning(f"No se pudo aplicar el techo a {getattr(j, 'nombre', '?')}: {e_techo}")
+    return ajustados
+
+
+BRECHA_DIVISIONES = 12   # v3.0.0: media de la 1ª - media de la 2ª (Diego: 10-14, no 20)
+
+
+def acercar_segunda(equipos_2a, equipos_1a, brecha: int = BRECHA_DIVISIONES) -> int:
+    """
+    Sube (o baja) los 5 atributos y el potencial de todos los jugadores de la 2ª para que
+    la media de sus clubes quede `brecha` puntos por debajo de la de la 1ª del país.
+    Retorna el desplazamiento aplicado.
+    """
+    try:
+        m1 = sum(e.ovr_promedio for e in equipos_1a) / len(equipos_1a)
+        m2 = sum(e.ovr_promedio for e in equipos_2a) / len(equipos_2a)
+        delta = round(m1 - brecha - m2)
+        if not delta:
+            return 0
+        for equipo in equipos_2a:
+            for j in getattr(equipo, "jugadores", []) or []:
+                for attr in _ATRIBUTOS:
+                    setattr(j, attr, max(10, min(99, getattr(j, attr) + delta)))
+                if getattr(j, "potencial", 0):
+                    j.potencial = max(j.overall, min(99, j.potencial + delta))
+        return delta
+    except Exception as e_br:
+        logger.warning(f"No se pudo acercar la 2ª a la 1ª: {e_br}")
+        return 0
+
+
+def aplicar_techo_region(tipo: str, equipos) -> None:
+    """Aplica el techo de Sudamérica si `tipo` es una liga/copa sudamericana."""
+    if tipo in TIPOS_SUDAMERICA:
+        n = aplicar_techo_ovr(equipos, TECHO_SUDAMERICA)
+        if n:
+            logger.info(f"Techo {TECHO_SUDAMERICA} aplicado a {n} jugadores de '{tipo}'.")

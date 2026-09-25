@@ -8,6 +8,9 @@ y gestiona la compra de jugadores y ofertas de inicio de temporada de forma resi
 import sys
 import os
 import random
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Intentar importar pygame de manera segura
 try:
@@ -154,9 +157,11 @@ except Exception as error_fa:
         libres = []
         for i in range(3):
             pos = random.choice(posiciones)
+            from alpha_football.nombres import nombre_unico   # v4.4.0
+            nombre, apellido = nombre_unico(reservar=False)
             libres.append(Jugador(
-                nombre=random.choice(nombres),
-                apellido=random.choice(apellidos),
+                nombre=nombre,
+                apellido=apellido,
                 posicion=pos,
                 ataque=random.randint(62, 75),
                 defensa=random.randint(62, 75),
@@ -189,15 +194,15 @@ def generar_reemplazo_resiliente(posicion, estrellas_equipo):
             @property
             def overall(self): return (self.ataque + self.defensa + self.fisico + self.tecnica + self.mental) // 5
 
-    nombres_pool = ["Andres", "Brayan", "Mateo", "Santiago", "Jhon", "Luis", "Carlos"]
-    apellidos_pool = ["Mendoza", "Mosquera", "Valencia", "Riascos", "Zapata", "Moreno"]
-    
+
     lo = int(40 + estrellas_equipo * 5)
     hi = min(lo + 20, 76)
     
+    from alpha_football.nombres import nombre_unico   # v4.4.0: sin nombres repetidos
+    nombre, apellido = nombre_unico()
     return Jugador(
-        nombre=random.choice(nombres_pool),
-        apellido=random.choice(apellidos_pool),
+        nombre=nombre,
+        apellido=apellido,
         posicion=posicion,
         ataque=random.randint(lo, hi),
         defensa=random.randint(lo, hi),
@@ -246,17 +251,114 @@ def _cargar_equipos_por_tipo(tipo: str, estado: dict) -> list:
         print(f"Error leyendo estado['ligas'] para tipo '{tipo}': {e}", file=sys.stderr)
     # 2. Fallback: cargar la liga desde su módulo de datos.
     try:
-        from alpha_football.data import premier, laliga, betplay, brasil, argentina
-        mapa = {
-            'premier': premier, 'laliga': laliga, 'betplay': betplay,
-            'brasil': brasil, 'argentina': argentina,
-        }
-        mod = mapa.get(tipo)
-        if mod is not None:
-            return list(mod.get_liga().equipos)
+        # v3.7.0: cualquier país del registro (None si todavía no tiene datos).
+        from alpha_football.paises import cargar_datos_liga
+        liga_datos = cargar_datos_liga(tipo, 1)
+        if liga_datos is not None:
+            return list(liga_datos.equipos)
     except Exception as e:
         print(f"Error cargando liga '{tipo}' desde datos: {e}", file=sys.stderr)
     return []
+
+
+_FILTROS_NUMERICOS = ('precio_min', 'precio_max', 'ovr_min', 'ovr_max',
+                      'edad_min', 'edad_max', 'pot_min', 'pot_max')
+
+
+def _rects_filtros():
+    """v2.3.8: rects del panel de filtros: ({campo: (rect, etiqueta)}, panel, LIMPIAR, CERRAR)."""
+    px, py = 330, 145
+    panel = pygame.Rect(px, py, 540, 390)
+    campos = {
+        'precio_min': (pygame.Rect(px + 160, py + 60, 100, 28), "Precio mín $:"),
+        'precio_max': (pygame.Rect(px + 420, py + 60, 100, 28), "Precio máx $:"),
+        'ovr_min': (pygame.Rect(px + 160, py + 110, 60, 28), "OVR mín:"),
+        'ovr_max': (pygame.Rect(px + 420, py + 110, 60, 28), "OVR máx:"),
+        'edad_min': (pygame.Rect(px + 160, py + 160, 60, 28), "Edad mín:"),
+        'edad_max': (pygame.Rect(px + 420, py + 160, 60, 28), "Edad máx:"),
+        'pot_min': (pygame.Rect(px + 160, py + 210, 60, 28), "Potencial mín:"),
+        'pot_max': (pygame.Rect(px + 420, py + 210, 60, 28), "Potencial máx:"),
+        'nombre': (pygame.Rect(px + 160, py + 260, 200, 28), "Nombre:"),
+    }
+    return campos, panel, pygame.Rect(px + 50, py + 320, 160, 44), pygame.Rect(px + 260, py + 320, 250, 44)
+
+
+def _rects_ficha_mercado():
+    """Rects de la ficha del jugador (overlay): (FICHAR, CERRAR, caja)."""
+    caja = pygame.Rect(SCREEN_W // 2 - 330, SCREEN_H // 2 - 250, 660, 500)
+    btn_fichar = pygame.Rect(caja.x + 40, caja.bottom - 70, 260, 50)
+    btn_cerrar = pygame.Rect(caja.right - 300, caja.bottom - 70, 260, 50)
+    return btn_fichar, btn_cerrar, caja
+
+
+def _dibujar_ficha_mercado(screen, det: dict, mi_equipo, mouse_pos) -> None:
+    """v2.3.6: overlay con los detalles del jugador del mercado."""
+    j = det.get('jugador')
+    if j is None:
+        return
+    eq = det.get('club')
+    btn_fichar, btn_cerrar, caja = _rects_ficha_mercado()
+    try:
+        velo = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
+        velo.fill((10, 14, 26, 215))
+        screen.blit(velo, (0, 0))
+    except Exception as e_velo:
+        logger.debug(f"No se pudo dibujar el velo de la ficha: {e_velo}")
+    draw_panel(screen, caja)
+    pygame.draw.rect(screen, COLORS['dorado'], caja, width=2, border_radius=8)
+
+    x0, y0 = caja.x + 30, caja.y + 22
+    draw_text(screen, j.nombre_completo[:32], (x0, y0), size='lg', color='dorado')
+    club_txt = eq.nombre if eq else "Agente libre"
+    draw_text(screen, f"{j.posicion}  ·  OVR {j.overall}  ·  {club_txt[:30]}", (x0, y0 + 40), size='md', color='verde')
+
+    precio = calcular_precio(j)
+    valor = getattr(j, 'valor', 0) or calcular_valor(j)
+    datos = [
+        ("Edad", getattr(j, 'edad', '?')),
+        ("Potencial", getattr(j, 'potencial', 0) or '?'),
+        ("Valor de mercado", f"${valor:,}"),
+        ("Precio de fichaje", f"${precio:,}"),
+        ("Nacionalidad", getattr(j, 'nacionalidad', '') or '-'),
+        ("Rasgo", getattr(j, 'rasgo', None) or '-'),
+        ("Partidos (temp.)", getattr(j, 'partidos_jugados', 0)),
+        ("Goles / asist.", f"{getattr(j, 'goles', 0)} / {getattr(j, 'asistencias', 0)}"),
+        ("Nota media", f"{float(getattr(j, 'promedio_nota', 0) or 0):.2f}"),
+    ]
+    for i, (k, v) in enumerate(datos):
+        yy = y0 + 90 + i * 30
+        draw_text(screen, k, (x0, yy), size='sm', color='azul', shadow=False)
+        draw_text(screen, str(v)[:22], (x0 + 170, yy), size='sm', color='blanco')
+
+    # Atributos con barra
+    xa = caja.x + 370
+    draw_text(screen, "ATRIBUTOS", (xa, y0 + 90), size='sm', color='dorado')
+    for i, (k, attr) in enumerate((("Ataque", 'ataque'), ("Defensa", 'defensa'), ("Físico", 'fisico'),
+                                   ("Técnica", 'tecnica'), ("Mental", 'mental'))):
+        v = int(getattr(j, attr, 0) or 0)
+        yy = y0 + 124 + i * 34
+        draw_text(screen, k, (xa, yy), size='sm', color='blanco', shadow=False)
+        barra = pygame.Rect(xa + 90, yy + 4, 150, 12)
+        pygame.draw.rect(screen, (40, 50, 70), barra, border_radius=3)
+        pygame.draw.rect(screen, COLORS['verde'],
+                         pygame.Rect(barra.x, barra.y, int(barra.width * max(0, min(99, v)) / 99), 12), border_radius=3)
+        draw_text(screen, str(v), (barra.right + 8, yy), size='sm', color='blanco', shadow=False)
+
+    ok = det.get('ok')
+    if not ok and det.get('motivo'):
+        draw_text(screen, str(det['motivo'])[:70], (x0, btn_fichar.y - 34), size='sm', color='rojo')
+    draw_button(screen, btn_fichar, "FICHAR" if ok else "NO DISPONIBLE", btn_fichar.collidepoint(mouse_pos))
+    draw_button(screen, btn_cerrar, "CERRAR (Esc)", btn_cerrar.collidepoint(mouse_pos))
+
+
+# v3.9.0: rects expuestos (ayuda H); render los usa tal cual.
+R_INFO = pygame.Rect(840, 20, 400, 110)
+R_HISTORIAL = pygame.Rect(840, 145, 400, 430)
+R_SALIR = pygame.Rect(840, 595, 400, 70)
+R_PAG_PREV = pygame.Rect(40, 630, 100, 35)
+R_PAG_NEXT = pygame.Rect(680, 630, 100, 35)
+R_PESTANAS = pygame.Rect(40, 100, 7 * 120 - 10, 32)          # Todos, POR, DEF, MED, DEL, Libres, Internacional
+R_GRILLA = pygame.Rect(40, 150, 2 * 370 + 20, 3 * 130 + 2 * 12)
 
 
 def render(screen, estado: dict) -> str | None:
@@ -319,6 +421,8 @@ def render(screen, estado: dict) -> str | None:
         # Inicializar variables locales en el diccionario global para persistencia
         estado.setdefault('market_tab', 'Todos')
         estado.setdefault('market_page', 0)
+        # v3.9.0: escribiendo en un filtro (nombre/precio/OVR), H se escribe (no abre la ayuda)
+        estado['texto_activo'] = bool(estado.get('market_filter_input'))
         estado.setdefault('fichajes_realizados', 0)
         estado.setdefault('transfer_log', [])
         estado.setdefault('success_message', "")
@@ -410,13 +514,8 @@ def render(screen, estado: dict) -> str | None:
         else:
             # v0.8.2: el filtro de país se aplica por SEPARADO (botón "Por país" arriba),
             # no en las pestañas superiores. Las pestañas ahora son solo por posición.
-            _PAIS_A_TIPO = {
-                'Colombia': 'betplay',
-                'España': 'laliga',
-                'Inglaterra': 'premier',
-                'Brasil': 'brasil',
-                'Argentina': 'argentina',
-            }
+            from alpha_football.paises import PAISES as _PAISES   # v3.7.0: 8 países
+            _PAIS_A_TIPO = {p['nombre']: p['liga_id'] for p in _PAISES}
             pais_tipo = _PAIS_A_TIPO.get(estado.get('market_pais_filtro') or 'Todos')
 
             # v0.8.4: el filtro "Por país" ahora habilita fichajes ENTRE LIGAS.
@@ -453,8 +552,13 @@ def render(screen, estado: dict) -> str | None:
             prec_max = int(estado.get('market_precio_max', 0) or 0)
             ovr_min = int(estado.get('market_ovr_min', 0) or 0)
             ovr_max = int(estado.get('market_ovr_max', 0) or 0)
+            edad_min = int(estado.get('market_edad_min', 0) or 0)
+            edad_max = int(estado.get('market_edad_max', 0) or 0)
+            pot_min = int(estado.get('market_pot_min', 0) or 0)
+            pot_max = int(estado.get('market_pot_max', 0) or 0)
             search_name = (estado.get('market_nombre_search') or '').strip().lower()
-            hay_filtros = (prec_min > 0 or prec_max > 0 or ovr_min > 0 or ovr_max > 0 or len(search_name) >= 2)
+            hay_filtros = (prec_min > 0 or prec_max > 0 or ovr_min > 0 or ovr_max > 0 or len(search_name) >= 2
+                           or edad_min > 0 or edad_max > 0 or pot_min > 0 or pot_max > 0)
             if hay_filtros:
                 # v0.8.2: búsqueda por nombre con similitud semántica (difflib.SequenceMatcher).
                 # ratio > 0.5 = tolerante: "yimmi" encuentra "Yimmi Chatarra" y similares.
@@ -479,6 +583,12 @@ def render(screen, estado: dict) -> str | None:
                     if ovr_min > 0 and ovr < ovr_min:
                         continue
                     if ovr_max > 0 and ovr > ovr_max:
+                        continue
+                    edad_j = int(getattr(j, 'edad', 0) or 0)
+                    pot_j = int(getattr(j, 'potencial', 0) or 0) or ovr
+                    if (edad_min > 0 and edad_j < edad_min) or (edad_max > 0 and edad_j > edad_max):
+                        continue
+                    if (pot_min > 0 and pot_j < pot_min) or (pot_max > 0 and pot_j > pot_max):
                         continue
                     if SequenceMatcher is not None and search_name:
                         try:
@@ -512,7 +622,7 @@ def render(screen, estado: dict) -> str | None:
         draw_text(screen, f"DT: {estado.get('dt_nombre', 'Mister')}  |  Club: {mi_equipo.nombre}", (40, 65), size='sm', color='azul')
         
         # 3. Dibujar Panel de Información del Usuario
-        info_rect = pygame.Rect(840, 20, 400, 110)
+        info_rect = R_INFO
         draw_panel(screen, info_rect)
         draw_text(screen, "TU PRESUPUESTO:", (860, 35), size='sm', color='blanco')
         draw_text(screen, f"${mi_equipo.balance:,}", (860, 55), size='lg', color='verde')
@@ -569,6 +679,7 @@ def render(screen, estado: dict) -> str | None:
             or (estado.get('market_precio_max', 0) or 0) > 0
             or (estado.get('market_ovr_min', 0) or 0) > 0
             or (estado.get('market_ovr_max', 0) or 0) > 0
+            or any((estado.get(f'market_{c}', 0) or 0) > 0 for c in ('edad_min', 'edad_max', 'pot_min', 'pot_max'))
             or (estado.get('market_nombre_search') or '').strip()
         )
         filtros_btn = pygame.Rect(tab_x + 210, tab_y, 130, tab_h)
@@ -587,6 +698,7 @@ def render(screen, estado: dict) -> str | None:
         grid_start_x, grid_start_y = 40, 150
         
         card_rects = [] # Almacenar tuples (Rect, Jugador, Club)
+        card_areas = [] # v2.3.6: la tarjeta completa (clic = ver detalles del jugador)
         
         for i, (j, eq) in enumerate(jugadores_pagina):
             row = i // 2
@@ -608,7 +720,8 @@ def render(screen, estado: dict) -> str | None:
             
             # Atributos OVR
             draw_text(screen, f"OVR: {j.overall}", (x + 15, y + 60), size='md', color='dorado')
-            draw_text(screen, f"Moral: {j.moral}%", (x + 15, y + 80), size='sm', color='blanco')
+            draw_text(screen, f"Edad {getattr(j, 'edad', '?')}  ·  Pot {getattr(j, 'potencial', 0) or '?'}",
+                      (x + 15, y + 80), size='sm', color='blanco')
             
             if j.rasgo:
                 draw_text(screen, f"Rasgo: {j.rasgo}", (x + 15, y + 100), size='sm', color='dorado')
@@ -643,10 +756,12 @@ def render(screen, estado: dict) -> str | None:
 
             # Registrar el botón siempre para capturar clics y dar retroalimentación
             card_rects.append((btn_rect, j, eq, ok, motivo))
+            card_areas.append((rect, j, eq, ok, motivo))
+            if rect.collidepoint(mouse_pos) and not btn_hover:
+                draw_text(screen, "clic: ver ficha", (x + 15, y + card_h - 22), size='sm', color='azul', shadow=False)
 
         # 6. Dibujar Controles de Paginación
-        pag_rect_prev = pygame.Rect(40, 630, 100, 35)
-        pag_rect_next = pygame.Rect(680, 630, 100, 35)
+        pag_rect_prev, pag_rect_next = R_PAG_PREV, R_PAG_NEXT
         
         prev_hover = pag_rect_prev.collidepoint(mouse_pos)
         next_hover = pag_rect_next.collidepoint(mouse_pos)
@@ -659,7 +774,7 @@ def render(screen, estado: dict) -> str | None:
         draw_text(screen, f"Página {page+1} de {total_paginas}", (350, 638), size='md', color='blanco')
 
         # 7. Dibujar Panel Lateral: Historial y Logs de Fichajes
-        hist_rect = pygame.Rect(840, 145, 400, 430)
+        hist_rect = R_HISTORIAL
         draw_panel(screen, hist_rect)
         draw_text(screen, "HISTORIAL DE ESTA VENTANA", (860, 160), size='md', color='azul')
         
@@ -672,14 +787,23 @@ def render(screen, estado: dict) -> str | None:
         if not logs:
             draw_text(screen, "No hay transferencias registradas.", (860, log_y), size='sm', color='blanco')
         else:
-            for log_msg in logs[-8:]:
+            for log_msg in logs[-4:]:
                 # Truncar textos largos si es necesario
                 msg_recortado = log_msg[:42] + "..." if len(log_msg) > 42 else log_msg
                 draw_text(screen, f"• {msg_recortado}", (860, log_y), size='sm', color='verde')
                 log_y += 28
+        # v2.3.7: fichajes entre clubes de la IA (todas las ligas)
+        draw_text(screen, "FICHAJES", (860, 330), size='md', color='azul')
+        pygame.draw.line(screen, (0, 191, 255), (860, 355), (1220, 355), 1)
+        logs_ia = estado.get('mercado_ia_log') or []
+        if not logs_ia:
+            draw_text(screen, "Sin movimientos todavía.", (860, 366), size='sm', color='blanco')
+        for n, msg in enumerate(reversed(logs_ia[-7:])):
+            corto = msg.replace(" ficha a ", ": ").split(" de ")[0]
+            draw_text(screen, f"• {corto[:44]}", (860, 366 + n * 29), size='sm', color='dorado', shadow=False)
 
         # 8. Dibujar Botón de Salida en la parte inferior derecha
-        exit_rect = pygame.Rect(840, 595, 400, 70)
+        exit_rect = R_SALIR
         exit_hover = exit_rect.collidepoint(mouse_pos)
         draw_button(screen, exit_rect, "CERRAR MERCADO Y CONTINUAR", exit_hover)
 
@@ -699,7 +823,7 @@ def render(screen, estado: dict) -> str | None:
 
         # 9b. v0.8.2: dropdown "Por país" — opciones debajo del botón
         if estado.get('market_pais_dropdown_open'):
-            dd_items = ['Todos', 'Colombia', 'España', 'Inglaterra', 'Brasil', 'Argentina']
+            dd_items = ['Todos'] + [p['nombre'] for p in __import__('alpha_football.paises', fromlist=['PAISES']).PAISES]   # v3.7.0
             dd_x = pais_btn.x
             dd_y = pais_btn.bottom + 2
             item_h = 26
@@ -715,55 +839,27 @@ def render(screen, estado: dict) -> str | None:
                 draw_text(screen, nombre, (item_rect.x + 10, item_rect.y + 5), size='sm',
                           color='verde' if is_active else 'blanco')
 
-        # 9c. v0.8.2: panel FILTROS (overlay flotante)
+        # 9c. v0.8.2: panel FILTROS (overlay flotante). v2.3.8: + edad y potencial.
         if estado.get('market_filtros_open'):
-            panel_x, panel_y, panel_w, panel_h = 360, 145, 460, 290
-            panel_rect = pygame.Rect(panel_x, panel_y, panel_w, panel_h)
-            # Sombra semitransparente
+            campos, panel_rect, btn_limpiar, btn_cerrar = _rects_filtros()
+            panel_x, panel_y = panel_rect.x, panel_rect.y
             try:
-                sombra = pygame.Surface((panel_w + 12, panel_h + 12), pygame.SRCALPHA)
+                sombra = pygame.Surface((panel_rect.width + 12, panel_rect.height + 12), pygame.SRCALPHA)
                 sombra.fill((0, 0, 0, 130))
                 screen.blit(sombra, (panel_x - 6, panel_y - 6))
-            except Exception:
-                pass
+            except Exception as e_sombra:
+                logger.debug(f"No se pudo dibujar la sombra de filtros: {e_sombra}")
             draw_panel(screen, panel_rect)
-            try:
-                pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), panel_rect, width=2, border_radius=8)
-            except Exception:
-                pass
-            # Título
+            pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), panel_rect, width=2, border_radius=8)
             draw_text(screen, "FILTROS", (panel_x + 20, panel_y + 15), size='lg', color='dorado')
-            draw_text(screen, "(clic en un campo para escribir)", (panel_x + 120, panel_y + 22), size='sm', color='azul')
-
-            # Labels y campos
-            in_prec_min = pygame.Rect(panel_x + 160, panel_y + 60, 100, 28)
-            in_prec_max = pygame.Rect(panel_x + 290, panel_y + 60, 100, 28)
-            in_ovr_min = pygame.Rect(panel_x + 160, panel_y + 110, 60, 28)
-            in_ovr_max = pygame.Rect(panel_x + 250, panel_y + 110, 60, 28)
-            in_nombre = pygame.Rect(panel_x + 160, panel_y + 160, 270, 28)
-
-            draw_text(screen, "Precio mín $:", (panel_x + 20, panel_y + 67), size='sm', color='blanco')
-            self_box(screen, in_prec_min, str(estado.get('market_precio_min', 0) or 0) or '0',
-                     estado.get('market_filter_input') == 'precio_min')
-            draw_text(screen, "Precio máx $:", (panel_x + 270, panel_y + 67), size='sm', color='blanco')
-            self_box(screen, in_prec_max, str(estado.get('market_precio_max', 0) or 0) or '0',
-                     estado.get('market_filter_input') == 'precio_max')
-
-            draw_text(screen, "OVR mín:", (panel_x + 20, panel_y + 117), size='sm', color='blanco')
-            self_box(screen, in_ovr_min, str(estado.get('market_ovr_min', 0) or 0) or '0',
-                     estado.get('market_filter_input') == 'ovr_min')
-            draw_text(screen, "OVR máx:", (panel_x + 230, panel_y + 117), size='sm', color='blanco')
-            self_box(screen, in_ovr_max, str(estado.get('market_ovr_max', 0) or 0) or '0',
-                     estado.get('market_filter_input') == 'ovr_max')
-
-            draw_text(screen, "Nombre:", (panel_x + 20, panel_y + 167), size='sm', color='blanco')
-            self_box(screen, in_nombre, estado.get('market_nombre_search', '') or '',
-                     estado.get('market_filter_input') == 'nombre')
-            draw_text(screen, "(similitud)", (panel_x + 320, panel_y + 167), size='sm', color='azul')
-
-            # Botones LIMPIAR y CERRAR
-            btn_limpiar = pygame.Rect(panel_x + 60, panel_y + 215, 140, 40)
-            btn_cerrar = pygame.Rect(panel_x + 270, panel_y + 215, 140, 40)
+            draw_text(screen, "(clic en un campo para escribir)", (panel_x + 160, panel_y + 24), size='sm', color='azul')
+            for clave, (rect, etiqueta) in campos.items():
+                draw_text(screen, etiqueta, (rect.x - (140 if rect.x < panel_x + 200 else 136), rect.y + 7),
+                          size='sm', color='blanco')
+                valor = (estado.get('market_nombre_search', '') or '') if clave == 'nombre' \
+                    else str(estado.get(f'market_{clave}', 0) or 0)
+                self_box(screen, rect, valor, estado.get('market_filter_input') == clave)
+            draw_text(screen, "(similitud)", (campos['nombre'][0].right + 12, campos['nombre'][0].y + 7), size='sm', color='azul')
             draw_button(screen, btn_limpiar, "LIMPIAR", btn_limpiar.collidepoint(mouse_pos))
             draw_button(screen, btn_cerrar, "APLICAR Y CERRAR", btn_cerrar.collidepoint(mouse_pos))
 
@@ -855,6 +951,10 @@ def render(screen, estado: dict) -> str | None:
             draw_button(screen, btn_yes_rect, "CONFIRMAR", yes_hover)
             draw_button(screen, btn_no_rect, "CANCELAR", no_hover)
 
+        # 11b. v2.3.6: ficha del jugador (overlay) al hacer clic en su tarjeta
+        elif estado.get('market_detalle'):
+            _dibujar_ficha_mercado(screen, estado['market_detalle'], mi_equipo, mouse_pos)
+
         # 12. Capturar Eventos del Usuario de forma resiliente
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -891,6 +991,12 @@ def render(screen, estado: dict) -> str | None:
                                     nuevo = int(actual + ch) if actual != '0' else int(ch)
                                     estado[f'market_{fname}'] = nuevo
                     continue  # Consumir el evento para no procesarlo como click
+
+                # v2.3.6: con la ficha abierta, Esc la cierra (no sale del mercado).
+                if estado.get('market_detalle'):
+                    if event.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
+                        estado['market_detalle'] = None
+                    continue
 
                 # v2.3.3: navegacion por teclado del mercado (cuando NO hay input de filtro).
                 # ←→ cambia de pestana, Esc vuelve, Enter abre el dropdown de pais o filtros.
@@ -1043,6 +1149,8 @@ def render(screen, estado: dict) -> str | None:
                                 club_nombre = eq_orig.nombre if eq_orig else "Libre"
                                 estado['transfer_log'].append(f"Compra: {j_buy.nombre_completo} de {club_nombre} por ${precio:,}")
                                 estado['success_message'] = f"¡Fichaje exitoso de {j_buy.nombre_completo}!"
+                                from alpha_football.negociacion import avisar_llegada   # v4.4.0
+                                avisar_llegada(estado, j_buy)
                                 estado['success_timer'] = 180
                             except Exception as e_compra:
                                 print(f"Error procesando compra de jugador: {e_compra}", file=sys.stderr)
@@ -1056,6 +1164,24 @@ def render(screen, estado: dict) -> str | None:
                         estado['show_confirm_modal'] = False
                         estado['selected_player_to_buy'] = None
                         estado['selected_player_club'] = None
+                    continue
+
+                # B2. v2.3.6: ficha del jugador abierta: FICHAR / CERRAR / clic fuera = cerrar
+                if estado.get('market_detalle') and not estado.get('show_confirm_modal'):
+                    det = estado['market_detalle']
+                    btn_fichar_d, btn_cerrar_d, caja_d = _rects_ficha_mercado()
+                    if btn_fichar_d.collidepoint(event.pos):
+                        if det.get('ok'):
+                            estado['selected_player_to_buy'] = det['jugador']
+                            estado['selected_player_club'] = det.get('club')
+                            estado['selected_player_intl'] = (estado.get('market_tab') == 'Internacional')
+                            estado['show_confirm_modal'] = True
+                        else:
+                            estado['success_message'] = det.get('motivo', '')
+                            estado['success_timer'] = 200
+                        estado['market_detalle'] = None
+                    elif btn_cerrar_d.collidepoint(event.pos) or not caja_d.collidepoint(event.pos):
+                        estado['market_detalle'] = None
                     continue
 
                 # C. Manejar pestañas (Tabs)
@@ -1072,7 +1198,7 @@ def render(screen, estado: dict) -> str | None:
                         estado['market_filtros_open'] = False
                 elif estado.get('market_pais_dropdown_open'):
                     # Click dentro del dropdown pero fuera del botón = seleccionar opción
-                    dd_items = ['Todos', 'Colombia', 'España', 'Inglaterra', 'Brasil', 'Argentina']
+                    dd_items = ['Todos'] + [p['nombre'] for p in __import__('alpha_football.paises', fromlist=['PAISES']).PAISES]   # v3.7.0
                     dd_x = pais_btn.x
                     dd_y = pais_btn.bottom + 2
                     item_h = 26
@@ -1089,34 +1215,15 @@ def render(screen, estado: dict) -> str | None:
                     if estado['market_filtros_open']:
                         estado['market_pais_dropdown_open'] = False
                 elif estado.get('market_filtros_open'):
-                    # Click dentro del panel de filtros
-                    panel_x, panel_y, panel_w, panel_h = 360, 145, 460, 290
-                    panel_rect = pygame.Rect(panel_x, panel_y, panel_w, panel_h)
+                    # Click dentro del panel de filtros (v2.3.8: mismos rects que el dibujo)
+                    campos, panel_rect, btn_limpiar, btn_cerrar = _rects_filtros()
                     if panel_rect.collidepoint(event.pos):
-                        # Detectar sobre qué input se hizo click
-                        in_prec_min = pygame.Rect(panel_x + 160, panel_y + 60, 100, 28)
-                        in_prec_max = pygame.Rect(panel_x + 290, panel_y + 60, 100, 28)
-                        in_ovr_min = pygame.Rect(panel_x + 160, panel_y + 110, 60, 28)
-                        in_ovr_max = pygame.Rect(panel_x + 250, panel_y + 110, 60, 28)
-                        in_nombre = pygame.Rect(panel_x + 160, panel_y + 160, 270, 28)
-                        btn_limpiar = pygame.Rect(panel_x + 60, panel_y + 215, 140, 40)
-                        btn_cerrar = pygame.Rect(panel_x + 270, panel_y + 215, 140, 40)
-                        if in_prec_min.collidepoint(event.pos):
-                            estado['market_filter_input'] = 'precio_min'
-                        elif in_prec_max.collidepoint(event.pos):
-                            estado['market_filter_input'] = 'precio_max'
-                        elif in_ovr_min.collidepoint(event.pos):
-                            estado['market_filter_input'] = 'ovr_min'
-                        elif in_ovr_max.collidepoint(event.pos):
-                            estado['market_filter_input'] = 'ovr_max'
-                        elif in_nombre.collidepoint(event.pos):
-                            estado['market_filter_input'] = 'nombre'
+                        campo = next((c for c, (r, _e) in campos.items() if r.collidepoint(event.pos)), None)
+                        if campo:
+                            estado['market_filter_input'] = campo
                         elif btn_limpiar.collidepoint(event.pos):
-                            estado['market_precio_min'] = 0
-                            estado['market_precio_max'] = 0
-                            estado['market_ovr_min'] = 0
-                            estado['market_ovr_max'] = 0
-                            estado['market_nombre_search'] = ''
+                            for c in campos:
+                                estado[f'market_{c}' if c != 'nombre' else 'market_nombre_search'] = '' if c == 'nombre' else 0
                             estado['market_filter_input'] = None
                         elif btn_cerrar.collidepoint(event.pos):
                             estado['market_filtros_open'] = False
@@ -1133,6 +1240,14 @@ def render(screen, estado: dict) -> str | None:
                     estado['market_page'] += 1
 
                 # E. Botones "Fichar" en los Cards
+                boton_tocado = any(b.collidepoint(event.pos) for b, *_ in card_rects)
+                filtros_abiertos = estado.get('market_filtros_open') or estado.get('market_pais_dropdown_open')
+                if not boton_tocado and not filtros_abiertos:
+                    # v2.3.6: clic en el resto de la tarjeta = abrir la ficha del jugador
+                    for area, j, eq, ok, motivo in card_areas:
+                        if area.collidepoint(event.pos):
+                            estado['market_detalle'] = {'jugador': j, 'club': eq, 'ok': ok, 'motivo': motivo}
+                            break
                 for btn_rect, j, eq, ok, motivo in card_rects:
                     if btn_rect.collidepoint(event.pos):
                         if ok:
@@ -1159,6 +1274,7 @@ def render(screen, estado: dict) -> str | None:
                     estado.pop('market_pais_filtro', None)
                     estado.pop('_market_ligas_cache', None)  # v0.8.4: cache de ligas para fichajes entre ligas
                     estado.pop('free_agents_list', None)
+                    estado.pop('market_detalle', None)
                     return "volver"
 
     except Exception as general_error:

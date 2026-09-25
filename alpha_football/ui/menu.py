@@ -23,33 +23,23 @@ from alpha_football.ui.theme import (
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s')
 logger = logging.getLogger(__name__)
 
+# v3.7.0: países y ligas salen del registro central (alpha_football/paises.py).
+from alpha_football import paises as _paises
+
 # Definición de las ligas oficiales del juego
-LIGAS_DISPONIBLES = [
-    {'id': 'betplay', 'name': 'Liga BetPlay (Colombia)'},
-    {'id': 'laliga', 'name': 'LaLiga (España)'},
-    {'id': 'premier', 'name': 'Premier League (Inglaterra)'},
-    {'id': 'brasil', 'name': 'Brasileirão (Brasil)'},
-    {'id': 'argentina', 'name': 'Liga Argentina (Argentina)'}
-]
+LIGAS_DISPONIBLES = [{'id': p['liga_id'], 'name': f"{p['liga']} ({p['nombre']})"} for p in _paises.PAISES]
 
 # v2.3 (Fase 9): selector por PAÍS (no por liga). Cada país tiene 2 divisiones.
 # El flow es: País → División (1ª / 2ª) → Equipo.
-PAISES_DISPONIBLES = [
-    {'codigo': 'colombia',   'nombre': 'Colombia',   'liga_id': 'betplay',   'emoji': 'CO'},
-    {'codigo': 'espana',     'nombre': 'España',     'liga_id': 'laliga',    'emoji': 'ES'},
-    {'codigo': 'inglaterra', 'nombre': 'Inglaterra', 'liga_id': 'premier',   'emoji': 'EN'},
-    {'codigo': 'brasil',     'nombre': 'Brasil',     'liga_id': 'brasil',    'emoji': 'BR'},
-    {'codigo': 'argentina',  'nombre': 'Argentina',  'liga_id': 'argentina', 'emoji': 'AR'},
-]
+# v3.7.0: alias construido desde paises.PAISES (8 países).
+PAISES_DISPONIBLES = [{k: p[k] for k in ('codigo', 'nombre', 'liga_id', 'emoji')} for p in _paises.PAISES]
 
 # Mapeo de países a nombres de liga (usado por las pantallas de selección de país
 # y división para mostrar el subtítulo de cada país).
+# v3.7.0: alias; 'num_jornadas' ya no se usa para cargar (se deriva del nº de equipos).
 CONFIGURACION_LIGAS = {
-    'betplay':   {'nombre': 'Liga BetPlay Dimayor Parodia', 'num_jornadas': 14},
-    'laliga':    {'nombre': 'LaLiga EA Sports Parodia',     'num_jornadas': 10},
-    'premier':   {'nombre': 'Premier League Parodia',        'num_jornadas': 10},
-    'brasil':    {'nombre': 'Brasileirao Parodia',            'num_jornadas': 10},
-    'argentina': {'nombre': 'Liga Profesional Argentina Parodia', 'num_jornadas': 10},
+    p['liga_id']: {'nombre': p['liga'], 'num_jornadas': _paises.num_jornadas(_paises.EQUIPOS_POR_LIGA)}
+    for p in _paises.PAISES
 }
 
 # v0.7: nacionalidades sugeridas para el alta del DT (además del campo de texto libre).
@@ -57,6 +47,46 @@ NACIONALIDADES = [
     "Colombia", "Argentina", "España", "Brasil", "Inglaterra",
     "Italia", "Francia", "Alemania", "Uruguay", "México",
 ]
+
+def _leer_db_editada() -> dict:
+    """v3.7.0: base editada (alpha_football_edited_db.json) o {} si no hay / no se puede leer."""
+    import json
+    ruta = "alpha_football_edited_db.json"
+    if not os.path.exists(ruta):
+        return {}
+    try:
+        with open(ruta, "r", encoding="utf-8") as f:
+            db = json.load(f)
+        return db if isinstance(db, dict) else {}
+    except Exception as e_db:
+        logger.error(f"Error al leer la base editada '{ruta}': {e_db}")
+        return {}
+
+
+def _completar_con_datos(equipos: list, tipo: str, division: int, excluir=()) -> list:
+    """
+    v3.7.0: clubes de data/<tipo>.py (o segunda_<tipo>.py) cuyo nombre no esté en `equipos`
+    ni en `excluir`, los necesarios para llegar a 12. Devuelve solo los agregados (crudos).
+    Posicional: el editor guarda la liga en el orden de los datos y no agrega ni quita clubes,
+    así que los n editados son los n primeros de los datos (aunque se hayan renombrado:
+    'Real Vadrid' editado = 'Real Madriz' de los datos). Se agregan desde el índice n.
+    """
+    faltan = _paises.EQUIPOS_POR_LIGA - len(equipos)
+    if faltan <= 0:
+        return []
+    try:
+        datos = _paises.cargar_datos_liga(tipo, division)
+        if datos is None:
+            return []
+        usados = {getattr(eq, 'nombre', '') for eq in equipos} | set(excluir)
+        n = len(equipos)
+        orden = list(datos.equipos[n:]) + list(datos.equipos[:n])   # los primeros n, solo de respaldo
+        agregados = [eq for eq in orden if eq.nombre not in usados][:faltan]
+        return agregados
+    except Exception as e_merge:
+        logger.error(f"No se pudo completar '{tipo}' ({division}ª) con los datos: {e_merge}")
+        return []
+
 
 def load_league_teams(league_id: str):
     """
@@ -83,22 +113,30 @@ def load_league_teams(league_id: str):
                     except Exception as error_equipo:
                         logger.warning(f"No se pudo reconstruir un equipo individual desde JSON: {error_equipo}. Omitiendo equipo.")
                 
-                # Mapeo de nombres oficiales y jornadas predeterminadas por liga
-                config_liga = CONFIGURACION_LIGAS.get(league_id, {'nombre': f"Liga {league_id.upper()} Parodia", 'num_jornadas': 10})
-                
+                # v3.7.0: la base editada es la principal, pero se completa hasta 12 con los
+                # clubes de los datos cuyo nombre no esté (bases editadas con ligas de 6/8).
+                equipos_agregados = _completar_con_datos(lista_equipos_construidos, league_id, 1)
+
                 liga_cargada = Liga(
-                    nombre=config_liga['nombre'],
+                    nombre=_paises.nombre_liga(league_id, 1),   # v3.7.0: registro (con override)
                     tipo=league_id,
-                    equipos=lista_equipos_construidos,
-                    num_jornadas=config_liga['num_jornadas']
+                    equipos=lista_equipos_construidos + equipos_agregados,
+                    num_jornadas=_paises.num_jornadas(len(lista_equipos_construidos) + len(equipos_agregados))
                 )
+                if equipos_agregados:   # v3.7.0: solo los de los datos se escalan (la editada ya viene escalada)
+                    try:
+                        from alpha_football.market import escalar_presupuestos
+                        escalar_presupuestos(Liga(nombre='', tipo=league_id, equipos=equipos_agregados, num_jornadas=2))
+                    except Exception as e_bud_m:
+                        logger.error(f"No se pudieron escalar los clubes agregados a '{league_id}': {e_bud_m}")
                 # v0.8.9: la base editada es la PRINCIPAL del juego, así que la rama editada
                 # debe quedar igual de completa que la fresca: plantillas mínimas y, sobre todo,
                 # valor + potencial poblados (la editada se guarda con valor/potencial en 0 →
                 # sin esto reaparecía el bug "Valor $0" y el potencial salía igual al OVR).
                 # NO se re-escalan presupuestos: la editada ya los trae escalados.
                 try:
-                    from alpha_football.plantilla import expandir_liga
+                    from alpha_football.plantilla import expandir_liga, aplicar_techo_region
+                    aplicar_techo_region(league_id, liga_cargada.equipos)  # v2.3.6: Sudamérica máx. 81
                     expandir_liga(liga_cargada, 25, 40)
                 except Exception as e_exp_ed:
                     logger.warning(f"No se pudo expandir la liga editada '{league_id}': {e_exp_ed}")
@@ -114,25 +152,18 @@ def load_league_teams(league_id: str):
             logger.error(f"Error al leer base de datos editada '{ruta_db_editada}' para liga '{league_id}': {error_carga_json}. Procediendo con la importación dinámica estándar.")
 
     try:
-        # Importaciones dinámicas según la liga seleccionada si no se usó JSON
-        if league_id == 'betplay':
-            from alpha_football.data.betplay import get_liga
-        elif league_id == 'laliga':
-            from alpha_football.data.laliga import get_liga
-        elif league_id == 'premier':
-            from alpha_football.data.premier import get_liga
-        elif league_id == 'brasil':
-            from alpha_football.data.brasil import get_liga
-        elif league_id == 'argentina':
-            from alpha_football.data.argentina import get_liga
-        else:
+        # v3.7.0: importación dinámica desde el registro de países (data/<tipo>.py).
+        if league_id not in _paises.TIPOS_LIGA:
             raise ValueError(f"Liga no soportada por el sistema: {league_id}")
-            
-        liga_obj = get_liga()
+        liga_obj = _paises.cargar_datos_liga(league_id, 1)
+        if liga_obj is None:
+            logger.info(f"Liga '{league_id}' sin datos todavía: no se carga.")
+            return None   # v3.7.0: país sin datos → None (no un mock de BetPlay)
         if liga_obj is not None:
             # +5 suplentes por equipo (aplica a liga, carrera y amistoso, que pasan por aquí).
             try:
-                from alpha_football.plantilla import expandir_liga
+                from alpha_football.plantilla import expandir_liga, aplicar_techo_region
+                aplicar_techo_region(league_id, liga_obj.equipos)  # v2.3.6: Sudamérica máx. 81
                 expandir_liga(liga_obj, 25, 40)  # v2.3: 25 jugadores por equipo (cap 40)
             except Exception as e_suplentes:
                 logger.warning(f"No se pudieron agregar suplentes a la liga '{league_id}': {e_suplentes}")
@@ -225,22 +256,44 @@ def load_division_teams(country_id: str, division: int):
         return load_league_teams(liga_id)
     if division == 2:
         try:
-            mod = __import__(
-                f'alpha_football.data.segunda_{liga_id}',
-                fromlist=['get_liga']
-            )
-            liga_obj = mod.get_liga()
+            # v3.7.0: registro de países; None si el país aún no tiene datos de 2ª.
+            liga_obj = _paises.cargar_datos_liga(liga_id, 2)
             if liga_obj is None:
-                raise ValueError("El módulo de 2ª división retornó None.")
+                logger.info(f"2ª división de '{liga_id}' sin datos todavía: no se carga.")
+                return None
+            # v3.7.0: la 2ª editada en el editor (clave 'segunda_<tipo>') es la principal y se
+            # completa hasta 12 con los datos; sus presupuestos no se re-escalan.
+            nuevos = liga_obj.equipos
+            editados_2a = _leer_db_editada().get(_paises.clave_db(liga_id, 2))
+            if isinstance(editados_2a, list) and editados_2a:
+                from alpha_football.models import Equipo
+                equipos_ed = []
+                for d_eq in editados_2a:
+                    try:
+                        equipos_ed.append(Equipo.from_dict(d_eq))
+                    except Exception as e_eq2:
+                        logger.warning(f"Equipo de 2ª editado inválido en '{liga_id}': {e_eq2}")
+                if equipos_ed:
+                    nuevos = _completar_con_datos(equipos_ed, liga_id, 2)
+                    liga_obj.equipos = equipos_ed + nuevos
+                    liga_obj.num_jornadas = _paises.num_jornadas(len(liga_obj.equipos))
+                    for eq in liga_obj.equipos:
+                        eq.division = 2
+            liga_obj.nombre = _paises.nombre_liga(liga_id, 2)
             # Mismas pós-procesados que load_league_teams
             try:
-                from alpha_football.plantilla import expandir_liga
+                from alpha_football.plantilla import expandir_liga, aplicar_techo_region, acercar_segunda
+                aplicar_techo_region(liga_id, liga_obj.equipos)  # v2.3.6: Sudamérica máx. 81
+                liga_1a = load_league_teams(liga_id)             # v3.0.0: brecha 1ª-2ª de ~12
+                if liga_1a and liga_1a.equipos:
+                    acercar_segunda(liga_obj.equipos, liga_1a.equipos)
                 expandir_liga(liga_obj, 25, 40)
             except Exception as e_exp:
                 logger.warning(f"No se pudo expandir plantilla 2ª {liga_id}: {e_exp}")
             try:
                 from alpha_football.market import escalar_presupuestos, asignar_valores_iniciales
-                escalar_presupuestos(liga_obj)
+                from alpha_football.models import Liga
+                escalar_presupuestos(Liga(nombre='', tipo=liga_id, equipos=list(nuevos), num_jornadas=2))
                 asignar_valores_iniciales(liga_obj)
             except Exception as e_mkt:
                 logger.warning(f"No se pudo escalar/asignar valores 2ª {liga_id}: {e_mkt}")
@@ -250,6 +303,133 @@ def load_division_teams(country_id: str, division: int):
             logger.error(f"Error al cargar 2ª división de {liga_id}: {e}")
             return None
     return None
+
+
+TIPOS_LIGA = _paises.TIPOS_LIGA   # v3.7.0: alias del registro (8 países)
+
+
+from alpha_football.ui.foco import teclado_a_clic   # noqa: E402  v4.2.0: foco de teclado compartido
+
+
+def botones_main() -> list:
+    """v4.2.0: botones del menú inicial como (texto, rect, acción), en orden de foco de teclado."""
+    return [("NUEVA PARTIDA", R_MENU_BOTONES['nueva'], 'nueva'),
+            ("CARGAR PARTIDA", R_MENU_BOTONES['cargar'], 'cargar'),
+            ("PARTIDO AMISTOSO", R_MENU_BOTONES['amistoso'], 'amistoso'),
+            ("MODO EDICIÓN", R_MENU_BOTONES['editor'], 'editor'),
+            ("OPCIONES", R_MENU_BOTONES['opciones'], 'opciones'),
+            ("SALIR", R_MENU_BOTONES['salir'], 'salir')]
+
+
+def rects_paises() -> list:
+    """v3.7.0: grilla de 8 países del alta / amistoso (4 filas × 2 columnas, orden por filas)."""
+    x0, y0, w, h, gap_x, gap_y = 100, 270, 262, 58, 8, 8   # cabe a la izquierda del panel derecho (x≈640)
+    return [pygame.Rect(x0 + (i % 2) * (w + gap_x), y0 + (i // 2) * (h + gap_y), w, h)
+            for i in range(len(PAISES_DISPONIBLES))]
+
+
+# v3.9.0: rects del menú expuestos (los usa la ayuda de la tecla H); render los usa tal cual.
+R_MENU_BOTONES = {
+    'nueva': pygame.Rect(100, 256, 320, 50), 'cargar': pygame.Rect(100, 312, 320, 50),
+    'amistoso': pygame.Rect(100, 368, 320, 50), 'editor': pygame.Rect(100, 424, 320, 50),
+    'opciones': pygame.Rect(100, 480, 320, 50), 'salir': pygame.Rect(100, 536, 320, 50),
+}
+R_PANEL_DERECHO = pygame.Rect(640, 100, 520, 520)
+R_VOLVER_ABAJO = pygame.Rect(540, 640, 200, 50)       # país / división (alta y amistoso)
+R_INFO_PAIS = pygame.Rect(740, 280, 460, 290)
+R_INFO_CLUB = pygame.Rect(760, 220, 420, 380)
+R_DT_NOMBRE = pygame.Rect(100, 272, 430, 44)
+R_DT_NAC_LIBRE = pygame.Rect(560, 365, 320, 42)
+R_DT_CONFIRMAR = pygame.Rect(560, 540, 320, 52)
+R_DT_VOLVER = pygame.Rect(100, 600, 200, 48)
+R_CARGA_VOLVER = pygame.Rect(100, 600, 200, 50)
+R_EQUIPO_VOLVER = pygame.Rect(100, 610, 180, 48)     # v3.9.0: antes y=590 pisaba la 6ª fila
+R_AMIS_OTRO_PAIS = pygame.Rect(340, 620, 230, 50)   # v3.9.0: bajo la 6ª fila de clubes (antes y=600 la pisaba)
+R_AMIS_VOLVER = pygame.Rect(100, 620, 200, 50)
+
+
+def rects_division(amistoso: bool = False) -> tuple:
+    """v3.9.0: botones 1ª y 2ª división (alta: 540×134; amistoso: 440×110)."""
+    btn_w, btn_h = (440, 110) if amistoso else (540, 134)
+    cx = SCREEN_W // 2
+    ys = (290, 410) if amistoso else (285, 432)
+    return tuple(pygame.Rect(cx - btn_w // 2, y, btn_w, btn_h) for y in ys)
+
+
+def rects_equipos(n: int, amistoso: bool = False) -> list:
+    """v3.9.0: grilla de clubes de 2 columnas (alta: desde y=220 cada 65; amistoso: desde y=230)."""
+    y0 = 230 if amistoso else 220
+    return [pygame.Rect(100 + (i % 2) * 330, y0 + (i // 2) * 65, 300, 50) for i in range(n)]
+
+
+def rects_nacionalidades() -> list:
+    """v3.9.0: botones de nacionalidades sugeridas del alta del DT (2 columnas)."""
+    return [pygame.Rect(100 + (i % 2) * 215, 365 + (i // 2) * 46, 200, 38) for i in range(len(NACIONALIDADES))]
+
+
+def rects_slots_carga() -> list:
+    """v3.9.0: (slot, botón BORRAR) de los 5 slots de CARGAR PARTIDA."""
+    return [(pygame.Rect(100, 245 + i * 64, 560, 54), pygame.Rect(1080, 245 + i * 64, 100, 54)) for i in range(5)]
+
+
+def _paso_pais(idx: int, key) -> int:
+    """v3.7.0: navegación por teclado en la grilla (←→ columna, ↑↓ fila)."""
+    n = len(PAISES_DISPONIBLES) or 1
+    paso = {pygame.K_LEFT: -1, pygame.K_RIGHT: 1, pygame.K_UP: -2, pygame.K_DOWN: 2}.get(key, 0)
+    return (int(idx) + paso) % n
+
+
+def texto_division(tipo: str, division: int) -> str:
+    """v3.7.0: "12 equipos · 22 jornadas" (calculado; todas las ligas son de 12)."""
+    n = _paises.EQUIPOS_POR_LIGA
+    return f"{n} equipos · {_paises.num_jornadas(n)} jornadas"
+
+
+def sincronizar_nombres_ligas(primeras: dict, segunda: dict) -> None:
+    """v3.7.0: liga.nombre = el del registro / editor (lo muestran hub, resumen, finanzas...)."""
+    for div, mapa in ((1, primeras or {}), (2, segunda or {})):
+        for tipo, liga in mapa.items():
+            try:
+                if liga is not None:
+                    liga.nombre = _paises.nombre_liga(tipo, div)
+            except Exception as e_nom:
+                logger.error(f"No se pudo actualizar el nombre de la liga {tipo}: {e_nom}")
+
+
+def _ligas_por_division(liga_user, primeras: dict, segunda: dict):
+    """
+    v2.3.5: completa los mapas {tipo: Liga} de 1ª y 2ª división de los 5 países.
+    - La liga del usuario ocupa su lugar (mismo objeto, nunca una copia aparte).
+    - Las que falten (carrera nueva o save viejo) se cargan desde los datos.
+    - Saves viejos: se quitan de la otra división del país los equipos que ya están en la del user.
+    """
+    div_user = getattr(liga_user, 'division', 1) if liga_user else 1
+    tipo_user = getattr(liga_user, 'tipo', None)
+    for tipo in TIPOS_LIGA:
+        if liga_user is not None and tipo == tipo_user:
+            (primeras if div_user == 1 else segunda)[tipo] = liga_user
+        if tipo not in primeras:
+            liga_1a = load_league_teams(tipo)
+            if liga_1a:
+                liga_1a.division = 1
+                primeras[tipo] = liga_1a
+        if tipo not in segunda:
+            liga_2a = load_division_teams(tipo, 2)
+            if liga_2a:
+                segunda[tipo] = liga_2a
+        if liga_user is not None and tipo == tipo_user:
+            otra = (segunda if div_user == 1 else primeras).get(tipo)
+            if otra is not None:
+                ids_user = {e.id for e in liga_user.equipos}
+                otra.equipos = [e for e in otra.equipos if e.id not in ids_user]
+    sincronizar_nombres_ligas(primeras, segunda)   # v3.7.0: nombres del editor también en saves
+    try:  # v3.1.0: clásicos (saves viejos y carreras nuevas; no pisa los editados)
+        from alpha_football.data.clasicos import asignar_rivales
+        asignar_rivales([e for l in list(primeras.values()) + list(segunda.values())
+                         if l is not None for e in l.equipos])
+    except Exception as e_cl:
+        logger.error(f"No se pudieron asignar los clásicos: {e_cl}")
+    return primeras, segunda
 
 
 def _dibujar_balon_decorativo(screen: pygame.Surface, cx: int, cy: int, radio: int, angulo: float):
@@ -636,7 +816,7 @@ def _dibujar_panel_derecho(screen: pygame.Surface, estado: dict):
     para equilibrar visualmente el menú principal alineado a la izquierda.
     """
     try:
-        panel_rect = pygame.Rect(640, 100, 520, 520)
+        panel_rect = R_PANEL_DERECHO
         
         # Dibujar panel con esquinas redondeadas y brillo dual
         try:
@@ -809,61 +989,64 @@ def _aplicar_estado_cargado(estado: dict, loaded) -> bool:
         estado['dt_nombre'] = getattr(loaded, 'dt_nombre', "")
         estado['dt_nacionalidad'] = getattr(loaded, 'dt_nacionalidad', "")
         
-        # Restaurar estado de la copa internacional
-        if getattr(loaded, 'copa_tipo', None) is not None:
-            estado['copa_tipo'] = loaded.copa_tipo
-            estado['copa_fase_actual'] = loaded.copa_fase_actual
-            estado['copa_grupo_standing'] = list(loaded.copa_grupo_standing)
-            estado['copa_bracket'] = dict(loaded.copa_bracket)
-            estado['copa_grupo_partidos'] = list(loaded.copa_grupo_partidos)
-            estado['copa_jornada_grupo'] = loaded.copa_jornada_grupo
-            estado['copa_tab'] = loaded.copa_tab
-            estado['copa_grupos'] = dict(getattr(loaded, 'copa_grupos', {}))
-            estado['copa_grupos_standings'] = dict(getattr(loaded, 'copa_grupos_standings', {}))
-            estado['copa_bracket_otros'] = dict(getattr(loaded, 'copa_bracket_otros', {}))
-
-        # v0.8.7.5: restaurar estado de clasificación a copa. Solo se setea si el save
-        # lo trae (no es None); los saves viejos sin este dato dejan la clave ausente y
-        # los consumidores caen al default True (clasificado), preservando su comportamiento.
-        if getattr(loaded, 'copa_user_en_copa', None) is not None:
-            estado['copa_user_en_copa'] = loaded.copa_user_en_copa
-        if getattr(loaded, 'copa_clasificado', None) is not None:
-            estado['copa_clasificado'] = loaded.copa_clasificado
+        # v3.8.0: las copas viven en datos_carrera['copas'] (motor de competiciones). Un save viejo
+        # con la copa vieja a mitad de temporada deja sus claves para que el hub la regenere
+        # (copa_screen.sincronizar_copa_user). Las claves derivadas las recalcula el hub.
+        if getattr(loaded, 'copa_tipo', None) is not None and not (getattr(loaded, 'datos_carrera', None) or {}).get('copas'):
+            estado['copa_fase_actual'] = loaded.copa_fase_actual or 'grupos'
+            estado['copa_bracket'] = dict(loaded.copa_bracket or {})
         _motivo_cargado = getattr(loaded, 'copa_clasificado_motivo', '') or ''
         if _motivo_cargado:
             estado['copa_clasificado_motivo'] = _motivo_cargado
-        if getattr(loaded, 'copa_mejor_fase_temp', None) is not None:
-            estado['copa_mejor_fase_temp'] = loaded.copa_mejor_fase_temp
 
         # v2.3 (Fase 8): restaurar división del usuario (1 o 2) para saber en qué
         # división quedó el user tras el último swap de promoción/relegación.
-        estado['liga_usuario_division'] = int(getattr(loaded, 'liga_usuario_division', 1) or 1)
+        # v2.3.5: la división del usuario sale de su propia liga (siempre se guarda);
+        # los saves viejos sin el campo ya no quedan en 1ª por error.
+        estado['liga_usuario_division'] = int(getattr(liga, 'division', 0) or getattr(loaded, 'liga_usuario_division', 1) or 1)
 
-        # v2.3 (Fase 8): compatibilidad con saves viejos sin 2ª división.
-        # Cargamos las 5 ligas de 2ª división on-demand (no las serializamos
-        # para evitar saves enormes). Si el save las trae, las respetamos.
+        # v2.3.5: las 10 ligas (1ª y 2ª de los 5 países) vienen del save; la del user
+        # ES su liga (mismo objeto). Los saves viejos regeneran las que falten.
         try:
-            segunda_cargada = getattr(loaded, 'segunda_division', None) or {}
-            if isinstance(segunda_cargada, dict) and len(segunda_cargada) == 5:
-                estado['segunda_division'] = segunda_cargada
-                logger.info("2ª división restaurada desde save (5 ligas).")
-            else:
-                # Save viejo: cargar las 5 desde los módulos
-                segunda_nueva = {}
-                for tipo in ('betplay', 'laliga', 'premier', 'brasil', 'argentina'):
-                    try:
-                        mod = __import__(
-                            f'alpha_football.data.segunda_{tipo}',
-                            fromlist=['get_liga']
-                        )
-                        segunda_nueva[tipo] = mod.get_liga()
-                    except Exception as e_mod:
-                        logger.warning(f"No se pudo cargar 2ª división {tipo}: {e_mod}")
-                estado['segunda_division'] = segunda_nueva
-                logger.info(f"2ª división cargada on-demand: {list(segunda_nueva.keys())}")
-        except Exception as e_segunda:
-            logger.error(f"Error cargando 2ª división on-demand: {e_segunda}")
+            primeras, segunda = _ligas_por_division(
+                liga,
+                dict(getattr(loaded, 'primera_division', None) or {}),
+                dict(getattr(loaded, 'segunda_division', None) or {}),
+            )
+            estado['primera_division'] = primeras
+            estado['segunda_division'] = segunda
+            from alpha_football.nombres import desduplicar   # v4.4.0: sin nombres repetidos
+            desduplicar(estado)
+        except Exception as e_divs:
+            logger.error(f"Error preparando 1ª/2ª divisiones: {e_divs}")
+            estado['primera_division'] = {}
             estado['segunda_division'] = {}
+
+        # v2.3.6: clasificación real a copas + historial del Balón de Oro
+        estado['datos_carrera'] = dict(getattr(loaded, 'datos_carrera', None) or {})
+        # v2.3.7: valores según la región de cada liga (antes los de las ligas de fondo
+        # sudamericanas salían a precio europeo) y, en saves viejos, presupuestos
+        # realistas para los clubes de la IA (el del user no se toca).
+        try:
+            from alpha_football.market import registrar_regiones, calcular_valor
+            from alpha_football.mercado_ia import ligas_de_la_partida, asignar_presupuestos_realistas
+            registrar_regiones(estado)
+            for liga_x, _t, _d in ligas_de_la_partida(estado):
+                for eq in liga_x.equipos:
+                    for j in eq.jugadores:
+                        j.valor = calcular_valor(j)
+            if not estado['datos_carrera'].get('presupuestos_v237'):
+                asignar_presupuestos_realistas(estado, incluir_usuario=False)
+                estado['datos_carrera']['presupuestos_v237'] = True
+            # v2.3.8: nacionalidades (para los regens) y más techo para los jóvenes
+            from alpha_football.retiros import asignar_nacionalidades
+            asignar_nacionalidades(estado)
+            if not estado['datos_carrera'].get('potencial_v238'):
+                from alpha_football.desarrollo import migrar_potencial_jovenes
+                migrar_potencial_jovenes([e for l, _t, _d in ligas_de_la_partida(estado) for e in l.equipos])
+                estado['datos_carrera']['potencial_v238'] = True
+        except Exception as e_eco:
+            logger.error(f"No se pudo preparar la economía de la partida: {e_eco}")
 
         if slot:
             estado['slot_activo'] = slot
@@ -891,6 +1074,9 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
     # 1. Inicialización y validación del paso actual del menú
     if 'menu_step' not in estado:
         estado['menu_step'] = 'main'
+    # v3.9.0: con el foco en el nombre / nacionalidad del DT, H se escribe (no abre la ayuda)
+    estado['texto_activo'] = (estado.get('menu_step') == 'dt_setup'
+                              and estado.get('dt_focus', 'name') in ('name', 'nac'))
         
     # Inicialización del audio si no se ha iniciado
     if not estado.get('music_started', False):
@@ -937,47 +1123,51 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         _dibujar_logo_principal(screen, 100, 100, estado)
         draw_text(screen, "La revolución táctica pixelada", (100, 215), size='sm', color='azul')
 
-        # Rectángulos de los botones principales alineados a la izquierda
-        btn_nueva_rect = pygame.Rect(100, 256, 320, 50)
-        btn_cargar_rect = pygame.Rect(100, 312, 320, 50)
-        btn_amistoso_rect = pygame.Rect(100, 368, 320, 50)
-        btn_editor_rect = pygame.Rect(100, 424, 320, 50)
-        btn_opciones_rect = pygame.Rect(100, 480, 320, 50)
-        btn_salir_rect = pygame.Rect(100, 536, 320, 50)
-
-        # Dibujar botones premium
-        _dibujar_boton_premium(screen, btn_nueva_rect, "NUEVA PARTIDA", btn_nueva_rect.collidepoint(mouse_pos))
-        _dibujar_boton_premium(screen, btn_cargar_rect, "CARGAR PARTIDA", btn_cargar_rect.collidepoint(mouse_pos))
-        _dibujar_boton_premium(screen, btn_amistoso_rect, "PARTIDO AMISTOSO", btn_amistoso_rect.collidepoint(mouse_pos))
-        _dibujar_boton_premium(screen, btn_editor_rect, "MODO EDICIÓN", btn_editor_rect.collidepoint(mouse_pos))
-        _dibujar_boton_premium(screen, btn_opciones_rect, "OPCIONES", btn_opciones_rect.collidepoint(mouse_pos))
-        _dibujar_boton_premium(screen, btn_salir_rect, "SALIR", btn_salir_rect.collidepoint(mouse_pos))
+        # v4.2.0: botones con foco de teclado (↑ ↓ / Tab mueven, Enter elige; el mouse mueve el foco)
+        botones = botones_main()
+        foco = int(estado.get('menu_foco', 0) or 0) % len(botones)
+        for i, (_t, r, _a) in enumerate(botones):
+            if r.collidepoint(mouse_pos) and estado.get('_menu_mouse_prev') != mouse_pos:
+                foco = i
+        estado['_menu_mouse_prev'] = mouse_pos
+        accion = None
+        for ev in key_events:
+            if ev.key in (pygame.K_DOWN, pygame.K_TAB):
+                foco = (foco + 1) % len(botones)
+            elif ev.key == pygame.K_UP:
+                foco = (foco - 1) % len(botones)
+            elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                accion = botones[foco][2]
+        estado['menu_foco'] = foco
+        for i, (texto, r, _a) in enumerate(botones):
+            _dibujar_boton_premium(screen, r, texto, i == foco)
 
         # Dibujar panel de ambientación a la derecha
         _dibujar_panel_derecho(screen, estado)
 
         # Lógica de clics
         if click_pos:
-            if btn_nueva_rect.collidepoint(click_pos):
-                estado['menu_step'] = 'select_country'
-            elif btn_cargar_rect.collidepoint(click_pos):
-                estado['menu_step'] = 'load_slots'   # Fase 2: selector de slots
-            elif btn_amistoso_rect.collidepoint(click_pos):
-                # v2.3 (Fase 9): País → División → Equipo. Igual que nueva partida pero
-                # con flag de amistoso.
-                estado['amis_local'] = None
-                estado['amis_visitante'] = None
-                estado['amis_phase'] = 'local'
-                estado['menu_step'] = 'amistoso_country'
-            elif btn_editor_rect.collidepoint(click_pos):
-                estado['current_screen'] = 'edit_screen'
-                return 'edit_screen'
-            elif btn_opciones_rect.collidepoint(click_pos):
-                estado['options_return'] = 'menu'
-                estado['current_screen'] = 'options_screen'
-                return 'options_screen'
-            elif btn_salir_rect.collidepoint(click_pos):
-                pygame.event.post(pygame.event.Event(pygame.QUIT))
+            accion = next((a for _t, r, a in botones if r.collidepoint(click_pos)), accion)
+        if accion == 'nueva':
+            estado['menu_step'] = 'select_country'
+        elif accion == 'cargar':
+            estado['menu_step'] = 'load_slots'   # Fase 2: selector de slots
+        elif accion == 'amistoso':
+            # v2.3 (Fase 9): País → División → Equipo. Igual que nueva partida pero
+            # con flag de amistoso.
+            estado['amis_local'] = None
+            estado['amis_visitante'] = None
+            estado['amis_phase'] = 'local'
+            estado['menu_step'] = 'amistoso_country'
+        elif accion == 'editor':
+            estado['current_screen'] = 'edit_screen'
+            return 'edit_screen'
+        elif accion == 'opciones':
+            estado['options_return'] = 'menu'
+            estado['current_screen'] = 'options_screen'
+            return 'options_screen'
+        elif accion == 'salir':
+            pygame.event.post(pygame.event.Event(pygame.QUIT))
 
         # Render de errores temporales
         if 'menu_error' in estado:
@@ -995,7 +1185,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         draw_text(screen, "Cada país tiene 1ª y 2ª División. Elige dónde empezar.",
                   (100, 235), size='sm', color='azul')
         # Hint de teclado (nuevo en esta tanda)
-        draw_text(screen, "[↑ ↓ Enter = elegir país · Esc = volver]",
+        draw_text(screen, "[Flechas = mover · Enter = elegir país · Esc = volver]",
                   (100, 660), size='sm', color='azul')
 
         # v2.3 (Fase 9 bugfix): botones más compactos y posicionados para que
@@ -1011,10 +1201,8 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         # Resaltado por teclado: tiene prioridad sobre el hover del mouse.
         # ↑/↓ mueven el índice, Enter selecciona, Esc vuelve.
         for ev in key_events:
-            if ev.key == pygame.K_UP:
-                estado['pais_keyboard_idx'] = (estado['pais_keyboard_idx'] - 1) % len(PAISES_DISPONIBLES)
-            elif ev.key == pygame.K_DOWN:
-                estado['pais_keyboard_idx'] = (estado['pais_keyboard_idx'] + 1) % len(PAISES_DISPONIBLES)
+            if ev.key in (pygame.K_UP, pygame.K_DOWN, pygame.K_LEFT, pygame.K_RIGHT):   # v3.7.0: grilla
+                estado['pais_keyboard_idx'] = _paso_pais(estado['pais_keyboard_idx'], ev.key)
             elif ev.key == pygame.K_RETURN or ev.key == pygame.K_SPACE:
                 # Simula click en el país resaltado por teclado
                 idx = estado['pais_keyboard_idx']
@@ -1032,14 +1220,14 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 elif ev.y < 0:
                     estado['pais_keyboard_idx'] = (estado['pais_keyboard_idx'] + 1) % len(PAISES_DISPONIBLES)
 
-        volver_rect = pygame.Rect(540, 640, 200, 50)  # Esquina inferior derecha
+        volver_rect = R_VOLVER_ABAJO  # Esquina inferior derecha
         hover_volver = volver_rect.collidepoint(mouse_pos)
 
         # Dibujar los países (botones con emoji-pill + nombre grande)
         hovered_pais = None
         kb_idx = int(estado.get('pais_keyboard_idx', 0))
         for i, pais in enumerate(PAISES_DISPONIBLES):
-            btn_rect = pygame.Rect(120, start_y + i * (btn_h + spacing_y), btn_w, btn_h)
+            btn_rect = rects_paises()[i]   # v3.7.0: grilla 4×2
             hover = btn_rect.collidepoint(mouse_pos)
             kb_selected = (i == kb_idx)
             if hover or kb_selected:
@@ -1065,9 +1253,9 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     borde_w = 2
                 pygame.draw.rect(screen, borde, btn_rect, width=borde_w, border_radius=8)
                 # Pill del emoji a la izquierda
-                pill = pygame.Rect(btn_rect.x + 8, btn_rect.y + 6, 48, btn_rect.height - 12)
+                pill = pygame.Rect(btn_rect.x + 6, btn_rect.y + 6, 38, btn_rect.height - 12)   # v3.7.0: más angosta
                 pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), pill, border_radius=6)
-                draw_text(screen, pais['emoji'], (pill.x + 8, pill.y + 12), size='md',
+                draw_text(screen, pais['emoji'], (pill.x + 4, pill.y + 12), size='md',
                           color='azul', shadow=False)
                 # Indicador de selección por teclado
                 if kb_selected and not hover:
@@ -1077,12 +1265,12 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 pass
             # Nombre del país en grande
             draw_text(screen, pais['nombre'].upper(),
-                      (btn_rect.x + 70, btn_rect.y + 8), size='lg',
+                      (btn_rect.x + 52, btn_rect.y + 6), size='lg',
                       color='dorado' if (kb_selected and not hover) else ('verde' if hover else 'blanco'))
             # Subtítulo: nombre de la liga
-            config = CONFIGURACION_LIGAS.get(pais['liga_id'], {})
-            draw_text(screen, config.get('nombre', pais['liga_id']),
-                      (btn_rect.x + 70, btn_rect.y + 36), size='sm', color='azul')
+            nombre_1a = _paises.nombre_liga(pais['liga_id'], 1)   # v3.7.0: con el nombre del editor
+            draw_text(screen, nombre_1a if len(nombre_1a) <= 23 else nombre_1a[:22] + "…",
+                      (btn_rect.x + 52, btn_rect.y + 34), size='sm', color='azul')
 
             if click_pos and btn_rect.collidepoint(click_pos):
                 estado['selected_country_id'] = pais['codigo']
@@ -1090,18 +1278,19 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 estado['menu_step'] = 'select_division'
 
         # Panel derecho con info del país hover
-        panel_rect = pygame.Rect(740, 280, 460, 290)
+        panel_rect = R_INFO_PAIS
         draw_panel(screen, panel_rect)
         if hovered_pais:
             try:
-                draw_text(screen, f"🌍 {hovered_pais['nombre'].upper()}", (760, 300),
+                draw_text(screen, hovered_pais['nombre'].upper(), (760, 300),
                           size='xl', color='dorado')
-                draw_text(screen, f"Liga: {CONFIGURACION_LIGAS.get(hovered_pais['liga_id'], {}).get('nombre', '')}",
-                          (760, 360), size='sm', color='verde')
-                draw_text(screen, f"1ª División: 8 equipos · 14 jornadas · Copa Internacional",
-                          (760, 395), size='sm', color='blanco')
-                draw_text(screen, f"2ª División: 6 equipos · 10 jornadas · Ascenso/Descenso",
-                          (760, 420), size='sm', color='blanco')
+                _tid = hovered_pais['liga_id']   # v3.7.0: nombres del editor + equipos/jornadas calculados
+                draw_text(screen, f"1ª: {_paises.nombre_liga(_tid, 1)[:40]}", (760, 350), size='sm', color='verde')
+                draw_text(screen, f"    {texto_division(_tid, 1)} · Copa Internacional",
+                          (760, 374), size='sm', color='blanco')
+                draw_text(screen, f"2ª: {_paises.nombre_liga(_tid, 2)[:40]}", (760, 408), size='sm', color='verde')
+                draw_text(screen, f"    {texto_division(_tid, 2)} · Ascenso/Descenso",
+                          (760, 432), size='sm', color='blanco')
                 draw_text(screen, "Elige tu división en la siguiente pantalla.",
                           (760, 470), size='md', color='dorado')
             except Exception:
@@ -1117,8 +1306,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         if click_pos and volver_rect.collidepoint(click_pos):
             estado['menu_step'] = 'main'
 
-        # Panel de ambientación a la derecha
-        _dibujar_panel_derecho(screen, estado)
+        # v3.9.1: sin el "Diario de estrategia" aquí: se dibujaba encima del panel de info del país.
 
         # Mostrar error si existe
         if 'menu_error' in estado:
@@ -1138,13 +1326,14 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         if pais:
             draw_text(screen, f"País: [{pais['emoji']}] {pais['nombre'].upper()}",
                       (100, 235), size='md', color='dorado')
+        _tipo_div = pais['liga_id'] if pais else ''   # v3.7.0
         # Hint de teclado
         draw_text(screen, "[↑ ↓ Enter = elegir · Esc = volver]",
                   (100, 660), size='sm', color='azul')
 
         # v2.3 (Fase 9 bugfix): botón VOLVER reubicado para no chocar
         # con los botones de división y visible a la derecha.
-        volver_rect = pygame.Rect(540, 640, 200, 50)
+        volver_rect = R_VOLVER_ABAJO
         hover_volver = volver_rect.collidepoint(mouse_pos)
 
         # Resaltado por teclado: el índice activo se persiste en estado.
@@ -1152,10 +1341,10 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             estado['division_keyboard_idx'] = 0
 
         # 2 botones grandes centrados
-        btn_w, btn_h = 540, 110
+        btn_w, btn_h = 540, 134   # v3.7.0: las 3 líneas de info no se salían del botón
         cx = SCREEN_W // 2
-        btn_1a = pygame.Rect(cx - btn_w // 2, 290, btn_w, btn_h)
-        btn_2a = pygame.Rect(cx - btn_w // 2, 420, btn_w, btn_h)
+        btn_1a = pygame.Rect(cx - btn_w // 2, 285, btn_w, btn_h)
+        btn_2a = pygame.Rect(cx - btn_w // 2, 432, btn_w, btn_h)
 
         # Procesar teclado: ↑↓ mueve el índice, Enter selecciona, Esc vuelve.
         for ev in key_events:
@@ -1192,7 +1381,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 pass
             draw_text(screen, titulo, (rect.x + 22, rect.y + 14), size='xl', color=color_acc)
             for j, line in enumerate(info_lines):
-                draw_text(screen, line, (rect.x + 22, rect.y + 56 + j * 22),
+                draw_text(screen, line, (rect.x + 22, rect.y + 62 + j * 22),
                           size='sm', color='blanco')
 
         _draw_div_btn(
@@ -1201,8 +1390,8 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             btn_1a.collidepoint(mouse_pos) or (kb_idx == 0 and not click_pos),
             [
                 "La elite del país. Juega la Copa Internacional.",
-                "8 equipos · 14 jornadas · Premios grandes",
-                "Solo top 3 clasifica a Copa. Riesgo de descenso.",
+                f"{texto_division(_tipo_div, 1)} · Premios grandes",   # v3.7.0
+                "Los primeros clasifican a Copa. Riesgo de descenso.",   # v3.7.0: el cupo varía por país
             ]
         )
         _draw_div_btn(
@@ -1211,7 +1400,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             btn_2a.collidepoint(mouse_pos) or (kb_idx == 1 and not click_pos),
             [
                 "El camino hacia la gloria. Ascenso/Descenso.",
-                "6 equipos · 10 jornadas · Premios duplicados",
+                f"{texto_division(_tipo_div, 2)} · Premios duplicados",   # v3.7.0
                 "Top 2 sube a 1ª · Bottom 2 baja a 3ª (futuro).",
             ]
         )
@@ -1268,18 +1457,21 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         spacing_y = 15
 
         hovered_team = None
+        # v4.2.0: teclado (flechas + Enter; ESC vuelve)
+        rects_eq = [pygame.Rect(grid_x + (i % 2) * (col_w + spacing_x), grid_y + (i // 2) * (row_h + spacing_y),
+                                col_w, row_h) for i in range(len(equipos))]
+        foco_eq, clic_tec = teclado_a_clic(estado, 'menu_foco_equipo', rects_eq, key_events, columnas=2,
+                                           esc_rect=R_EQUIPO_VOLVER)
+        click_pos = clic_tec or click_pos
+        if equipos and 0 <= foco_eq < len(equipos) and not any(r.collidepoint(mouse_pos) for r in rects_eq):
+            hovered_team = equipos[foco_eq]
 
         # Renderizar cada botón de equipo
         for i, equipo in enumerate(equipos):
-            col = i % 2
-            row = i // 2
-            bx = grid_x + col * (col_w + spacing_x)
-            by = grid_y + row * (row_h + spacing_y)
-            
-            btn_rect = pygame.Rect(bx, by, col_w, row_h)
-            hover_eq = btn_rect.collidepoint(mouse_pos)
-            
-            if hover_eq:
+            btn_rect = rects_eq[i]
+            hover_eq = btn_rect.collidepoint(mouse_pos) or (i == foco_eq and hovered_team is equipo)
+
+            if btn_rect.collidepoint(mouse_pos):
                 hovered_team = equipo
 
             _dibujar_boton_premium(screen, btn_rect, equipo.nombre, hover_eq)
@@ -1293,7 +1485,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 estado['dt_name_focus'] = True
 
         # Panel de detalles en la derecha
-        panel_rect = pygame.Rect(760, 220, 420, 380)
+        panel_rect = R_INFO_CLUB
         draw_panel(screen, panel_rect)
 
         if hovered_team:
@@ -1305,7 +1497,13 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             draw_text(screen, "Prestigio: ", (780, 335), size='md', color='blanco')
             _dibujar_estrellas_prestigio(screen, 880, 330, hovered_team.estrellas, estado)
             
-            draw_text(screen, f"Estilo de Juego: {hovered_team.estilo_dt}", (780, 375), size='md', color='azul')
+            try:  # v3.4.0: nombre para mostrar del estilo, no la clave cruda
+                from alpha_football.estilos import NOMBRE_ESTILO, normalizar_estilo
+                _estilo_txt = NOMBRE_ESTILO.get(normalizar_estilo(hovered_team.estilo_dt), hovered_team.estilo_dt)
+            except Exception as e_est:
+                logger.error(f"Error al leer el nombre del estilo: {e_est}")
+                _estilo_txt = hovered_team.estilo_dt
+            draw_text(screen, f"Estilo de Juego: {_estilo_txt}", (780, 375), size='md', color='azul')
             draw_text(screen, f"Presupuesto: ${hovered_team.balance:,}", (780, 415), size='md', color='verde')
             
             # Mostrar primer jugador estrella disponible
@@ -1323,7 +1521,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             draw_text(screen, "estadísticas detalladas.", (780, 380), size='md', color='blanco')
 
         # Botón Volver
-        volver_rect = pygame.Rect(grid_x, 590, 180, 48)
+        volver_rect = R_EQUIPO_VOLVER
         hover_vol = volver_rect.collidepoint(mouse_pos)
         _dibujar_boton_premium(screen, volver_rect, "VOLVER", hover_vol)
         if click_pos and volver_rect.collidepoint(click_pos):
@@ -1343,7 +1541,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
 
         # Campo de nombre del DT
         draw_text(screen, "Nombre del DT:", (100, 248), size='sm', color='blanco')
-        name_rect = pygame.Rect(100, 272, 430, 44)
+        name_rect = R_DT_NOMBRE
         foco_name = (estado['dt_focus'] == 'name')
         pygame.draw.rect(screen, (12, 18, 36), name_rect, border_radius=6)
         pygame.draw.rect(screen, COLORS.get('verde', (0, 255, 136)) if foco_name else COLORS.get('azul', (0, 191, 255)),
@@ -1358,14 +1556,14 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         for i, pais in enumerate(NACIONALIDADES):
             col = i % 2
             row = i // 2
-            r = pygame.Rect(100 + col * 215, 365 + row * 46, 200, 38)
+            r = rects_nacionalidades()[i]
             nac_rects.append((r, pais))
             sel = (estado.get('dt_nac_sel') == pais and not estado.get('dt_nac_custom', '').strip())
             _dibujar_boton_premium(screen, r, pais, r.collidepoint(mouse_pos) or sel)
 
         # Campo de nacionalidad libre
         draw_text(screen, "Otra nacionalidad:", (560, 335), size='sm', color='blanco')
-        nac_rect = pygame.Rect(560, 365, 320, 42)
+        nac_rect = R_DT_NAC_LIBRE
         foco_nac = (estado['dt_focus'] == 'nac')
         pygame.draw.rect(screen, (12, 18, 36), nac_rect, border_radius=6)
         pygame.draw.rect(screen, COLORS.get('verde', (0, 255, 136)) if foco_nac else COLORS.get('azul', (0, 191, 255)),
@@ -1374,8 +1572,21 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         draw_text(screen, nac_txt[:24], (nac_rect.x + 8, nac_rect.y + 11), size='sm',
                   color='blanco' if estado.get('dt_nac_custom') else 'azul')
 
-        # Procesar teclado en el campo enfocado
+        # v4.2.0: Tab recorre nombre → lista de nacionalidades → otra; en la lista, flechas eligen
+        teclas_texto = []
         for ev in key_events:
+            if ev.key == pygame.K_TAB:
+                estado['dt_focus'] = {'name': 'lista', 'lista': 'nac'}.get(estado['dt_focus'], 'name')
+            elif estado['dt_focus'] == 'lista' and ev.key in (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP, pygame.K_DOWN):
+                i = NACIONALIDADES.index(estado['dt_nac_sel']) if estado.get('dt_nac_sel') in NACIONALIDADES else -1
+                paso = {pygame.K_LEFT: -1, pygame.K_RIGHT: 1, pygame.K_UP: -2, pygame.K_DOWN: 2}[ev.key]
+                estado['dt_nac_sel'] = NACIONALIDADES[max(0, min(len(NACIONALIDADES) - 1, i + paso if i >= 0 else 0))]
+                estado['dt_nac_custom'] = ""
+            elif ev.key not in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_ESCAPE):
+                teclas_texto.append(ev)
+
+        # Procesar teclado en el campo enfocado
+        for ev in teclas_texto:
             campo = 'dt_nombre' if estado['dt_focus'] == 'name' else ('dt_nac_custom' if estado['dt_focus'] == 'nac' else None)
             if not campo:
                 continue
@@ -1387,10 +1598,17 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         # Botones de acción
         nac_final = (estado.get('dt_nac_custom', '').strip() or estado.get('dt_nac_sel', '')).strip()
         listo = bool(estado.get('dt_nombre', '').strip()) and bool(nac_final)
-        btn_conf = pygame.Rect(560, 540, 320, 52)
-        btn_volver = pygame.Rect(100, 600, 200, 48)
-        _dibujar_boton_premium(screen, btn_conf, "EMPEZAR CARRERA" if listo else "FALTAN DATOS", btn_conf.collidepoint(mouse_pos))
+        btn_conf = R_DT_CONFIRMAR
+        btn_volver = R_DT_VOLVER
+        _dibujar_boton_premium(screen, btn_conf, "EMPEZAR CARRERA" if listo else "FALTAN DATOS",
+                               btn_conf.collidepoint(mouse_pos) or listo)
         _dibujar_boton_premium(screen, btn_volver, "VOLVER", btn_volver.collidepoint(mouse_pos))
+        draw_text(screen, "Tab cambia de campo · Enter empieza · Esc vuelve", (560, 600), size='sm', color='azul')
+        for ev in key_events:   # v4.2.0: Enter = EMPEZAR (si está listo), ESC = VOLVER
+            if ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER) and listo:
+                click_pos = btn_conf.center
+            elif ev.key == pygame.K_ESCAPE:
+                click_pos = btn_volver.center
 
         if click_pos:
             if name_rect.collidepoint(click_pos):
@@ -1427,23 +1645,27 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     estado['fichajes_realizados'] = 0
                     estado['dt_nombre'] = dt_nombre_final
                     estado['dt_nacionalidad'] = nac_final
+                    estado['datos_carrera'] = {}  # v2.3.6: ranking de copas + Balón de Oro
                     # v2.3 (Fase 9): persistir país + división elegidos
                     estado['selected_country_id'] = _pais_sel
                     estado['selected_division'] = _div_sel
                     estado['liga_usuario_division'] = _div_sel
                     # v2.3: cargar las 5 ligas de 2ª división on-demand (necesarias para el swap
                     # de promoción/relegación y para que la pantalla de liga las pueda mostrar).
-                    segunda_on_demand = {}
-                    for tipo in ('betplay', 'laliga', 'premier', 'brasil', 'argentina'):
-                        try:
-                            mod = __import__(
-                                f'alpha_football.data.segunda_{tipo}',
-                                fromlist=['get_liga']
-                            )
-                            segunda_on_demand[tipo] = mod.get_liga()
-                        except Exception as e_mod:
-                            logger.warning(f"No se pudo cargar 2ª división {tipo} en alta: {e_mod}")
-                    estado['segunda_division'] = segunda_on_demand
+                    # v2.3.5: las 10 ligas de la carrera; la del user ES su liga.
+                    estado['primera_division'], estado['segunda_division'] = _ligas_por_division(liga_obj, {}, {})
+                    from alpha_football.nombres import desduplicar   # v4.4.0: sin nombres repetidos
+                    desduplicar(estado)
+                    # v2.3.7: presupuestos realistas (liga, división y prestigio) para todos
+                    try:
+                        from alpha_football.mercado_ia import asignar_presupuestos_realistas
+                        asignar_presupuestos_realistas(estado, incluir_usuario=True)
+                        estado['datos_carrera']['presupuestos_v237'] = True
+                        estado['datos_carrera']['potencial_v238'] = True  # ya nace con la tabla nueva
+                        from alpha_football.retiros import asignar_nacionalidades
+                        asignar_nacionalidades(estado)
+                    except Exception as e_eco:
+                        logger.error(f"No se pudieron asignar presupuestos realistas: {e_eco}")
                     # El equipo del user está en la división que eligió
                     equipo.division = _div_sel
                     estado['current_screen'] = "league_screen"
@@ -1451,16 +1673,20 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     for _k in ('ofertas_recibidas', 'mercado', 'mercado_ofertas',
                                '_pool_internacional', 'free_agents_list',
                                'recent_offers_player_ids', 'mercado_ofertas_temp',
-                               'copa_grupos', 'copa_grupos_standings', 'copa_grupo_standing',
-                               'copa_grupo_partidos', 'copa_bracket', 'copa_bracket_otros',
-                               'copa_tipo', 'ultima_ventana_mercado_id',
+                               'ultima_ventana_mercado_id',
                                'sim_comentarios', 'sim_eventos', 'sim_minuto_por_jugador',
                                'sim_nota_por_jugador', 'sim_asist_por_jugador',
                                'now_playing_text', 'oferta_toast_text', 'oferta_toast_until',
                                '_ofertas_prev_count', 'prepartido_resultado'):
                         estado[_k] = []
-                    for _k in ('copa_fase_actual', 'copa_tab', 'copa_jornada_grupo',
-                               'copa_mejor_fase_temp', 'match_mode',
+                    # v3.8.0: fuera el estado de la copa vieja y las caches del motor de la carrera anterior
+                    for _k in ('copa_fase_actual', 'copa_tab', 'copa_jornada_grupo', 'copa_grupos',
+                               'copa_grupos_standings', 'copa_grupo_standing', 'copa_grupo_partidos',
+                               'copa_bracket', 'copa_bracket_otros', 'copa_tipo', '_copas_pool',
+                               '_copas_ligas_cache', '_copas_generados', '_hub_copa_sync',
+                               'copa_vista', 'copa_pestana', 'copa_fecha_sel', '_copa_sync_clave'):
+                        estado.pop(_k, None)
+                    for _k in ('copa_mejor_fase_temp', 'match_mode',
                                'partido_actual', 'partido_local_obj', 'partido_visitante_obj',
                                'partido_copa_dict', 'partido_copa_bracket_fase',
                                'sim_resultado', 'sim_estado', 'sim_velocidad_factor',
@@ -1468,7 +1694,8 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                                'sim_desarrollo', 'sim_desarrollo_done',
                                'sim_eventos_procesados', 'sim_flash_goles',
                                'sim_goleador_flash', 'sim_confeti', 'sim_tactico_abierto',
-                               'sim_sub_out', 'sim_subs_realizadas',
+                               'sim_sub_out', 'sim_subs_realizadas', 'sim_salieron',
+                               'sim_alin_partido', 'sim_dir_snapshot',
                                'sim_penales_resuelto', 'sim_penales_marcador',
                                'sim_penales_gana_user', 'sim_penales_sel',
                                'sim_last_tick'):
@@ -1477,29 +1704,17 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     equipo.estilo_dt = "anchelottismo"
                     if not getattr(equipo, 'tactica_familiaridad', None):
                         equipo.tactica_familiaridad = {}
-                    # v0.8.7: en T1 el usuario solo clasifica a la copa si su equipo
-                    # está en el top 3 por OVR de la liga. Si no, verá la copa en modo
-                    # espectador (la simulación corre sola, sin partidos del user).
-                    # En T2+ esto se recalcula en el resumen de temporada por puntos.
+                    # v3.8.0: las copas de la T1 se sortean con el motor (cupos por media de cada
+                    # 1ª); en 2ª división no se clasifica. Las claves copa_* se derivan de ahí.
+                    estado['copa_clasificado_motivo'] = ("En 2ª división no se clasifica a copa."
+                                                         if _div_sel == 2 else "")
                     try:
-                        liga_ovr = sorted(
-                            liga_obj.equipos,
-                            key=lambda e: getattr(e, 'ovr_promedio', 0),
-                            reverse=True
-                        )
-                        _top3_ovr = {e.nombre for e in liga_ovr[:3]}
-                        _ovr_user = getattr(equipo, 'ovr_promedio', 0)
-                        estado['copa_clasificado'] = (equipo.nombre in _top3_ovr)
-                        estado['copa_clasificado_motivo'] = (
-                            f"OVR {_ovr_user} (top 3 de la liga)"
-                            if estado['copa_clasificado']
-                            else f"OVR {_ovr_user} (fuera del top 3)"
-                        )
-                        estado['copa_user_en_copa'] = estado['copa_clasificado']
+                        from alpha_football.ui.copa_screen import iniciar_copas_temporada
+                        iniciar_copas_temporada(estado, forzar=True)
                     except Exception as e_clasif:
-                        logger.error(f"Error al calcular clasificación T1 a copa: {e_clasif}")
-                        estado['copa_clasificado'] = True
-                        estado['copa_user_en_copa'] = True
+                        logger.error(f"Error al sortear las copas de la T1: {e_clasif}")
+                        estado['copa_clasificado'] = False
+                        estado['copa_user_en_copa'] = False
                         estado['copa_clasificado_motivo'] = "Default (cálculo falló)"
                     from alpha_football.models import alineacion_por_defecto
                     def_alin = alineacion_por_defecto(equipo)
@@ -1512,7 +1727,8 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     # NOTA: 'selected_country_id' y 'selected_division' NO se popean aqui;
                     # los seteamos antes del clear() y los conservamos para el save.
                     logger.info(f"Nueva carrera iniciada: liga={estado['liga'].tipo} equipo={equipo.nombre}")
-                    return "league_screen"
+                    estado['contrato_modo'] = 'alta'      # v3.2.0: firma estilo FIFA antes del hub
+                    return "contrato_dt_screen"
                 except Exception as e_dt:
                     logger.error(f"Error al finalizar alta del DT: {e_dt}")
             else:
@@ -1533,13 +1749,22 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             logger.error(f"No se pudieron listar los slots: {e_ls}")
             cabeceras = [None] * 5
 
+        # v4.2.0: ↑ ↓ slot, Enter carga, Supr borra, Esc vuelve (con el modal abierto: Enter sí, Esc no)
+        foco_slot = int(estado.get('menu_foco_slot', 0) or 0) % 6
+        if not estado.get('confirmar_borrar_slot'):
+            rects_carga = [rs[0] for rs in rects_slots_carga()] + [R_CARGA_VOLVER]
+            foco_slot, clic_tec = teclado_a_clic(estado, 'menu_foco_slot', rects_carga, key_events,
+                                                 esc_rect=R_CARGA_VOLVER)
+            click_pos = clic_tec or click_pos
+            if any(ev.key == pygame.K_DELETE for ev in key_events) and foco_slot < 5:
+                if foco_slot < len(cabeceras) and cabeceras[foco_slot]:
+                    click_pos = rects_slots_carga()[foco_slot][1].center
         for i in range(5):
-            r = pygame.Rect(100, 245 + i * 64, 560, 54)
+            r, del_rect = rects_slots_carga()[i]
             hdr = cabeceras[i] if i < len(cabeceras) else None
             etiqueta = f"Slot {i+1}: {hdr.get('nombre_partida','Partida')}" if hdr else f"Slot {i+1}: [Slot Libre]"
-            _dibujar_boton_premium(screen, r, etiqueta, r.collidepoint(mouse_pos))
+            _dibujar_boton_premium(screen, r, etiqueta, r.collidepoint(mouse_pos) or i == foco_slot)
             
-            del_rect = pygame.Rect(1080, 245 + i * 64, 100, 54)
             if hdr:
                 # v0.8.7.2: dos líneas con DT + equipo y temp/jor/presupuesto
                 draw_text(screen,
@@ -1575,8 +1800,8 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                         estado['menu_error'] = "No se pudo cargar ese slot."
                         estado['menu_error_ticks'] = pygame.time.get_ticks()
 
-        volver_rect = pygame.Rect(100, 600, 200, 50)
-        _dibujar_boton_premium(screen, volver_rect, "VOLVER", volver_rect.collidepoint(mouse_pos))
+        volver_rect = R_CARGA_VOLVER
+        _dibujar_boton_premium(screen, volver_rect, "VOLVER", volver_rect.collidepoint(mouse_pos) or foco_slot == 5)
         if click_pos and volver_rect.collidepoint(click_pos) and not estado.get('confirmar_borrar_slot'):
             estado['menu_step'] = 'main'
         if 'menu_error' in estado:
@@ -1608,6 +1833,11 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             
             _dibujar_boton_rojo(screen, btn_si, "SÍ, BORRAR", hov_si)
             _dibujar_boton_premium(screen, btn_no, "CANCELAR", hov_no)
+            for ev in key_events:   # v4.2.0
+                if ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                    click_pos = btn_si.center
+                elif ev.key == pygame.K_ESCAPE:
+                    click_pos = btn_no.center
             
             if click_pos:
                 if btn_si.collidepoint(click_pos):
@@ -1642,10 +1872,8 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             estado['amistoso_pais_kb_idx'] = 0
 
         for ev in key_events:
-            if ev.key == pygame.K_UP:
-                estado['amistoso_pais_kb_idx'] = (estado['amistoso_pais_kb_idx'] - 1) % len(PAISES_DISPONIBLES)
-            elif ev.key == pygame.K_DOWN:
-                estado['amistoso_pais_kb_idx'] = (estado['amistoso_pais_kb_idx'] + 1) % len(PAISES_DISPONIBLES)
+            if ev.key in (pygame.K_UP, pygame.K_DOWN, pygame.K_LEFT, pygame.K_RIGHT):   # v3.7.0: grilla
+                estado['amistoso_pais_kb_idx'] = _paso_pais(estado['amistoso_pais_kb_idx'], ev.key)
             elif ev.key == pygame.K_RETURN or ev.key == pygame.K_SPACE:
                 idx = estado['amistoso_pais_kb_idx']
                 if 0 <= idx < len(PAISES_DISPONIBLES):
@@ -1655,11 +1883,11 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             elif ev.key == pygame.K_ESCAPE:
                 estado['menu_step'] = 'main'
 
-        volver_rect = pygame.Rect(540, 640, 200, 50)
+        volver_rect = R_VOLVER_ABAJO
         hover_volver = volver_rect.collidepoint(mouse_pos)
 
         for i, pais in enumerate(PAISES_DISPONIBLES):
-            btn_rect = pygame.Rect(120, start_y + i * (btn_h + spacing_y), btn_w, btn_h)
+            btn_rect = rects_paises()[i]   # v3.7.0: grilla 4×2
             hover = btn_rect.collidepoint(mouse_pos)
             kb_selected = (i == estado.get('amistoso_pais_kb_idx', 0))
             if hover or kb_selected:
@@ -1682,14 +1910,14 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     borde = COLORS.get('azul', (0, 191, 255))
                     borde_w = 2
                 pygame.draw.rect(screen, borde, btn_rect, width=borde_w, border_radius=8)
-                pill = pygame.Rect(btn_rect.x + 8, btn_rect.y + 6, 44, btn_h - 12)
+                pill = pygame.Rect(btn_rect.x + 6, btn_rect.y + 6, 38, btn_rect.height - 12)   # v3.7.0
                 pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), pill, border_radius=6)
-                draw_text(screen, pais['emoji'], (pill.x + 8, pill.y + 12), size='md',
+                draw_text(screen, pais['emoji'], (pill.x + 4, pill.y + 12), size='md',
                           color='azul', shadow=False)
             except Exception:
                 pass
             draw_text(screen, pais['nombre'].upper(),
-                      (btn_rect.x + 64, btn_rect.y + 8), size='lg',
+                      (btn_rect.x + 52, btn_rect.y + 12), size='lg',
                       color='dorado' if (kb_selected and not hover) else ('verde' if hover else 'blanco'))
             if click_pos and btn_rect.collidepoint(click_pos):
                 estado['amistoso_country_id'] = pais['codigo']
@@ -1713,7 +1941,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                   (100, 660), size='sm', color='azul')
 
         # v2.3 (Fase 9 bugfix): VOLVER movido para no chocar
-        volver_rect = pygame.Rect(540, 640, 200, 50)
+        volver_rect = R_VOLVER_ABAJO
         hover_volver = volver_rect.collidepoint(mouse_pos)
 
         # v2.3 (Fase 9 bugfix): botones más compactos (110 alto en vez de 120)
@@ -1760,13 +1988,13 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             btn_1a, "1ª DIVISIÓN",
             COLORS.get('verde', (0, 255, 136)),
             btn_1a.collidepoint(mouse_pos) or (kb_idx == 0 and not click_pos),
-            ["La elite. Los mejores equipos del país.", "8 equipos · 14 jornadas"]
+            ["La elite. Los mejores equipos del país.", texto_division('', 1)]   # v3.7.0
         )
         _draw_amis_div(
             btn_2a, "2ª DIVISIÓN",
             COLORS.get('azul', (0, 191, 255)),
             btn_2a.collidepoint(mouse_pos) or (kb_idx == 1 and not click_pos),
-            ["El ascenso/descenso. OVR más bajo.", "6 equipos · 10 jornadas"]
+            ["El ascenso/descenso. OVR más bajo.", texto_division('', 2)]   # v3.7.0
         )
 
         if click_pos:
@@ -1805,13 +2033,14 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             draw_text(screen, f"Local: {local.nombre}", (100, 195), size='sm', color='dorado')
         liga_obj = estado.get('amistoso_liga')
         equipos = liga_obj.equipos if liga_obj else []
+        # v4.2.0: flechas + Enter; ESC vuelve
+        rects_am = [pygame.Rect(100 + (i % 2) * 330, 230 + (i // 2) * 65, 300, 50) for i in range(len(equipos))]
+        foco_am, clic_tec = teclado_a_clic(estado, 'menu_foco_amis', rects_am, key_events, columnas=2,
+                                           esc_rect=R_AMIS_VOLVER)
+        click_pos = clic_tec or click_pos
         for i, equipo in enumerate(equipos):
-            col = i % 2
-            row = i // 2
-            bx = 100 + col * 330
-            by = 230 + row * 65
-            btn_rect = pygame.Rect(bx, by, 300, 50)
-            _dibujar_boton_premium(screen, btn_rect, equipo.nombre, btn_rect.collidepoint(mouse_pos))
+            btn_rect = rects_am[i]
+            _dibujar_boton_premium(screen, btn_rect, equipo.nombre, btn_rect.collidepoint(mouse_pos) or i == foco_am)
             if click_pos and btn_rect.collidepoint(click_pos):
                 if fase == 'local':
                     # Elegido el local: ahora vamos a elegir el PAÍS del VISITANTE (puede ser otro).
@@ -1827,11 +2056,11 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     estado['menu_step'] = 'main'
                     return 'prepartido_screen'
         # Botón para cambiar de país sin perder el equipo ya elegido.
-        otra_liga_rect = pygame.Rect(340, 600, 230, 50)
+        otra_liga_rect = R_AMIS_OTRO_PAIS
         _dibujar_boton_premium(screen, otra_liga_rect, "OTRO PAÍS", otra_liga_rect.collidepoint(mouse_pos))
         if click_pos and otra_liga_rect.collidepoint(click_pos):
             estado['menu_step'] = 'amistoso_country'
-        volver_rect = pygame.Rect(100, 600, 200, 50)
+        volver_rect = R_AMIS_VOLVER
         _dibujar_boton_premium(screen, volver_rect, "VOLVER", volver_rect.collidepoint(mouse_pos))
         if click_pos and volver_rect.collidepoint(click_pos):
             estado['menu_step'] = 'amistoso_division'

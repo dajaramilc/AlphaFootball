@@ -38,9 +38,9 @@ def test_calcular_potencial_ejemplos_plan():
     for seed in range(50):
         rng = random.Random(seed)
         p_20_80 = calcular_potencial(80, 20, rng)
-        assert 90 <= p_20_80 <= 92, f"20/80 con seed {seed} -> {p_20_80} (esperado 90-92)"
+        assert 95 <= p_20_80 <= 97, f"20/80 con seed {seed} -> {p_20_80} (esperado 95-97, v2.3.8)"
         p_24_85 = calcular_potencial(85, 24, rng)
-        assert 89 <= p_24_85 <= 91, f"24/85 con seed {seed} -> {p_24_85} (esperado 89-91)"
+        assert 91 <= p_24_85 <= 93, f"24/85 con seed {seed} -> {p_24_85} (esperado 91-93, v2.3.8)"
         p_27_80 = calcular_potencial(80, 27, rng)
         assert 83 <= p_27_80 <= 85, f"27/80 con seed {seed} -> {p_27_80} (esperado 83-85)"
 

@@ -5,6 +5,7 @@ ALPHA FOOTBALL — Bandeja de Ofertas Recibidas (Pygame).
 Sección propia para gestionar TODAS las ofertas pendientes por jugadores del usuario
 (IA local + clubes del exterior). Cada oferta es un dict {jugador, comprador, monto, exterior?}.
 Aceptar traspasa al jugador y cobra; rechazar la descarta.
+v3.5.0: lista a la izquierda, ficha del jugador a la derecha y CONTRAOFERTAR (contraofertas.py).
 """
 from __future__ import annotations
 
@@ -41,42 +42,125 @@ except Exception:
             return 50_000
 
 
-def _aceptar(estado: dict, of: dict) -> None:
-    """Acepta una oferta: traspasa el jugador, cobra y trae un reemplazo SOLO si la plantilla cae por debajo de 15."""
-    mi_equipo = estado.get('mi_equipo')
-    jug = of.get('jugador'); comp = of.get('comprador'); monto = of.get('monto', 0)
-    if not mi_equipo or not jug or not comp:
-        return
+def _aceptar(estado: dict, of: dict) -> bool:
+    """Acepta una oferta. v3.5.0: la lógica vive en contraofertas.vender."""
+    from alpha_football.contraofertas import vender
+    return vender(estado, of)
+
+
+# --- v3.5.0: lista de ofertas + ficha del jugador + contraoferta ────────────────
+
+MAX_VISIBLES = 5
+R_VOLVER = pygame.Rect(1064, 24, 200, 48)
+R_FICHA = pygame.Rect(672, 110, 592, 440)
+R_ACEPTAR = pygame.Rect(672, 566, 170, 48)       # anchos según el texto (CONTRAOFERTAR no entra en 186)
+R_RECHAZAR = pygame.Rect(854, 566, 170, 48)
+R_CONTRA = pygame.Rect(1036, 566, 228, 48)
+R_PANEL = pygame.Rect(688, 276, 560, 264)
+R_MONTO = pygame.Rect(712, 336, 360, 48)
+R_MAS5 = pygame.Rect(712, 400, 120, 44)
+R_MAS10 = pygame.Rect(846, 400, 120, 44)
+R_MAS25 = pygame.Rect(980, 400, 120, 44)
+R_ENVIAR = pygame.Rect(900, 470, 240, 48)
+R_VACIO = pygame.Rect(SCREEN_W // 2 - 280, 250, 560, 120)     # v3.9.0: aviso sin ofertas
+_COLOR_RESULTADO = {'aceptada': 'verde', 'analizando': 'azul', 'rechazada': 'rojo', 'invalida': 'rojo'}
+
+
+def rect_oferta(i: int) -> pygame.Rect:
+    """Tarjeta visible i de la lista (0 = primera)."""
+    return pygame.Rect(16, 110 + i * 96, 640, 84)
+
+
+def _dinero(v) -> str:
     try:
-        mi_equipo.balance += monto
-        if jug in mi_equipo.jugadores:
-            mi_equipo.jugadores.remove(jug)
-        comp.jugadores.append(jug)
-        try:
-            comp.balance = max(0, comp.balance - monto)
-        except Exception:
-            pass
-        # v0.8.2: solo generar suplente si la plantilla cae por debajo de 15.
-        # Antes siempre se rellenaba; ahora vender deja la plantilla con menos jugadores
-        # (es una decisión del manager).
-        try:
-            if len(mi_equipo.jugadores) < 15:
-                from alpha_football.ui.market_screen import generar_reemplazo_resiliente
-                suplente = generar_reemplazo_resiliente(jug.posicion, getattr(mi_equipo, 'estrellas', 3.0))
-                mi_equipo.jugadores.append(suplente)
-            estado.setdefault('transfer_log', []).append(
-                f"Venta: {jug.nombre_completo} -> {comp.nombre} por ${monto:,}")
-        except Exception as e_rep:
-            logger.error(f"No se pudo generar reemplazo: {e_rep}")
-    except Exception as e:
-        logger.error(f"Error al aceptar oferta: {e}")
+        from alpha_football.negociacion import dinero_exacto
+        return dinero_exacto(v)
+    except Exception:
+        return f"${int(v or 0):,}"
+
+
+def _abrir_contra(estado: dict, of: dict) -> None:
+    estado['contra_abierta'] = True
+    estado['contra_monto'] = int(int(of.get('monto', 0) or 0) * 1.10)    # arranca en +10%
+
+
+def _cerrar_contra(estado: dict) -> None:
+    estado['contra_abierta'] = False
+    estado.pop('contra_monto', None)
+
+
+def _aceptar_sel(estado: dict, of: dict) -> None:
+    jug, comp = of.get('jugador'), of.get('comprador')
+    if _aceptar(estado, of):
+        estado['oferta_msg'] = (f"Vendiste a {jug.nombre_completo} a {comp.nombre} por {_dinero(of.get('monto', 0))}.", 'verde')
+    else:
+        estado['ofertas_recibidas'] = [o for o in (estado.get('ofertas_recibidas') or []) if o is not of]
+        estado['oferta_msg'] = ("La oferta ya no es válida: el jugador no está en tu plantilla.", 'rojo')
+    _cerrar_contra(estado)
+
+
+def _rechazar_sel(estado: dict, of: dict) -> None:
+    estado['ofertas_recibidas'] = [o for o in (estado.get('ofertas_recibidas') or []) if o is not of]
+    comp = getattr(of.get('comprador'), 'nombre', 'el club')
+    estado['oferta_msg'] = (f"Rechazaste la oferta de {comp}.", 'blanco')
+    _cerrar_contra(estado)
+    try:  # v4.4.0: rechazar por un jugador que pide salir enoja al jugador y a la directiva
+        from alpha_football.salidas import oferta_rechazada
+        oferta_rechazada(estado, of.get('jugador'))
+    except Exception as e_sal:
+        logger.error(f"No se pudo registrar el rechazo: {e_sal}")
+
+
+def _enviar_contra(estado: dict, of: dict) -> None:
+    from alpha_football import contraofertas as CO
+    resultado, msg = CO.contraofertar(estado, of, int(estado.get('contra_monto', 0) or 0))
+    estado['oferta_msg'] = (msg, _COLOR_RESULTADO.get(resultado, 'blanco'))
+    if resultado != 'invalida':
+        _cerrar_contra(estado)
+
+
+def _dibujar_tarjeta(screen, r: pygame.Rect, of: dict, seleccionada: bool, mouse_pos) -> None:
+    draw_panel(screen, r)
+    if seleccionada or r.collidepoint(mouse_pos):
+        pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)) if seleccionada else COLORS.get('azul', (0, 191, 255)),
+                         r, width=2, border_radius=8)
+    jug, comp, monto = of.get('jugador'), of.get('comprador'), of.get('monto', 0)
+    es_ext = of.get('exterior')
+    draw_text(screen, "EXTERIOR" if es_ext else "LOCAL", (r.x + 14, r.y + 6), size='sm',
+              color='dorado' if es_ext else 'azul')
+    if not jug or not comp:
+        return
+    draw_text(screen, f"{comp.nombre[:24]} ofrece {_dinero(monto)}", (r.x + 120, r.y + 6), size='sm', color='verde')
+    _valor_mostrar = getattr(jug, 'valor', 0) or calcular_valor(jug)
+    draw_text(screen, f"{jug.nombre_completo[:24]}  ·  {jug.posicion}  ·  MED {jug.overall}  ·  Valor {_dinero(_valor_mostrar)}",
+              (r.x + 14, r.y + 32), size='sm', color='blanco')
+    c = of.get('contra') or {}
+    if c.get('estado') == 'analizando':
+        draw_text(screen, f"ANALIZANDO: pediste {_dinero(c.get('pedido', 0))}", (r.x + 14, r.y + 58),
+                  size='sm', color='azul')
+
+
+def _dibujar_panel_contra(screen, estado: dict, of: dict, mouse_pos) -> None:
+    pygame.draw.rect(screen, (14, 20, 38), R_PANEL, border_radius=10)
+    pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), R_PANEL, width=2, border_radius=10)
+    draw_text(screen, f"CONTRAOFERTA (ofrecen {_dinero(of.get('monto', 0))})", (R_PANEL.x + 24, R_PANEL.y + 12),
+              size='sm', color='dorado')
+    pygame.draw.rect(screen, (15, 22, 40), R_MONTO, border_radius=6)
+    pygame.draw.rect(screen, COLORS.get('azul', (0, 191, 255)), R_MONTO, width=1, border_radius=6)
+    s = get_font('md').render(_dinero(estado.get('contra_monto', 0)), True, COLORS.get('verde', (0, 255, 136)))
+    screen.blit(s, s.get_rect(center=R_MONTO.center))
+    draw_text(screen, "Escribe la cifra", (R_MONTO.right + 16, R_MONTO.y + 14), size='sm', color='azul')
+    for r, t in ((R_MAS5, "+5%"), (R_MAS10, "+10%"), (R_MAS25, "+25%")):
+        draw_button(screen, r, t, r.collidepoint(mouse_pos))
+    draw_text(screen, "Esc cierra", (R_PANEL.x + 24, R_ENVIAR.y + 14), size='sm', color='blanco')
+    draw_button(screen, R_ENVIAR, "ENVIAR (Enter)", R_ENVIAR.collidepoint(mouse_pos))
 
 
 def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
     try:
+        from alpha_football.ui.entrada_monto import editar_valor
         mi_equipo = estado.get('mi_equipo')
         ofertas = estado.setdefault('ofertas_recibidas', [])
-
         mouse_pos = pygame.mouse.get_pos()
         click_pos = None
         key_events = []
@@ -88,142 +172,108 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             elif event.type == pygame.KEYDOWN:
                 key_events.append(event)
 
-        # v2.3.3: navegacion por teclado. Estado del foco: 0 = volver, 1..2N = acciones
-        # (cada oferta tiene 2 botones: ACEPTAR, RECHAZAR).
-        if 'ofertas_kbd_focus' not in estado:
-            estado['ofertas_kbd_focus'] = 0  # default en VOLVER
+        sel = max(0, min(int(estado.get('oferta_sel', 0) or 0), len(ofertas) - 1))
+        of = ofertas[sel] if ofertas else None
+        if of is None:
+            _cerrar_contra(estado)
 
+        # --- Teclado ---
+        for ev in key_events:
+            if estado.get('contra_abierta') and of is not None:
+                if ev.key == pygame.K_ESCAPE:
+                    _cerrar_contra(estado)
+                elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                    _enviar_contra(estado, of)
+                else:
+                    estado['contra_monto'] = editar_valor(estado.get('contra_monto', 0), ev)
+                continue
+            if ev.key == pygame.K_ESCAPE:
+                return "league_screen"
+            if of is None:
+                if ev.key in (pygame.K_RETURN, pygame.K_SPACE):
+                    return "league_screen"
+                continue
+            if ev.key == pygame.K_DOWN:
+                sel = min(len(ofertas) - 1, sel + 1)
+            elif ev.key == pygame.K_UP:
+                sel = max(0, sel - 1)
+            elif ev.key == pygame.K_a:
+                _aceptar_sel(estado, of)
+            elif ev.key == pygame.K_r:
+                _rechazar_sel(estado, of)
+            elif ev.key == pygame.K_c and not of.get('contra'):
+                _abrir_contra(estado, of)
+            ofertas = estado.get('ofertas_recibidas') or []
+            sel = max(0, min(sel, len(ofertas) - 1))
+            of = ofertas[sel] if ofertas else None
+
+        # --- Mouse ---
+        inicio = max(0, sel - MAX_VISIBLES + 1)
+        if click_pos:
+            if R_VOLVER.collidepoint(click_pos):
+                return "league_screen"
+            if of is not None and estado.get('contra_abierta') and R_PANEL.collidepoint(click_pos):
+                base = int(of.get('monto', 0) or 0)
+                for r, pct in ((R_MAS5, 0.05), (R_MAS10, 0.10), (R_MAS25, 0.25)):
+                    if r.collidepoint(click_pos):
+                        estado['contra_monto'] = int(estado.get('contra_monto', 0) or 0) + int(base * pct)
+                if R_ENVIAR.collidepoint(click_pos):
+                    _enviar_contra(estado, of)
+            elif of is not None and R_ACEPTAR.collidepoint(click_pos):
+                _aceptar_sel(estado, of)
+            elif of is not None and R_RECHAZAR.collidepoint(click_pos):
+                _rechazar_sel(estado, of)
+            elif of is not None and R_CONTRA.collidepoint(click_pos):
+                if not of.get('contra'):
+                    _abrir_contra(estado, of)
+            else:
+                for i in range(min(MAX_VISIBLES, len(ofertas) - inicio)):
+                    if rect_oferta(i).collidepoint(click_pos) and inicio + i != sel:
+                        sel = inicio + i
+                        _cerrar_contra(estado)
+            ofertas = estado.get('ofertas_recibidas') or []
+            sel = max(0, min(sel, len(ofertas) - 1))
+            of = ofertas[sel] if ofertas else None
+            inicio = max(0, sel - MAX_VISIBLES + 1)
+        estado['oferta_sel'] = sel
+
+        # --- Dibujo ---
         draw_gradient_bg(screen)
         draw_text(screen, "OFERTAS RECIBIDAS", (40, 25), size='xl', color='dorado')
-        draw_text(screen, f"Pendientes: {len(ofertas)}  ·  Presupuesto: ${getattr(mi_equipo, 'balance', 0):,}",
+        draw_text(screen, f"Pendientes: {len(ofertas)}  ·  Presupuesto: {_dinero(getattr(mi_equipo, 'balance', 0))}"
+                          f"  ·  ↑/↓ elegir · A aceptar · R rechazar · C contraofertar · Esc volver",
                   (40, 70), size='sm', color='azul')
+        draw_button(screen, R_VOLVER, "VOLVER", R_VOLVER.collidepoint(mouse_pos))
+        msg = estado.get('oferta_msg')
+        if msg:
+            draw_text(screen, str(msg[0])[:110], (16, 660), size='sm', color=msg[1])
 
-        btn_volver = pygame.Rect(40, 640, 200, 50)
-        # v2.3.3: visualizacion del foco por teclado
-        _kbd_focus = int(estado.get('ofertas_kbd_focus', 0))
-        draw_button(screen, btn_volver, "VOLVER", btn_volver.collidepoint(mouse_pos) or _kbd_focus == 0)
-        if _kbd_focus == 0 and not btn_volver.collidepoint(mouse_pos):
-            pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), btn_volver, width=3, border_radius=8)
-            draw_text(screen, "▶", (btn_volver.x - 22, btn_volver.y + 18), size='lg', color='dorado')
-
-        if not ofertas:
-            draw_panel(screen, pygame.Rect(SCREEN_W // 2 - 280, 250, 560, 120))
+        if of is None:
+            draw_panel(screen, R_VACIO)
             draw_text(screen, "No hay ofertas pendientes por tus jugadores.",
                       (SCREEN_W // 2 - 250, 300), size='md', color='blanco')
-            # Navegacion por teclado cuando no hay ofertas: solo VOLVER
-            for ev in key_events:
-                if ev.key == pygame.K_RETURN or ev.key == pygame.K_SPACE:
-                    return "league_screen"
-                elif ev.key == pygame.K_ESCAPE:
-                    return "league_screen"
-            if click_pos and btn_volver.collidepoint(click_pos):
-                return "league_screen"
             return None
 
-        # Listar ofertas como tarjetas con ACEPTAR / RECHAZAR
-        y = 120
-        acciones = []  # (rect_acc, rect_rej, indice)
-        for i, of in enumerate(ofertas[:6]):
-            jug = of.get('jugador'); comp = of.get('comprador'); monto = of.get('monto', 0)
-            card = pygame.Rect(40, y, 1200, 78)
-            draw_panel(screen, card)
-            es_ext = of.get('exterior')
-            etiqueta = "EXTERIOR" if es_ext else "LOCAL"
-            col_et = 'dorado' if es_ext else 'azul'
-            draw_text(screen, etiqueta, (card.x + 15, card.y + 8), size='sm', color=col_et)
-            if jug and comp:
-                draw_text(screen, f"{comp.nombre[:26]} ofrece ${monto:,}", (card.x + 15, card.y + 32), size='md', color='verde')
-                # v0.8.x: si el `valor` guardado es 0, mostramos el calculado on-the-fly
-                # para no imprimir "Valor $0" junto a un monto de $200M.
-                _valor_mostrar = getattr(jug, 'valor', 0) or calcular_valor(jug)
-                draw_text(screen, f"por {jug.nombre_completo}  ·  {jug.posicion}  ·  OVR {jug.overall}  ·  Valor ${_valor_mostrar:,}",
-                          (card.x + 15, card.y + 54), size='sm', color='blanco')
-            rect_acc = pygame.Rect(card.right - 320, card.y + 20, 140, 40)
-            rect_rej = pygame.Rect(card.right - 165, card.y + 20, 140, 40)
-            # v2.3.3: visualizacion del foco por teclado sobre cada accion
-            _foco_accion = _kbd_focus == (i * 2 + 1)
-            _foco_rechazo = _kbd_focus == (i * 2 + 2)
-            draw_button(screen, rect_acc, "ACEPTAR", rect_acc.collidepoint(mouse_pos) or _foco_accion)
-            draw_button(screen, rect_rej, "RECHAZAR", rect_rej.collidepoint(mouse_pos) or _foco_rechazo)
-            if _foco_accion and not rect_acc.collidepoint(mouse_pos):
-                pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), rect_acc, width=3, border_radius=8)
-                draw_text(screen, "▶", (rect_acc.x - 22, rect_acc.y + 12), size='lg', color='dorado')
-            if _foco_rechazo and not rect_rej.collidepoint(mouse_pos):
-                pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), rect_rej, width=3, border_radius=8)
-                draw_text(screen, "▶", (rect_rej.x - 22, rect_rej.y + 12), size='lg', color='dorado')
-            acciones.append((rect_acc, rect_rej, i))
-            y += 88
+        for i, o in enumerate(ofertas[inicio:inicio + MAX_VISIBLES]):
+            _dibujar_tarjeta(screen, rect_oferta(i), o, inicio + i == sel, mouse_pos)
+        if len(ofertas) > MAX_VISIBLES:
+            draw_text(screen, f"{inicio + 1}-{min(len(ofertas), inicio + MAX_VISIBLES)} de {len(ofertas)}",
+                      (16, 594), size='sm', color='azul')
 
-        # v2.3.3: navegacion por teclado. Foco va desde 0 (VOLVER) hasta 2*N (cada
-        # oferta tiene 2 acciones). ↑↓ entre filas, ←→ entre botones.
-        n_ofertas_visibles = len(acciones)
-        max_focus = max(0, 2 * n_ofertas_visibles)
-        for ev in key_events:
-            if ev.key == pygame.K_DOWN:
-                estado['ofertas_kbd_focus'] = (int(estado.get('ofertas_kbd_focus', 0)) + 1) % (max_focus + 1)
-            elif ev.key == pygame.K_UP:
-                estado['ofertas_kbd_focus'] = (int(estado.get('ofertas_kbd_focus', 0)) - 1) % (max_focus + 1)
-            elif ev.key == pygame.K_RIGHT:
-                # En la primera columna (ACEPTAR=impar) salta a la siguiente columna (RECHAZAR=par)
-                f = int(estado.get('ofertas_kbd_focus', 0))
-                if f == 0:
-                    estado['ofertas_kbd_focus'] = 1
-                elif f % 2 == 1 and (f + 1) <= max_focus:
-                    estado['ofertas_kbd_focus'] = f + 1
-            elif ev.key == pygame.K_LEFT:
-                f = int(estado.get('ofertas_kbd_focus', 0))
-                if f > 0 and f % 2 == 0:
-                    estado['ofertas_kbd_focus'] = f - 1
-            elif ev.key == pygame.K_RETURN or ev.key == pygame.K_SPACE:
-                # Simula click en el boton enfocado
-                f = int(estado.get('ofertas_kbd_focus', 0))
-                if f == 0:
-                    return "league_screen"
-                else:
-                    # f impar = ACEPTAR, f par = RECHAZAR (de la oferta (f-1)//2)
-                    idx = (f - 1) // 2
-                    es_aceptar = (f % 2 == 1)
-                    if 0 <= idx < len(acciones):
-                        if es_aceptar:
-                            if 0 <= idx < len(ofertas):
-                                _aceptar(estado, ofertas.pop(idx))
-                        else:
-                            if 0 <= idx < len(ofertas):
-                                ofertas.pop(idx)
-                        # Reset focus al siguiente item o a VOLVER si vacio
-                        estado['ofertas_kbd_focus'] = 0 if not ofertas else min(f, max_focus - 1)
-            elif ev.key == pygame.K_a:
-                # A = ACEPTAR la oferta enfocada
-                f = int(estado.get('ofertas_kbd_focus', 0))
-                if f >= 1:
-                    idx = (f - 1) // 2
-                    if 0 <= idx < len(ofertas):
-                        _aceptar(estado, ofertas.pop(idx))
-                        estado['ofertas_kbd_focus'] = 0 if not ofertas else min(f, max_focus - 1)
-            elif ev.key == pygame.K_r:
-                # R = RECHAZAR la oferta enfocada
-                f = int(estado.get('ofertas_kbd_focus', 0))
-                if f >= 1:
-                    idx = (f - 1) // 2
-                    if 0 <= idx < len(ofertas):
-                        ofertas.pop(idx)
-                        estado['ofertas_kbd_focus'] = 0 if not ofertas else min(f, max_focus - 1)
-            elif ev.key == pygame.K_ESCAPE:
-                return "league_screen"
-
-        if click_pos:
-            if btn_volver.collidepoint(click_pos):
-                return "league_screen"
-            for rect_acc, rect_rej, idx in acciones:
-                if rect_acc.collidepoint(click_pos):
-                    if 0 <= idx < len(ofertas):
-                        _aceptar(estado, ofertas.pop(idx))
-                    break
-                elif rect_rej.collidepoint(click_pos):
-                    if 0 <= idx < len(ofertas):
-                        ofertas.pop(idx)
-                    break
+        try:
+            from alpha_football.ui.ficha_jugador import dibujar_ficha
+            dibujar_ficha(screen, R_FICHA, of['jugador'], f"Oferta de {getattr(of.get('comprador'), 'nombre', '?')}"[:34])
+        except Exception as e_ficha:
+            logger.error(f"No se pudo dibujar la ficha de la oferta: {e_ficha}")
+        draw_button(screen, R_ACEPTAR, "ACEPTAR", R_ACEPTAR.collidepoint(mouse_pos))
+        draw_button(screen, R_RECHAZAR, "RECHAZAR", R_RECHAZAR.collidepoint(mouse_pos))
+        if of.get('contra'):
+            draw_button(screen, R_CONTRA, "EN ANÁLISIS", False)
+        else:
+            draw_button(screen, R_CONTRA, "CONTRAOFERTAR", R_CONTRA.collidepoint(mouse_pos))
+        if estado.get('contra_abierta'):
+            _dibujar_panel_contra(screen, estado, of, mouse_pos)
         return None
     except Exception as e:
-        logger.error(f"Error en ofertas_screen: {e}")
+        logger.error(f"Error en ofertas_screen: {e}", exc_info=True)
         return "league_screen"

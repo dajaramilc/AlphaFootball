@@ -125,13 +125,51 @@ SCREEN_W = 1280
 SCREEN_H = 720
 FPS = 60
 
+# v3.6.0: tabla nombre de pantalla → módulo con su render(screen, estado). main() importa de
+# aquí los renderers una sola vez; nombres_pantallas() la expone sin abrir la ventana.
+MODULOS_PANTALLA = {
+    'menu': 'alpha_football.ui.menu',
+    'league_screen': 'alpha_football.ui.league_screen',
+    'match_screen': 'alpha_football.ui.match_screen',
+    'market_screen': 'alpha_football.ui.market_screen',
+    'copa_screen': 'alpha_football.ui.copa_screen',
+    'career_screen': 'alpha_football.ui.career_screen',
+    'team_screen': 'alpha_football.ui.team_screen',
+    'options_screen': 'alpha_football.ui.options_screen',
+    'prepartido_screen': 'alpha_football.ui.prepartido_screen',
+    'ofertas_screen': 'alpha_football.ui.ofertas_screen',
+    'stats_screen': 'alpha_football.ui.stats_screen',
+    'save_slots_screen': 'alpha_football.ui.save_slots_screen',
+    'resumen_temporada_screen': 'alpha_football.ui.resumen_temporada_screen',
+    'edit_screen': 'alpha_football.ui.edit_screen',
+    'promo_releg_screen': 'alpha_football.ui.promo_releg_screen',
+    'otras_ligas_screen': 'alpha_football.ui.otras_ligas_screen',
+    'plantilla_screen': 'alpha_football.ui.plantilla_screen',
+    'buscador_screen': 'alpha_football.ui.buscador_screen',
+    'historial_pases_screen': 'alpha_football.ui.historial_pases_screen',
+    'ojeador_screen': 'alpha_football.ui.ojeador_screen',
+    'objetivos_screen': 'alpha_football.ui.objetivos_screen',
+    'correo_screen': 'alpha_football.ui.correo_screen',
+    'despido_screen': 'alpha_football.ui.despido_screen',
+    'finanzas_screen': 'alpha_football.ui.finanzas_screen',
+    'negociacion_screen': 'alpha_football.ui.negociacion_screen',
+    'contrato_dt_screen': 'alpha_football.ui.contrato_dt_screen',      # v3.2.0
+    'veredicto_screen': 'alpha_football.ui.veredicto_screen',
+    'ofertas_dt_screen': 'alpha_football.ui.ofertas_dt_screen',        # v3.4.0
+}
+
+
+def nombres_pantallas() -> list:
+    """v3.6.0: nombres de todas las pantallas registradas (sin inicializar la ventana)."""
+    return list(MODULOS_PANTALLA)
+
 
 # --- Autoguardado al Salir ════════════════════════════════════════════════════
 
 def guardar_al_salir(estado: dict) -> None:
     """Intenta guardar la partida automáticamente de forma segura antes de cerrar."""
     try:
-        from alpha_football.save import guardar_partida
+        from alpha_football.save import guardar_partida, campos_divisiones as _campos_divisiones
         from alpha_football.models import EstadoJuego
         
         liga = estado.get('liga')
@@ -153,24 +191,18 @@ def guardar_al_salir(estado: dict) -> None:
             "pantalla_actual": "temporada",
             "alineacion_activa": {
                 "titulares": list(alin.titulares),
-                "formacion": str(alin.formacion)
+                "formacion": str(alin.formacion),
+                "convocados": list(getattr(alin, 'convocados', []) or []),
             } if alin else None,
             "dt_nombre": estado.get("dt_nombre", ""),
             "dt_nacionalidad": estado.get("dt_nacionalidad", ""),
-            "copa_tipo": estado.get("copa_tipo"),
-            "copa_fase_actual": estado.get("copa_fase_actual"),
-            "copa_grupo_standing": estado.get("copa_grupo_standing", []),
-            "copa_bracket": estado.get("copa_bracket", {}),
-            "copa_grupo_partidos": estado.get("copa_grupo_partidos", []),
-            "copa_jornada_grupo": estado.get("copa_jornada_grupo", 1),
-            "copa_tab": estado.get("copa_tab"),
-            "copa_grupos": estado.get("copa_grupos", {}),
-            "copa_grupos_standings": estado.get("copa_grupos_standings", {}),
-            "copa_bracket_otros": estado.get("copa_bracket_otros", {}),
+            # v3.8.0: la copa se guarda en datos_carrera["copas"]; las claves viejas copa_* ya no.
             "copa_clasificado": estado.get("copa_clasificado"),
             "copa_user_en_copa": estado.get("copa_user_en_copa"),
             "copa_clasificado_motivo": estado.get("copa_clasificado_motivo", ""),
-            "copa_mejor_fase_temp": estado.get("copa_mejor_fase_temp")
+            "copa_mejor_fase_temp": estado.get("copa_mejor_fase_temp"),
+            # v2.3.5: 1ª/2ª división (antes no se guardaban aquí)
+            **_campos_divisiones(estado),
         }
 
         estado_juego = EstadoJuego.from_dict(datos_estado)
@@ -256,6 +288,62 @@ def procesar_eventos_volumen(estado: dict, eventos_frame: list) -> list:
             continue
 
     return eventos_a_eliminar
+
+
+def filtrar_eventos_ayuda(estado: dict, eventos_frame: list) -> list:
+    """v3.9.0: la ayuda (tecla H) ve primero cada evento del frame; devuelve los NO consumidos.
+    Con la ayuda abierta se consume todo (salvo QUIT): la pantalla no recibe clics ni teclas."""
+    try:
+        from alpha_football.ui import ayuda as _ayuda
+    except Exception as e_imp:
+        logger.error(f"No se pudo cargar la ayuda: {e_imp}")
+        return list(eventos_frame)
+    pantalla = estado.get('current_screen', 'menu')
+    quedan = []
+    for ev in eventos_frame:
+        try:
+            if _ayuda.manejar_evento(estado, ev, pantalla):
+                continue
+        except Exception as e_ev:
+            logger.error(f"Error de la ayuda con un evento: {e_ev}")
+        quedan.append(ev)
+    return quedan
+
+
+# v4.2.0: pantallas donde M (correo) y O (opciones) no aplican: fuera de carrera, partido,
+# escritura, pantallas de paso obligado y la propia de opciones (ahí M silencia la música).
+SIN_ATAJOS_GLOBALES = {'menu', 'match_screen', 'prepartido_screen', 'options_screen', 'edit_screen',
+                       'buscador_screen', 'despido_screen', 'veredicto_screen', 'contrato_dt_screen',
+                       'resumen_temporada_screen', 'promo_releg_screen', 'save_slots_screen',
+                       'negociacion_screen'}
+
+
+def procesar_atajos_globales(estado: dict, eventos_frame: list) -> list:
+    """
+    v4.2.0: en carrera, M abre el correo y O las opciones desde cualquier pantalla (salvo las de
+    SIN_ATAJOS_GLOBALES, con texto activo o con la ayuda abierta). Devuelve los eventos no consumidos.
+    """
+    try:
+        actual = estado.get('current_screen', 'menu')
+        if (not estado.get('mi_equipo') or estado.get('texto_activo') or estado.get('ayuda_abierta')
+                or actual in SIN_ATAJOS_GLOBALES):
+            return list(eventos_frame)
+        quedan = []
+        for ev in eventos_frame:
+            if ev.type == pygame.KEYDOWN and ev.key in (pygame.K_m, pygame.K_o) and not (ev.mod & pygame.KMOD_CTRL):
+                destino = 'correo_screen' if ev.key == pygame.K_m else 'options_screen'
+                if destino != actual:
+                    if destino == 'options_screen':
+                        estado['options_return'] = actual
+                    estado['pantalla_anterior'] = actual
+                    estado['current_screen'] = destino
+                    estado['ayuda_pagina'] = 0
+                continue
+            quedan.append(ev)
+        return quedan
+    except Exception as e:
+        logger.error(f"Error en los atajos globales M/O: {e}")
+        return list(eventos_frame)
 
 
 def renderizar_widget_volumen(screen: pygame.Surface) -> None:
@@ -369,7 +457,7 @@ def _dibujar_now_playing(screen: pygame.Surface, estado: dict) -> None:
         ancho = superficie.get_width() + 30
         alto = 34
         x = (SCREEN_W - ancho) // 2
-        y = SCREEN_H - alto - 16
+        y = 698 - alto - 8          # v3.6.0: por encima de la barra de atajos (y = 698)
 
         # Panel translúcido para que el texto se lea sobre cualquier pantalla.
         try:
@@ -462,42 +550,19 @@ def main():
         # Importar los renderers de pantalla UNA SOLA VEZ (antes se hacía `from ... import`
         # dentro del bucle, en cada frame). Se cargan tras pygame.init() para evitar problemas
         # de orden de inicialización.
+        # v3.6.0: se construye desde MODULOS_PANTALLA (una pantalla rota no tumba a las demás).
+        import importlib
         PANTALLAS = {}
+        for nombre_pantalla, ruta_modulo in MODULOS_PANTALLA.items():
+            try:
+                PANTALLAS[nombre_pantalla] = importlib.import_module(ruta_modulo).render
+            except Exception as e_import_pantallas:
+                logger.critical(f"No se pudo importar la pantalla {nombre_pantalla}: {e_import_pantallas}", exc_info=True)
         try:
-            from alpha_football.ui.menu import render as menu_render
-            from alpha_football.ui.league_screen import render as league_render
-            from alpha_football.ui.match_screen import render as match_render
-            from alpha_football.ui.market_screen import render as market_render
-            from alpha_football.ui.copa_screen import render as copa_render
-            from alpha_football.ui.career_screen import render as career_render
-            from alpha_football.ui.team_screen import render as team_render
-            from alpha_football.ui.options_screen import render as options_render
-            from alpha_football.ui.prepartido_screen import render as prepartido_render
-            from alpha_football.ui.ofertas_screen import render as ofertas_render
-            from alpha_football.ui.stats_screen import render as stats_render
-            from alpha_football.ui.save_slots_screen import render as save_slots_render
-            from alpha_football.ui.resumen_temporada_screen import render as resumen_temporada_render
-            from alpha_football.ui.edit_screen import render as edit_render
-            from alpha_football.ui.promo_releg_screen import render as promo_releg_render
-            PANTALLAS = {
-                'menu': menu_render,
-                'league_screen': league_render,
-                'match_screen': match_render,
-                'market_screen': market_render,
-                'copa_screen': copa_render,
-                'career_screen': career_render,
-                'team_screen': team_render,
-                'options_screen': options_render,
-                'prepartido_screen': prepartido_render,
-                'ofertas_screen': ofertas_render,
-                'stats_screen': stats_render,
-                'save_slots_screen': save_slots_render,
-                'resumen_temporada_screen': resumen_temporada_render,
-                'edit_screen': edit_render,
-                'promo_releg_screen': promo_releg_render,
-            }
-        except Exception as e_import_pantallas:
-            logger.critical(f"No se pudieron importar las pantallas del juego: {e_import_pantallas}", exc_info=True)
+            from alpha_football.ui import atajos as _atajos          # v3.6.0: barra de atajos
+        except Exception as e_atajos:
+            logger.error(f"No se pudo cargar la barra de atajos: {e_atajos}")
+            _atajos = None
 
         running = True
         while running:
@@ -514,9 +579,18 @@ def main():
                 logger.error(f"Error al actualizar la cola de eventos del frame: {e_events_cache}")
                 _cached_frame_events = []
 
+            # v3.9.0: ayuda con la tecla H. Va antes que todo: con la ayuda abierta la pantalla
+            # no recibe eventos (tampoco los atajos de volumen).
+            _cached_frame_events = filtrar_eventos_ayuda(estado, _cached_frame_events)
+            # v4.2.0: M = correo, O = opciones (en carrera)
+            _cached_frame_events = procesar_atajos_globales(estado, _cached_frame_events)
+
             # 0. Atajos globales de volumen (+/-/M). Se SUPRIMEN en la pantalla de Opciones,
             #    que tiene sus propios controles y un campo de texto (la URL podría contener -, +, =).
-            if estado.get('current_screen') != 'options_screen':
+            # v2.7.0: tampoco en el buscador (se escribe el nombre del jugador).
+            # v3.6.0: ni mientras una pantalla tenga un campo de texto activo (texto_activo).
+            if (estado.get('current_screen') not in ('options_screen', 'buscador_screen')
+                    and not estado.get('texto_activo')):
                 try:
                     eventos_a_eliminar = procesar_eventos_volumen(estado, _cached_frame_events)
                     for ev in eventos_a_eliminar:
@@ -540,8 +614,29 @@ def main():
                 logger.error(f"Error renderizando pantalla '{current_screen}': {render_err}", exc_info=True)
                 # Volvemos a league_screen o menú si algo explota
                 estado['current_screen'] = 'menu' if current_screen == 'menu' else 'league_screen'
-            
+
+            # v3.9.0: overlay de ayuda sobre la pantalla recién dibujada (antes de la barra de atajos)
+            if estado.get('ayuda_abierta'):
+                try:
+                    from alpha_football.ui import ayuda as _ayuda
+                    _ayuda.dibujar(screen, current_screen, estado)
+                except Exception as e_ayuda:
+                    logger.error(f"Error al dibujar la ayuda: {e_ayuda}")
+
+            # v3.6.0: barra de atajos al pie de la pantalla que se acaba de dibujar
+            if _atajos is not None:
+                try:
+                    _atajos.dibujar(screen, current_screen, estado)
+                except Exception as e_barra:
+                    logger.error(f"Error al dibujar la barra de atajos: {e_barra}")
+
             # 3. Transicionar o salir según la respuesta de la pantalla
+            # v3.6.0: la pantalla de la que se viene (el hub la usa para dejar el foco en JUGAR)
+            if next_screen and next_screen != current_screen:
+                estado['pantalla_anterior'] = current_screen
+                # v3.9.0: el campo de texto era de la pantalla que se deja; la ayuda vuelve a la pág. 1
+                estado.pop('texto_activo', None)
+                estado['ayuda_pagina'] = 0
             if next_screen:
                 if next_screen == 'volver':
                     estado['current_screen'] = 'league_screen'
@@ -575,7 +670,8 @@ def main():
                     if nombre_cancion:
                         estado['now_playing_text'] = nombre_cancion
                         estado['now_playing_until'] = pygame.time.get_ticks() + 6000  # visible 6 s
-                _dibujar_now_playing(screen, estado)
+                if not estado.get('ayuda_abierta'):      # v3.9.0: no tapar la leyenda de la ayuda
+                    _dibujar_now_playing(screen, estado)
             except Exception as e_now_playing:
                 logger.debug(f"No se pudo mostrar el aviso de canción: {e_now_playing}")
 
@@ -590,7 +686,8 @@ def main():
                         estado['oferta_toast_text'] = f"{monto:,} por {getattr(jug, 'nombre_completo', 'jugador')}"
                         estado['oferta_toast_until'] = pygame.time.get_ticks() + 7000
                 estado['_ofertas_prev_count'] = len(ofs)
-                _dibujar_oferta_toast(screen, estado)
+                if not estado.get('ayuda_abierta'):      # v3.9.0
+                    _dibujar_oferta_toast(screen, estado)
             except Exception as e_toast:
                 logger.debug(f"No se pudo mostrar el aviso de oferta: {e_toast}")
 

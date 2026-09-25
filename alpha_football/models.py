@@ -15,6 +15,8 @@ from dataclasses import dataclass, field, asdict
 from enum import Enum
 from typing import Any, Optional
 
+from alpha_football import energia as _E
+
 # Configuración del logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -67,6 +69,29 @@ class Jugador:
     # --- v0.7: atributo de penales y estadística de vallas invictas ---
     penales: int = 0                   # habilidad para cobrar penales (0 = derivar de tecnica/mental)
     porterias_cero: int = 0            # vallas invictas (clean sheets) para la tabla de porteros
+    # v2.3.8: nacionalidad (se deriva del país de su liga si falta; la heredan los regens)
+    nacionalidad: str = ""
+    # v2.6.0: marcado como transferible por el user (atrae ofertas de la IA).
+    transferible: bool = False
+    # v2.9.0: contrato (salario anual, años que le quedan, cláusula de rescisión).
+    # salario 0 = "sin contrato asignado" (se completa con finanzas.asegurar_contrato).
+    salario: int = 0
+    contrato_anios: int = 0
+    clausula: int = 0
+    # v3.1.0: vestuario y físico. resistencia/personalidad vacíos = derivar (saves viejos).
+    resistencia: int = 0
+    energia: float = 100.0
+    personalidad: str = ""
+    pide_salir: bool = False
+    jornadas_moral_baja: int = 0
+    notas_recientes: list = field(default_factory=list)
+    # v4.4.0: salidas de jugadores (salidas.py) y causas de la moral (vestuario.actualizar_moral)
+    salida_forzada: bool = False
+    escalon_salida: int = 0
+    causas_moral: list = field(default_factory=list)
+    jornadas_sin_jugar: int = 0
+    descontento_avisado: bool = False
+    energia_vivo: Optional[float] = None       # transitorio: energía en el tramo que se simula
 
     def __post_init__(self):
         # Si no se especificó el atributo de penales, derivarlo de técnica/mental (cubre
@@ -76,6 +101,17 @@ class Jugador:
                 self.penales = (int(self.tecnica) + int(self.mental)) // 2
         except Exception:
             self.penales = 60
+        # v3.1.0: resistencia y personalidad deterministas por jugador (cubre saves viejos).
+        try:
+            semilla = f"{self.id}|{self.nombre}|{self.apellido}"
+            if not self.resistencia:
+                self.resistencia = _E.resistencia_inicial(self.fisico, self.edad, self.rasgo, semilla)
+            if not self.personalidad:
+                from alpha_football.vestuario import personalidad_inicial
+                self.personalidad = personalidad_inicial(self.rasgo, semilla)
+        except Exception:
+            self.resistencia = self.resistencia or 50
+            self.personalidad = self.personalidad or 'normal'
 
     @property
     def overall(self) -> int:
@@ -99,7 +135,8 @@ class Jugador:
     def poder_ataque_efectivo(self, mult: float = 1.0) -> float:
         """Calcula la efectividad ofensiva modificada por moral y rasgos."""
         try:
-            base = (self.ataque + self.tecnica * 0.5 + self.fisico * 0.3) * (self.moral / 70.0)
+            base = ((self.ataque + self.tecnica * 0.5 + self.fisico * 0.3)
+                    * _E.factor_moral(self.moral) * _E.factor_energia(_E.energia_actual(self)))
             if self.rasgo == "regateador":
                 base *= 1.15
             elif self.rasgo == "pulmon_de_hierro":
@@ -112,7 +149,8 @@ class Jugador:
     def poder_defensa_efectivo(self, mult: float = 1.0) -> float:
         """Calcula la efectividad defensiva modificada por moral y rasgos."""
         try:
-            base = (self.defensa + self.fisico * 0.5 + self.mental * 0.3) * (self.moral / 70.0)
+            base = ((self.defensa + self.fisico * 0.5 + self.mental * 0.3)
+                    * _E.factor_moral(self.moral) * _E.factor_energia(_E.energia_actual(self)))
             if self.rasgo == "rustico":
                 base *= 1.20
             elif self.rasgo == "lider":
@@ -128,6 +166,7 @@ class Jugador:
         # asdict() no lo incluye. Lo añadimos explícitamente para que el editor
         # y otros consumidores lo lean bien sin tener que recalcular.
         d = asdict(self)
+        d.pop("energia_vivo", None)
         try:
             d["overall"] = self.overall
         except Exception:
@@ -211,11 +250,43 @@ class Jugador:
                 edad=edad,
                 penales=penales,
                 porterias_cero=porterias_cero,
-                potencial=potencial
+                potencial=potencial,
+                nacionalidad=str(datos.get("nacionalidad", "") or ""),
+                transferible=bool(datos.get("transferible", False)),
+                salario=int(datos.get("salario", 0) or 0),
+                contrato_anios=int(datos.get("contrato_anios", 0) or 0),
+                clausula=int(datos.get("clausula", 0) or 0),
+                resistencia=int(datos.get("resistencia", 0) or 0),
+                energia=float(datos["energia"]) if datos.get("energia") is not None else 100.0,
+                personalidad=str(datos.get("personalidad", "") or ""),
+                pide_salir=bool(datos.get("pide_salir", False)),
+                jornadas_moral_baja=int(datos.get("jornadas_moral_baja", 0) or 0),
+                notas_recientes=[float(x) for x in (datos.get("notas_recientes") or [])][-5:],
+                salida_forzada=bool(datos.get("salida_forzada", False)),          # v4.4.0
+                escalon_salida=int(datos.get("escalon_salida", 0) or 0),
+                causas_moral=[dict(c) for c in (datos.get("causas_moral") or []) if isinstance(c, dict)][-4:],
+                jornadas_sin_jugar=int(datos.get("jornadas_sin_jugar", 0) or 0),
+                descontento_avisado=bool(datos.get("descontento_avisado", False)),
             )
         except Exception as e:
             logger.warning(f"Excepción al reconstruir Jugador: {e}. Usando fallback.")
             return cls("Jugador", "Desconocido", "MED", 60, 60, 60, 60, 60)
+
+def asegurar_ids_unicos(equipo) -> None:
+    """v3.1.0: ids 0 o repetidos dentro del equipo (reemplazos, libres, saves viejos) pasan a ser
+    únicos: el cierre físico y la moral cuentan minutos por id de jugador."""
+    try:
+        js = list(getattr(equipo, 'jugadores', []) or [])
+        siguiente = max([int(getattr(j, 'id', 0) or 0) for j in js] + [10_000]) + 1
+        vistos = set()
+        for j in js:
+            if not getattr(j, 'id', 0) or j.id in vistos:
+                j.id = siguiente
+                siguiente += 1
+            vistos.add(j.id)
+    except Exception as e:
+        logger.error(f"No se pudieron normalizar los ids de {getattr(equipo, 'nombre', '?')}: {e}")
+
 
 @dataclass
 class Equipo:
@@ -233,9 +304,13 @@ class Equipo:
     # v0.7: nombre corto (anti-solapamiento en menús) y familiaridad táctica acumulada.
     nombre_corto: str = ""
     tactica_familiaridad: dict[str, float] = field(default_factory=dict)
+    # v2.5.0: mentalidad por defecto del equipo (autobus/defensiva/normal/ofensiva/todo_o_nada).
+    mentalidad: str = "normal"
     # v2.3 (Fase 6): división actual del equipo (1 o 2). Se setea en el swap
     # de promoción/relegación. Default 1 (1ª división) para retrocompatibilidad.
     division: int = 1
+    rival: str = ""          # v3.1.0: nombre del club clásico
+    dt_nombre: str = ""      # v3.4.0: DT puesto a mano en el editor
 
     # Estadísticas de liga acumuladas
     puntos: int = 0
@@ -315,6 +390,8 @@ class Equipo:
     def from_dict(cls, datos: dict[str, Any]) -> "Equipo":
         """Deserializa tolerando campos ausentes."""
         try:
+            # v3.3.0: estilos viejos del editor → los 9 actuales (import local: evita ciclos).
+            from alpha_football.estilos import normalizar_estilo as _normalizar_estilo
             jugadores_datos = datos.get("jugadores", [])
             jugadores = [Jugador.from_dict(j) for j in jugadores_datos]
             
@@ -327,12 +404,14 @@ class Equipo:
                 nombre=str(datos.get("nombre", "Equipo")),
                 ciudad=str(datos.get("ciudad", "Ciudad")),
                 estrellas=float(datos.get("estrellas", 3.0)),
-                estilo_dt=str(datos.get("estilo_dt", "cruyffismo")),
+                estilo_dt=_normalizar_estilo(datos.get("estilo_dt", "cruyffismo")),  # v3.3.0
                 balance=balance,
                 jugadores=jugadores,
                 es_usuario=bool(datos.get("es_usuario", False)),
                 nombre_corto=str(datos.get("nombre_corto", "")),
                 tactica_familiaridad=dict(datos.get("tactica_familiaridad", {}) or {}),
+                mentalidad=(datos.get("mentalidad") if datos.get("mentalidad") in
+                            ("autobus", "defensiva", "normal", "ofensiva", "todo_o_nada") else "normal"),
                 puntos=int(datos.get("puntos", 0)),
                 pj=int(datos.get("pj", 0)),
                 pg=int(datos.get("pg", 0)),
@@ -342,6 +421,8 @@ class Equipo:
                 gc=int(datos.get("gc", 0)),
                 # v2.3: division default 1 (retrocompatible con saves viejos)
                 division=int(datos.get("division", 1)),
+                rival=str(datos.get("rival", "") or ""),
+                dt_nombre=str(datos.get("dt_nombre", "") or ""),  # v3.4.0
             )
         except Exception as e:
             logger.error(f"Error al reconstruir Equipo: {e}")
@@ -521,6 +602,18 @@ class ConfigAudio:
     activado: bool = True
     volumen: float = 0.5
 
+def _cargar_primeras(datos: dict) -> dict:
+    """v2.3.5: 1ª divisiones del save. Compat: los saves de la primera v2.3.5 guardaban
+    solo la 1ª del país del user en 'liga_1a_pais'."""
+    primeras = {str(t): Liga.from_dict(l)
+                for t, l in (datos.get("primera_division") or {}).items() if isinstance(l, dict)}
+    viejo = datos.get("liga_1a_pais")
+    if isinstance(viejo, dict):
+        liga = Liga.from_dict(viejo)
+        primeras.setdefault(liga.tipo, liga)
+    return primeras
+
+
 @dataclass
 class EstadoJuego:
     """
@@ -579,6 +672,12 @@ class EstadoJuego:
     # v2.3 (Fase 3): mapa de 2ª divisiones por tipo (betplay/laliga/premier/brasil/argentina).
     # Se carga on-demand al iniciar partida o al cargar save viejo (Fase 8).
     segunda_division: dict[str, Any] = field(default_factory=dict)
+    # v2.3.5: mapa de 1ª divisiones por tipo (las 5). Todas se simulan de fondo y se
+    # persisten; la del país del user ES su liga cuando él está en 1ª.
+    primera_division: dict[str, Any] = field(default_factory=dict)
+    # v2.3.6: datos de carrera que no son de una liga: clasificación real a las copas
+    # ('copa_ranking' = tabla final de cada 1ª) e historial del Balón de Oro ('balon_oro').
+    datos_carrera: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         try:
@@ -664,7 +763,11 @@ class EstadoJuego:
             # v2.3: segunda_division es un dict[tipo] -> dict (cada liga serializada).
             # NO se serializa automáticamente para evitar saves enormes; se regenera
             # on-demand desde los módulos data/segunda_*.py al cargar partida.
-            "segunda_division_keys": list(self.segunda_division.keys()) if self.segunda_division else [],
+            # v2.3.5: las 2ª divisiones y la 1ª del país SÍ se guardan completas. Antes se
+            # regeneraban al cargar y se perdían tablas, ascensos y descensos.
+            "segunda_division": {t: l.to_dict() for t, l in (self.segunda_division or {}).items() if l},
+            "primera_division": {t: l.to_dict() for t, l in (self.primera_division or {}).items() if l},
+            "datos_carrera": dict(self.datos_carrera or {}),
         }
 
     @classmethod
@@ -781,7 +884,12 @@ class EstadoJuego:
                 # v2.3: división del usuario (default 1) + segunda_division se regenera
                 # on-demand desde los módulos data/segunda_*.py (ver menu.py).
                 liga_usuario_division=int(datos.get("liga_usuario_division", 1)),
-                segunda_division={},  # se pobla via Fase 8 (compatibilidad saves)
+                segunda_division={
+                    str(t): Liga.from_dict(l)
+                    for t, l in (datos.get("segunda_division") or {}).items() if isinstance(l, dict)
+                },
+                primera_division=_cargar_primeras(datos),
+                datos_carrera=dict(datos.get("datos_carrera") or {}),
             )
         except Exception as e:
             logger.critical(f"Error crítico al deserializar EstadoJuego: {e}. Retornando estado vacío.")
@@ -879,15 +987,17 @@ class Alineacion:
 
 def alineacion_por_defecto(equipo: Equipo) -> Alineacion:
     """
-    Genera una alineación por defecto utilizando los primeros 11 jugadores del equipo.
+    Genera la alineación por defecto: v2.3.5 el mejor once del 4-3-3 (cada uno en su
+    puesto) y los 10 mejores suplentes. Antes eran los 11 primeros de la lista, que
+    ponía defensas de delanteros.
     """
     try:
         if not equipo or not equipo.jugadores:
             return Alineacion(titulares=[], formacion="4-3-3")
-        jugadores = equipo.jugadores
-        # Tomamos los primeros 11 índices
-        titulares = list(range(min(11, len(jugadores))))
-        return Alineacion(titulares=titulares, formacion="4-3-3")
+        from alpha_football import formaciones as F  # perezoso: formaciones no importa models
+        alin = Alineacion(titulares=F.mejor_once(equipo.jugadores, "4-3-3"), formacion="4-3-3")
+        F.normalizar_convocados(alin, equipo.jugadores)
+        return alin
     except Exception as e:
         logger.error(f"Error al generar alineación por defecto: {e}. Usando alineación vacía.")
         return Alineacion(titulares=[], formacion="4-3-3")
