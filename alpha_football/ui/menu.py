@@ -1653,10 +1653,13 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     # v2.3: cargar las 5 ligas de 2ª división on-demand (necesarias para el swap
                     # de promoción/relegación y para que la pantalla de liga las pueda mostrar).
                     # v2.3.5: las 10 ligas de la carrera; la del user ES su liga.
+                    from alpha_football.ui import pantalla_carga
+                    pantalla_carga.mostrar("INICIANDO CARRERA", "Cargando las 10 ligas", 0.1)
                     estado['primera_division'], estado['segunda_division'] = _ligas_por_division(liga_obj, {}, {})
                     from alpha_football.nombres import desduplicar   # v4.4.0: sin nombres repetidos
                     desduplicar(estado)
                     # v2.3.7: presupuestos realistas (liga, división y prestigio) para todos
+                    pantalla_carga.mostrar("INICIANDO CARRERA", "Presupuestos y nacionalidades", 0.45)
                     try:
                         from alpha_football.mercado_ia import asignar_presupuestos_realistas
                         asignar_presupuestos_realistas(estado, incluir_usuario=True)
@@ -1671,7 +1674,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     estado['current_screen'] = "league_screen"
                     # Defaults vacíos para evitar herencia de keys obsoletas
                     for _k in ('ofertas_recibidas', 'mercado', 'mercado_ofertas',
-                               '_pool_internacional', 'free_agents_list',
+                               '_pool_internacional', 'free_agents_list', 'free_agents_clave',
                                'recent_offers_player_ids', 'mercado_ofertas_temp',
                                'ultima_ventana_mercado_id',
                                'sim_comentarios', 'sim_eventos', 'sim_minuto_por_jugador',
@@ -1708,6 +1711,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     # 1ª); en 2ª división no se clasifica. Las claves copa_* se derivan de ahí.
                     estado['copa_clasificado_motivo'] = ("En 2ª división no se clasifica a copa."
                                                          if _div_sel == 2 else "")
+                    pantalla_carga.mostrar("INICIANDO CARRERA", "Sorteando las copas", 0.75)
                     try:
                         from alpha_football.ui.copa_screen import iniciar_copas_temporada
                         iniciar_copas_temporada(estado, forzar=True)
@@ -1728,9 +1732,13 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     # los seteamos antes del clear() y los conservamos para el save.
                     logger.info(f"Nueva carrera iniciada: liga={estado['liga'].tipo} equipo={equipo.nombre}")
                     estado['contrato_modo'] = 'alta'      # v3.2.0: firma estilo FIFA antes del hub
+                    pantalla_carga.mostrar("INICIANDO CARRERA", "Listo", 1.0)
                     return "contrato_dt_screen"
                 except Exception as e_dt:
                     logger.error(f"Error al finalizar alta del DT: {e_dt}")
+                finally:
+                    from alpha_football.ui import pantalla_carga as _pc
+                    _pc.cerrar()
             else:
                 for r, pais in nac_rects:
                     if r.collidepoint(click_pos):
@@ -1789,8 +1797,10 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     # `not modal_rect.collidepoint` lo cerraba al instante → el modal parpadeaba).
                     click_pos = None
                 elif click_pos and r.collidepoint(click_pos) and hdr:
+                    from alpha_football.ui import pantalla_carga
                     try:
                         from alpha_football import save
+                        pantalla_carga.mostrar("CARGANDO PARTIDA", f"Slot {i + 1}: {hdr.get('nombre_partida', '')}")
                         loaded = save.cargar_slot(i + 1)
                         estado['slot_activo'] = i + 1
                         if _aplicar_estado_cargado(estado, loaded):
@@ -1799,6 +1809,8 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                         logger.error(f"Error al cargar slot {i+1}: {e_ld}")
                         estado['menu_error'] = "No se pudo cargar ese slot."
                         estado['menu_error_ticks'] = pygame.time.get_ticks()
+                    finally:
+                        pantalla_carga.cerrar()
 
         volver_rect = R_CARGA_VOLVER
         _dibujar_boton_premium(screen, volver_rect, "VOLVER", volver_rect.collidepoint(mouse_pos) or foco_slot == 5)

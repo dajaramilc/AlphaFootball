@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 
 logger = logging.getLogger(__name__)
+from alpha_football.sanciones import sancionado as _sancionado  # noqa: E402  sanción de la competición que se juega
 
 # Cada entrada: {"cuotas": {...}, "posiciones": [(x,y)*11], "pref": estilo_dt}
 FORMACIONES: dict[str, dict] = {
@@ -134,7 +135,7 @@ def mejor_once(jugadores: list, formacion: str, puntaje=None) -> list[int]:
     _p = puntaje or (lambda j: getattr(j, "overall", 60))   # v3.1.0: la IA ordena con cansancio
     por_pos: dict[str, list[tuple[int, int]]] = {"POR": [], "DEF": [], "MED": [], "DEL": []}
     for idx, j in enumerate(jugadores):
-        if getattr(j, "lesion_partidos", 0) == 0 and getattr(j, "partidos_sancion", 0) <= 0:
+        if getattr(j, "lesion_partidos", 0) == 0 and not _sancionado(j):
             p = getattr(j, "posicion", "MED")
             if p not in por_pos:
                 p = "MED"
@@ -154,7 +155,7 @@ def mejor_once(jugadores: list, formacion: str, puntaje=None) -> list[int]:
     necesita_por = len([i for i in elegidos if getattr(jugadores[i], 'posicion', '') == 'POR']) == 0
     restantes = sorted(
         [(_p(j), idx) for idx, j in enumerate(jugadores)
-         if getattr(j, "lesion_partidos", 0) == 0 and getattr(j, "partidos_sancion", 0) <= 0
+         if getattr(j, "lesion_partidos", 0) == 0 and not _sancionado(j)
          and idx not in sel
          # Excluir porteros del relleno de campo (solo van al slot POR si falta portero)
          and (getattr(j, 'posicion', 'MED') != 'POR' or necesita_por)],

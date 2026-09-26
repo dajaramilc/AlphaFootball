@@ -557,10 +557,37 @@ PROB_OFERTA_CON_TRANSFERIBLES = 0.45
 PROB_OFERTA_POR_TRANSFERIBLE = 0.75
 
 
+DURACION_VENTANA = 3     # jornadas que dura cada ventana (≈ 1 mes en una liga de 22)
+
+
+def ventanas_mercado(num_jornadas: int) -> list:
+    """[(primera, última, nombre)] de las ventanas de la temporada: inicio (1-3), invierno a mitad
+    de temporada (J n/2 a n/2+2) y cierre (las 3 últimas). El invierno se omite si no entra."""
+    n = max(1, int(num_jornadas or 22))
+    d = DURACION_VENTANA
+    ventanas = [(1, min(d, n), 'inicio')]
+    medio = n // 2
+    if medio > d + 1 and medio + d - 1 < n - d:
+        ventanas.append((medio, medio + d - 1, 'invierno'))
+    if n - d + 1 > d:
+        ventanas.append((n - d + 1, n, 'cierre'))
+    return ventanas
+
+
+def ventana_actual(jornada: int, num_jornadas: int) -> Optional[tuple]:
+    """La ventana abierta en esa jornada (primera, última, nombre) o None."""
+    return next((v for v in ventanas_mercado(num_jornadas) if v[0] <= int(jornada) <= v[1]), None)
+
+
+def proxima_apertura(jornada: int, num_jornadas: int) -> int:
+    """Jornada en que abre la próxima ventana (1 = la de inicio de la temporada siguiente)."""
+    return next((v[0] for v in ventanas_mercado(num_jornadas) if v[0] > int(jornada)), 1)
+
+
 def ventana_mercado_abierta(jornada: int, num_jornadas: int) -> bool:
-    """El mercado está abierto en las jornadas 1-3 y en las últimas 3 de la liga."""
+    """El mercado está abierto en las jornadas 1-3, en el invierno (mitad de temporada) y en las 3 últimas."""
     try:
-        return jornada <= 3 or jornada > (num_jornadas - 3)
+        return ventana_actual(jornada, num_jornadas) is not None
     except Exception:
         return False
 
@@ -636,7 +663,9 @@ def crear_oferta_ui(mi_equipo: Any, rivales: list, jornada: int, num_jornadas: i
     try:
         if not ventana_mercado_abierta(jornada, num_jornadas):
             return None
-        transferibles = [j for j in getattr(mi_equipo, "jugadores", []) or []
+        # a préstamo: no reciben ofertas de traspaso (prestamos.py)
+        propios = [j for j in getattr(mi_equipo, "jugadores", []) or [] if not getattr(j, "prestamo", None)]
+        transferibles = [j for j in propios
                          if getattr(j, "transferible", False) or getattr(j, "pide_salir", False)]   # v3.1.0
         if azar.random() > (max(prob, PROB_OFERTA_CON_TRANSFERIBLES) if transferibles else prob):
             return None
@@ -648,11 +677,13 @@ def crear_oferta_ui(mi_equipo: Any, rivales: list, jornada: int, num_jornadas: i
         global ACTIVE_ESTADO
         if ACTIVE_ESTADO and isinstance(ACTIVE_ESTADO, dict):
             recent_ids = ACTIVE_ESTADO.setdefault('recent_offers_player_ids', [])
-        candidatos = [j for j in mi_equipo.jugadores if j.id not in recent_ids]
+        candidatos = [j for j in propios if j.id not in recent_ids]
         if not candidatos:
             if isinstance(recent_ids, list):
                 recent_ids.clear()
-            candidatos = list(mi_equipo.jugadores)
+            candidatos = list(propios)
+        if not candidatos:
+            return None
         objetivo = azar.choice(candidatos)
         if transferibles and azar.random() < PROB_OFERTA_POR_TRANSFERIBLE:
             objetivo = azar.choice(transferibles)
@@ -826,12 +857,12 @@ def crear_oferta_exterior(mi_equipo: Any, estado: Any,
             return None
         buenos = [
             j for j in jugadores
-            if getattr(j, "promedio_nota", 0) >= 7.2
-            or (getattr(j, "goles", 0) + getattr(j, "asistencias", 0)) >= 4
+            if not getattr(j, "prestamo", None) and (getattr(j, "promedio_nota", 0) >= 7.2
+            or (getattr(j, "goles", 0) + getattr(j, "asistencias", 0)) >= 4)
         ]
         # v3.5.0: además de los que rinden, tus 3 mejores por media siempre interesan afuera
         for j in sorted(jugadores, key=lambda x: -getattr(x, 'overall', 0))[:3]:
-            if j not in buenos:
+            if j not in buenos and not getattr(j, "prestamo", None):
                 buenos.append(j)
         if not buenos or azar.random() > prob:
             return None

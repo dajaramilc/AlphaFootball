@@ -112,6 +112,7 @@ def cerrar_partido(equipo, minutos: dict, rng: Optional[random.Random] = None,
     v4.0.0: con `incidencias` (las del partido: {'tipo','jugador','partidos'}) NO se sortea:
     se aplican esas (lesión → lesion_partidos, sanción → partidos_sancion).
     """
+    from alpha_football import sanciones as S
     propios = {id(j) for j in getattr(equipo, 'jugadores', []) or []}
     azar = rng or random.Random()
     lista = []
@@ -125,8 +126,7 @@ def cerrar_partido(equipo, minutos: dict, rng: Optional[random.Random] = None,
             if m <= 0:
                 if j.lesion_partidos > 0:
                     j.lesion_partidos -= 1
-                if j.partidos_sancion > 0:
-                    j.partidos_sancion -= 1
+                S.descontar(j)          # cumple una fecha de la competición que se jugó
                 continue
             antes = float(getattr(j, 'energia', 100.0))
             j.energia = energia_en_minuto(j, m, mult)
@@ -137,8 +137,9 @@ def cerrar_partido(equipo, minutos: dict, rng: Optional[random.Random] = None,
                 j.lesion_partidos = azar.choices(DURACION_LESION, weights=PESOS_LESION)[0]
                 lista.append({'tipo': 'lesion', 'jugador': j, 'partidos': j.lesion_partidos})
             elif azar.random() < PROB_ROJA_90 * m / 90:
-                j.partidos_sancion = 2 if azar.random() < 0.2 else 1
-                lista.append({'tipo': 'sancion', 'jugador': j, 'partidos': j.partidos_sancion})
+                S.sumar_sancion(j, 2 if azar.random() < 0.2 else 1)
+                lista.append({'tipo': 'sancion', 'jugador': j, 'partidos': S.partidos_sancion(j),
+                              'competicion': S.competicion_actual()})
         except Exception as e:
             logger.error(f"cerrar_partido: error con {getattr(j, 'apellido', '?')}: {e}")
     if incidencias is not None:
@@ -148,7 +149,12 @@ def cerrar_partido(equipo, minutos: dict, rng: Optional[random.Random] = None,
 
 def aplicar_incidencias(incidencias: list) -> list:
     """v4.0.0: escribe en los jugadores las lesiones/sanciones del partido; devuelve
-    [{'tipo', 'jugador', 'partidos'}] (el formato que usa el vestuario para el correo)."""
+    [{'tipo', 'jugador', 'partidos'}] (el formato que usa el vestuario para el correo).
+    Las sanciones van a la competición que se jugó (sanciones.py). Las amarillas se acumulan:
+    al llegar al límite devuelve una 'sancion' con motivo 'acumulacion'; a una del límite, un
+    'aviso_amarillas'."""
+    from alpha_football import sanciones as S
+    comp = S.competicion_actual()
     out = []
     for inc in incidencias or []:
         try:
@@ -156,11 +162,19 @@ def aplicar_incidencias(incidencias: list) -> list:
             if j is None:
                 continue
             n = int(inc.get('partidos', 1) or 1)
+            if inc.get('tipo') == 'amarilla':
+                r = S.sumar_amarilla(j)
+                if r == 'sancion':
+                    out.append({'tipo': 'sancion', 'jugador': j, 'partidos': 1, 'motivo': 'acumulacion',
+                                'competicion': comp})
+                elif r == 'aviso':
+                    out.append({'tipo': 'aviso_amarillas', 'jugador': j, 'partidos': 0, 'competicion': comp})
+                continue
             if inc.get('tipo') == 'lesion':
                 j.lesion_partidos = max(int(getattr(j, 'lesion_partidos', 0) or 0), n)
             else:
-                j.partidos_sancion = max(int(getattr(j, 'partidos_sancion', 0) or 0), n)
-            out.append({'tipo': inc.get('tipo'), 'jugador': j, 'partidos': n})
+                S.sumar_sancion(j, n)
+            out.append({'tipo': inc.get('tipo'), 'jugador': j, 'partidos': n, 'competicion': comp})
         except Exception as e:
             logger.error(f"aplicar_incidencias: incidencia inválida {inc}: {e}")
     return out

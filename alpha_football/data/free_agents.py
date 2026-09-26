@@ -65,7 +65,7 @@ def get_free_agents(jornada: int) -> list[Jugador]:
     try:
         # v0.8.x: eliminamos el gate `if jornada % 2 != 0: return []` — ahora
         # SIEMPRE hay agentes libres. Esto resuelve el bug de que la pestaña
-        # "Libres" se cacheaba vacía en jornadas impares (market_screen.py:384).
+        # "Libres" se cacheaba vacía en jornadas impares (en la vieja pantalla del mercado).
         num_jugadores = random.randint(6, 9)
         seleccionados = random.sample(NOMBRES_LIBRES, min(num_jugadores, len(NOMBRES_LIBRES)))
         # v4.4.0: si ese nombre ya lo tiene alguien en la carrera (p. ej. uno que fichaste), otro

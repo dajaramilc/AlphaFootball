@@ -456,8 +456,9 @@ def test_ia_vende_salidas_forzadas():
 # ---------------------------------------------------------------- Task 7: aviso de mercado
 def test_eventos_ventana():
     from alpha_football.ui import aviso_mercado as AM
-    assert AM.eventos_ventana(22) == {1: 'abre', 4: 'cierra', 20: 'abre'}
-    assert AM.eventos_ventana(14) == {1: 'abre', 4: 'cierra', 12: 'abre'}
+    # v4.5.0: mercado de invierno a mitad de temporada
+    assert AM.eventos_ventana(22) == {1: 'abre', 4: 'cierra', 11: 'abre', 14: 'cierra', 20: 'abre'}
+    assert AM.eventos_ventana(14) == {1: 'abre', 4: 'cierra', 7: 'abre', 10: 'cierra', 12: 'abre'}
     print("  test_eventos_ventana: OK")
 
 
@@ -477,8 +478,8 @@ def test_cartel_una_vez_y_teclas():
     AM.manejar(e, [], None)
     assert e['aviso_mercado_activo']['tipo'] == 'cierra'
     enter = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN, mod=0, unicode='')
-    dest, _k, _c = AM.manejar(e, [enter], None)                     # foco inicial = IR AL MERCADO
-    assert dest == 'market_screen' and not e.get('aviso_mercado_activo')
+    dest, _k, _c = AM.manejar(e, [enter], None)                     # cerrado: foco inicial = CONTINUAR
+    assert dest is None and not e.get('aviso_mercado_activo')
     print("  test_cartel_una_vez_y_teclas: OK")
 
 

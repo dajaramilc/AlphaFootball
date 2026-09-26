@@ -29,8 +29,10 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
-R_TAB_CALIF = pygame.Rect(SCREEN_W // 2 - 250, 128, 240, 34)
-R_TAB_TABLA = pygame.Rect(SCREEN_W // 2 + 10, 128, 240, 34)
+R_TAB_CALIF = pygame.Rect(SCREEN_W // 2 - 380, 128, 240, 34)
+R_TAB_TABLA = pygame.Rect(SCREEN_W // 2 - 120, 128, 240, 34)
+R_TAB_RES = pygame.Rect(SCREEN_W // 2 + 140, 128, 240, 34)
+PESTANAS = ('calificaciones', 'tabla', 'resultados')
 R_PANEL = pygame.Rect(40, 172, 1200, 462)
 R_CONTINUAR = pygame.Rect(SCREEN_W // 2 - 120, 648, 240, 44)
 
@@ -42,6 +44,15 @@ FILA_H = 26
 
 def _nombre(j) -> str:
     return getattr(j, 'nombre_completo', None) or getattr(j, 'apellido', None) or '?'
+
+
+def fmt_minuto(minuto) -> str:
+    """El minuto como se lee en la tele: la adición (solo al final) va como 90+X'."""
+    try:
+        m = int(minuto or 0)
+    except (TypeError, ValueError):
+        return f"{minuto}'"
+    return f"90+{m - 90}'" if m > 90 else f"{m}'"
 
 
 def _rgb(nombre, defecto=(255, 255, 255)):
@@ -134,6 +145,7 @@ def armar_datos(estado: dict, modo: str, local, visitante, gl: int, gv: int, ctx
             'figura': (fig['nombre'], fig['nota']) if fig else None,
             'linea': linea_de_tiempo(eventos, local, visitante),
             'pos_antes': pos_antes,
+            'resultados_ref': _ref_resultados(estado, modo, local, visitante),
         }
     except Exception as e:
         logger.error(f"armar_datos del post-partido: {e}")
@@ -143,6 +155,49 @@ def armar_datos(estado: dict, modo: str, local, visitante, gl: int, gv: int, ctx
     estado['postpartido_tab'] = 'calificaciones'
     estado['postpartido_scroll'] = 0
     return datos
+
+
+def _ref_resultados(estado: dict, modo: str, local, visitante) -> Optional[dict]:
+    """Qué fecha mostrar en RESULTADOS: la jornada de liga del partido o la fecha de copa.
+    Se guarda la referencia (no los marcadores) porque en copa el resto de la fecha puede
+    jugarse después de armar el post-partido."""
+    try:
+        if modo == 'copa':
+            p = estado.get('partido_copa_dict') or {}
+            from alpha_football import competiciones as K
+            t = p.get('tipo') or K.tipo_copa_user(estado)
+            return {'tipo': 'copa', 'copa': t, 'fecha': int(p['fecha'])} if t and p.get('fecha') is not None else None
+        if modo == 'liga':
+            liga = estado.get('liga')
+            ids = {getattr(local, 'id', None), getattr(visitante, 'id', None)}
+            p = next((x for x in reversed(getattr(liga, 'calendario', []) or [])
+                      if {x.local_id, x.visitante_id} == ids and x.jugado), None)
+            return {'tipo': 'liga', 'jornada': int(p.jornada)} if p is not None else None
+    except Exception as e:
+        logger.error(f"No se pudo ubicar la fecha del partido para RESULTADOS: {e}")
+    return None
+
+
+def resultados_fecha(estado: dict, ref: Optional[dict]) -> list:
+    """[(local, goles_l, goles_v, visitante, jugado, es_del_user)] de la jornada/fecha del partido."""
+    if not ref:
+        return []
+    user = getattr(estado.get('mi_equipo'), 'nombre', '')
+    try:
+        if ref.get('tipo') == 'liga':
+            liga = estado.get('liga')
+            nombres = {e.id: e.nombre for e in getattr(liga, 'equipos', []) or []}
+            return [(nombres.get(p.local_id, '?'), p.goles_local, p.goles_visitante, nombres.get(p.visitante_id, '?'),
+                     bool(p.jugado), user in (nombres.get(p.local_id), nombres.get(p.visitante_id)))
+                    for p in getattr(liga, 'calendario', []) or [] if p.jornada == ref['jornada']]
+        from alpha_football import competiciones as K
+        c = K.copa(estado, ref.get('copa')) or {}
+        return [(p['local'], p.get('gl', 0), p.get('gv', 0), p['visitante'], bool(p.get('jugado')),
+                 user in (p['local'], p['visitante']))
+                for p in c.get('partidos', []) if p.get('fecha') == ref.get('fecha')]
+    except Exception as e:
+        logger.error(f"No se pudieron leer los resultados de la fecha: {e}")
+        return []
 
 
 # ------------------------------------------------------------------ dibujo
@@ -187,7 +242,7 @@ def _dibujar_calificaciones(screen, datos: dict, scroll: int) -> None:
             draw_text(screen, f['pos'], (x0 + 6, y), size='sm', color='azul', shadow=False)
             nombre = f['nombre'][:24]
             if f['entro']:
-                nombre = f"{nombre[:18]} ({f['entro']}')"
+                nombre = f"{nombre[:18]} ({fmt_minuto(f['entro'])})"
             draw_text(screen, nombre, (x0 + 54, y), size='sm', color='blanco', shadow=False)
             ix = x0 + 360
             for _ in range(min(3, f['g'])):
@@ -271,6 +326,38 @@ def _dibujar_tabla_copa(screen, estado: dict) -> None:
         logger.error(f"No se pudo dibujar la tabla de copa del post-partido: {e}")
 
 
+def _dibujar_resultados(screen, estado: dict, datos: dict) -> None:
+    """Los demás partidos de la jornada (liga) o de la fecha (copa); el tuyo resaltado."""
+    draw_panel(screen, R_PANEL)
+    ref = datos.get('resultados_ref') or {}
+    filas = resultados_fecha(estado, ref)
+    titulo = (f"RESULTADOS DE LA JORNADA {ref['jornada']}" if ref.get('tipo') == 'liga'
+              else "RESULTADOS DE LA FECHA DE COPA" if ref else "RESULTADOS")
+    draw_text(screen, titulo, (R_PANEL.x + 20, R_PANEL.y + 10), size='md', color='dorado')
+    if not filas:
+        draw_text(screen, "No hay otros resultados para mostrar.", (R_PANEL.x + 20, R_PANEL.y + 56), size='md')
+        return
+    fila_h, y0 = 30, R_PANEL.y + 50
+    por_col = max(1, (R_PANEL.bottom - 10 - y0) // fila_h)
+    cols = 1 if len(filas) <= por_col else 2
+    ancho = (R_PANEL.width - 40) // cols
+    f = get_font('sm')
+    for i, (loc, gl, gv, vis, jugado, mio) in enumerate(filas[:por_col * cols]):
+        cx = R_PANEL.x + 20 + (i // por_col) * ancho + ancho // 2
+        y = y0 + (i % por_col) * fila_h
+        if mio:
+            pygame.draw.rect(screen, (30, 60, 50), pygame.Rect(cx - ancho // 2 + 4, y - 3, ancho - 8, fila_h - 2),
+                             border_radius=4)
+        col = 'verde' if mio else 'blanco'
+        marcador = f"{gl} - {gv}" if jugado else "vs"
+        corte = max(8, (ancho // 2 - 60) // 9)                 # nombres que entran a cada lado
+        izq, der = str(loc)[:corte], str(vis)[:corte]
+        draw_text(screen, izq, (cx - 42 - f.size(izq)[0], y), size='sm', color=col, shadow=False)
+        draw_text(screen, marcador, (cx - f.size(marcador)[0] // 2, y), size='sm',
+                  color='dorado' if jugado else 'azul', shadow=False)
+        draw_text(screen, der, (cx + 42, y), size='sm', color=col, shadow=False)
+
+
 def render(screen, estado: dict, mouse_pos, click_pos, teclas: list) -> Optional[str]:
     """Dibuja el post-partido. Devuelve 'continuar' con Enter/Espacio o CONTINUAR; None si sigue."""
     try:
@@ -282,7 +369,8 @@ def render(screen, estado: dict, mouse_pos, click_pos, teclas: list) -> Optional
             if k in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
                 return 'continuar'
             if k in (pygame.K_LEFT, pygame.K_RIGHT) and con_tabla:
-                tab = 'tabla' if tab == 'calificaciones' else 'calificaciones'
+                i = PESTANAS.index(tab) if tab in PESTANAS else 0
+                tab = PESTANAS[(i + (1 if k == pygame.K_RIGHT else -1)) % len(PESTANAS)]
             elif k == pygame.K_DOWN:
                 estado['postpartido_scroll'] = min(max(0, total - FILAS_VISIBLES), estado.get('postpartido_scroll', 0) + 1)
             elif k == pygame.K_UP:
@@ -294,6 +382,8 @@ def render(screen, estado: dict, mouse_pos, click_pos, teclas: list) -> Optional
                 tab = 'calificaciones'
             elif R_TAB_TABLA.collidepoint(click_pos) and con_tabla:
                 tab = 'tabla'
+            elif R_TAB_RES.collidepoint(click_pos) and con_tabla:
+                tab = 'resultados'
         estado['postpartido_tab'] = tab
 
         draw_gradient_bg(screen)
@@ -306,7 +396,10 @@ def render(screen, estado: dict, mouse_pos, click_pos, teclas: list) -> Optional
         draw_button(screen, R_TAB_CALIF, "CALIFICACIONES", tab == 'calificaciones')
         if con_tabla:
             draw_button(screen, R_TAB_TABLA, "TABLA" if datos.get('modo') != 'copa' else "COPA", tab == 'tabla')
-        if tab == 'tabla' and con_tabla:
+            draw_button(screen, R_TAB_RES, "RESULTADOS", tab == 'resultados')
+        if tab == 'resultados' and con_tabla:
+            _dibujar_resultados(screen, estado, datos)
+        elif tab == 'tabla' and con_tabla:
             if datos.get('modo') == 'copa':
                 _dibujar_tabla_copa(screen, estado)
             else:

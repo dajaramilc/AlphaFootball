@@ -576,6 +576,10 @@ def _pool(estado: dict, tipo: str) -> dict:
                 progresar_pasivo(eq, anios, rng)
     except Exception as e_age:
         logger.error(f"competiciones: envejecimiento del pool {tipo}: {e_age}")
+    fichados = {tuple(x) for x in (estado.get('datos_carrera') or {}).get('fichados_intl', []) if len(x) == 2}
+    if fichados:   # los que el user les fichó (el pool se rehace desde los datos del juego)
+        for eq in equipos.values():
+            eq.jugadores = [j for j in eq.jugadores if (eq.nombre, j.nombre_completo) not in fichados]
     cache[tipo] = {'_temporada': temporada, 'equipos': equipos}
     return equipos
 
@@ -943,7 +947,9 @@ def _simular(estado: dict, c: dict, p: dict, rng) -> None:
         try:
             from alpha_football.engine import simular_partido
             from alpha_football.partido_ctx import stats_de_equipo
-            res = simular_partido(loc, vis, con_eventos_caoticos=False)
+            from alpha_football.sanciones import en_competicion
+            with en_competicion('copa'):          # rojas y amarillas de copa se cumplen en copa
+                res = simular_partido(loc, vis, con_eventos_caoticos=False)
             gl, gv = int(res.goles_local), int(res.goles_visitante)
             st_l, st_v = stats_de_equipo(res.ctx, res.notas, 'l'), stats_de_equipo(res.ctx, res.notas, 'v')
         except Exception as e_sim:

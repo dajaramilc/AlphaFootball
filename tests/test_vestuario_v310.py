@@ -217,11 +217,11 @@ def test_moral_reglas():
     assert top.moral == 64                                     # v4.4.0: top 5 sin jugar −3 ×2
     for j in js: j.moral, j.jornadas_sin_jugar = 70, 0
     V.actualizar_moral(eq, _rep(once, 6.0), 0, 1, True, ids)
-    assert all(j.moral == 54 for j in once)                   # v4.4.0: (−2 derrota −6 clásico) ×2
+    assert all(j.moral == 60 for j in once)                   # v4.5.0: (−1 derrota −4 clásico) ×2
     for j in js: j.moral, j.personalidad, j.jornadas_sin_jugar = 70, 'normal', 0
     once[0].personalidad = 'lider'
     V.actualizar_moral(eq, _rep(once, 6.0), 0, 1, True, ids)
-    assert all(j.moral == 62 for j in once)                   # líder: pérdida a la mitad, luego ×2
+    assert all(j.moral == 70 + 2 * V._mitad(V.MORAL_DERROTA + V.MORAL_CLASICO_PERDIDO) for j in once)   # líder: mitad, ×2
     j0 = js[0]; j0.moral, j0.salario, j0.personalidad = 70, 1, 'mercenario'
     V.actualizar_moral(eq, [], 0, 0, False, set())
     assert j0.moral == 62                                      # v4.4.0: sueldo bajo mercenario −4 ×2

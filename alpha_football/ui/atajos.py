@@ -26,7 +26,6 @@ POR_DEFECTO = "H Ayuda · ESC Volver"
 # v3.6.0: atajos reales de cada pantalla (leídos de sus KEYDOWN). Formato "Tecla Acción · ... · H Ayuda".
 ATAJOS = {
     'league_screen': "J Jugar · ← → Pestañas · ↑ ↓ Opción · Enter Abrir · R Resultados · M Correo · O Opciones · H Ayuda · ESC Salir",
-    'market_screen': "← → Pestañas · F Filtros · P País · RePág AvPág Página · H Ayuda · ESC Volver",
     'copa_screen': "1-4 Pestañas · ← → Fecha/Pestaña · C Copa · R Simular resto · H Ayuda · ESC Volver",   # v3.8.0
     'career_screen': "↑ ↓ Desplazar · H Ayuda · ESC Volver",
     'team_screen': "Flechas Jugador · Espacio Cambiar · Enter OK · A Auto · R Reservas · [ ] Formación · - = Estilo · , . Ment. · H Ayuda · ESC Cancelar",
@@ -39,8 +38,9 @@ ATAJOS = {
     'edit_screen': "↑ ↓ Equipo/Jugador · → Plantilla · ← Equipo · Ctrl+S Guardar · Clic Editar · Enter Confirmar texto · H Ayuda · ESC Menú",
     'promo_releg_screen': "Enter Continuar · H Ayuda · ESC Continuar",
     'otras_ligas_screen': "↑ ↓ País · ← → División · C Copas · H Ayuda · ESC Volver",   # v3.8.0
-    'plantilla_screen': "↑ ↓ Jugador · Clic columna Ordenar · S Orden · T Transferible · R Renovar · H Ayuda · ESC Volver",
+    'plantilla_screen': "↑ ↓ Jugador · Clic columna Ordenar · S Orden · T Transferible · R Renovar · P Préstamo · H Ayuda · ESC Volver",
     'buscador_screen': "↑ ↓ Jugador · Tab Campo · Enter Buscar · Filtros · Solo libres · H Ayuda · ESC Volver",
+    'favoritos_screen': "↑ ↓ Jugador · Enter Negociar · Supr Quitar · Clic en la caja Buscar · H Ayuda · ESC Volver",
     'historial_pases_screen': "← → Pestaña · ↑ ↓ RePág AvPág Desplazar · H Ayuda · ESC Volver",
     'ojeador_screen': "← → Fichaje · Enter Fichar · M Correo · H Ayuda · ESC Volver",
     'objetivos_screen': "1 2 3 Espaldarazo · H Ayuda · ESC Volver",

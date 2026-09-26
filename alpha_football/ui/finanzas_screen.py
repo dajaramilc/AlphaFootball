@@ -64,7 +64,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         n = max(1, int(liga.num_jornadas or 10))
         restantes = max(0, n - sum(1 for p in liga.calendario if p.jugado and mi.id in (p.local_id, p.visitante_id)))
         medio = F.presupuesto_medio(liga)
-        masa = F.masa_salarial(mi)
+        masa = F.masa_salarial(mi, estado)
         por_jornada = int(medio * F.PATROCINIO_FRAC / n) + int(medio * F.TAQUILLA_FRAC / n) - masa // n
         proyeccion = mi.balance + por_jornada * restantes
         dc = estado.get('datos_carrera') or {}

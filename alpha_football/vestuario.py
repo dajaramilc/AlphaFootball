@@ -26,6 +26,11 @@ PERSONALIDAD_TXT = {'normal': "Normal", 'lider': "Líder", 'profesional': "Profe
                     'polemico': "Polémico", 'mercenario': "Mercenario"}
 UMBRAL_PIDE_SALIR = {'polemico': 3, 'lider': 5}   # v4.4.0: antes polémico 4 y el líder nunca
 JORNADAS_PIDE_SALIR = 4                           # v4.4.0: antes 6
+# moral por resultado (antes de duplicar las bajas con MULT_BAJA_MORAL): las derrotas pesan
+# menos que antes (−2 / clásico −6 / nota < 5.5 −3) para que una mala racha no hunda al plantel
+MORAL_VICTORIA, MORAL_DERROTA = 2, -1
+MORAL_CLASICO_GANADO, MORAL_CLASICO_PERDIDO = 5, -4
+MORAL_NOTA_BAJA = -2
 UMBRAL_MORAL_SALIR = 50                           # v4.4.0: moral < 50 cuenta como jornada mala (antes ≤ 30)
 MULT_BAJA_MORAL = 2                               # v4.4.0: toda baja de moral pesa el doble
 SUELDO_MINIMO_MORAL = 0.8                         # v4.4.0: cobrar < 80% del mercado baja la moral (antes 60%)
@@ -48,7 +53,8 @@ def actualizar_moral(equipo, reporte: list, gf: int, gc: int, es_clasico: bool, 
     js = list(getattr(equipo, 'jugadores', []) or [])
     notas = {r.get('id'): float(r.get('nota', 6.0)) for r in reporte or []}
     gano, perdio = gf > gc, gf < gc
-    d_equipo = (2 if gano else -2 if perdio else 0) + ((5 if gano else -6 if perdio else 0) if es_clasico else 0)
+    d_equipo = ((MORAL_VICTORIA if gano else MORAL_DERROTA if perdio else 0)
+                + ((MORAL_CLASICO_GANADO if gano else MORAL_CLASICO_PERDIDO if perdio else 0) if es_clasico else 0))
     hay_lider = any(j.personalidad == 'lider' and j.id in jugaron_ids for j in js)
     if d_equipo < 0 and hay_lider:
         d_equipo = _mitad(d_equipo)
@@ -65,7 +71,7 @@ def actualizar_moral(equipo, reporte: list, gf: int, gc: int, es_clasico: bool, 
             if notas[j.id] >= 7:
                 d += 3
             elif notas[j.id] < 5.5:
-                causas['equipo'] -= 3
+                causas['equipo'] += MORAL_NOTA_BAJA
         if (id(j) in top5 and j.id not in jugaron_ids and j.disponible
                 and j.id not in (no_disponibles or set())):
             causas['minutos'] -= 1 if prof else 3
@@ -98,7 +104,8 @@ def actualizar_moral(equipo, reporte: list, gf: int, gc: int, es_clasico: bool, 
         umbral = UMBRAL_PIDE_SALIR.get(j.personalidad, JORNADAS_PIDE_SALIR)
         if not j.pide_salir and j.jornadas_moral_baja >= umbral:
             j.pide_salir = True
-            j.transferible = True                   # v4.4.0: queda en transferibles, bloqueado
+            if not getattr(j, 'prestamo', None):    # a préstamo: no es tuyo, no se pone transferible
+                j.transferible = True               # v4.4.0: queda en transferibles, bloqueado
             salida['pide_salir'].append(j)
     return salida
 
@@ -149,12 +156,23 @@ def post_partido_user(estado: dict, user_eq, rival, gf: int, gc: int, reporte: l
         E.cerrar_partido(rival, minutos_rival, rng=azar, incidencias=incidencias_rival)
         for inc in incid:
             j = inc['jugador']
+            from alpha_football import sanciones as S
+            comp = inc.get('competicion') or S.competicion_actual()
+            de_comp = "de copa" if comp == 'copa' else "de liga"
             if inc['tipo'] == 'lesion':
                 C.enviar(estado, 'medico', f"Lesión: {j.nombre} {j.apellido}",
                          f"Estará fuera {inc['partidos']} partido(s).", C.accion('team_screen', "VER DIRECCIÓN DE EQUIPO"))
+            elif inc['tipo'] == 'aviso_amarillas':
+                C.enviar(estado, 'club', f"En riesgo: {j.nombre} {j.apellido} tiene {S.amarillas(j, comp)} amarillas",
+                         f"Lleva {S.amarillas(j, comp)} amarillas {de_comp}: si ve otra, se pierde el próximo partido {de_comp}.",
+                         C.accion('team_screen', "VER DIRECCIÓN DE EQUIPO"))
+            elif inc.get('motivo') == 'acumulacion':
+                C.enviar(estado, 'club', f"Suspensión por acumulación: {j.nombre} {j.apellido}",
+                         f"Llegó a {S.limite(comp)} amarillas {de_comp}: se pierde el próximo partido {de_comp}.",
+                         C.accion('team_screen', "VER DIRECCIÓN DE EQUIPO"))
             else:
                 C.enviar(estado, 'club', f"Suspensión: {j.nombre} {j.apellido}",
-                         f"Expulsado: se pierde {inc['partidos']} partido(s).",
+                         f"Expulsado: se pierde {inc['partidos']} partido(s) {de_comp}.",
                          C.accion('team_screen', "VER DIRECCIÓN DE EQUIPO"))
         clasico = es_clasico(user_eq, rival)
         jugaron = {jid for jid, m in minutos.items() if int(m or 0) > 0}

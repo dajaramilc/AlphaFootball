@@ -85,12 +85,15 @@ def _premios_copa_temporada(estado: dict) -> int:
 
 def avanzar_nueva_temporada(estado: dict) -> None:
     """Restablece los fixtures, jornadas, estadísticas de liga y avanza a la siguiente temporada."""
+    from alpha_football.ui import pantalla_carga as _pc     # pasos reales con barra
+    liga = mi_equipo = None
     try:
         liga = estado.get('liga')
         mi_equipo = estado.get('mi_equipo')
         if not liga or not mi_equipo:
             return
 
+        _pc.mostrar("PASANDO DE TEMPORADA", "Cerrando las copas", 0.05)
         # 0. v3.8.0: las dos copas terminan ANTES de subir la temporada (si no, el motor las
         #    reemplazaría por las de la temporada nueva). Se guardan sus campeones.
         campeones_copas = {}
@@ -229,6 +232,7 @@ def avanzar_nueva_temporada(estado: dict) -> None:
         #     (tabla final de cada 1ª en copa_ranking; ascender no da copa; 2ª no juega copa).
         estado['copa_clasificado_motivo'] = ""
 
+        _pc.mostrar("PASANDO DE TEMPORADA", "Ascensos y descensos", 0.25)
         # 3a. SWAP promoción/relegación entre la 1ª y la 2ª del país del usuario.
         # v2.3.5: ambas ligas son las reales de la partida (persistidas y simuladas de
         # fondo). Antes, con el user en 2ª, la 1ª se recargaba de disco con 0 puntos
@@ -305,6 +309,11 @@ def avanzar_nueva_temporada(estado: dict) -> None:
                     estado['_recien_ascendidos'].append(eq.nombre)
                     if eq.id == mi_equipo.id:
                         premio_ascenso_user = premio
+                        try:   # el premio de ascenso también va al libro de finanzas de la temporada
+                            from alpha_football.finanzas import registrar
+                            registrar(estado, 'premios', int(premio or 0), temp_anterior)
+                        except Exception as e_lib_asc:
+                            logger.error(f"No se pudo registrar el premio de ascenso: {e_lib_asc}")
                 except Exception as e_asc:
                     logger.error(f"Error aplicando el ascenso de {eq.nombre}: {e_asc}")
             for eq in descienden:
@@ -382,7 +391,8 @@ def avanzar_nueva_temporada(estado: dict) -> None:
                     j.porterias_cero = 0
                     j.moral = max(70, j.moral)
                     j.lesion_partidos = 0
-                    j.partidos_sancion = 0
+                    from alpha_football.sanciones import nueva_temporada as _sanc_nueva
+                    _sanc_nueva(j)              # sanciones y amarillas de liga y copa a cero
                     j.energia = 100.0           # v3.1.0: pretemporada
             # 4b. Desarrollo pasivo de fin de temporada (envejecimiento + OVR).
             try:
@@ -409,6 +419,7 @@ def avanzar_nueva_temporada(estado: dict) -> None:
         except Exception as e_comp:
             logger.error(f"Error completando las ligas a 12: {e_comp}")
 
+        _pc.mostrar("PASANDO DE TEMPORADA", "Retiros y regens", 0.5)
         # 4b-bis. v2.3.8: retiros (35+ años, sorteado) → regens de su país y posición.
         try:
             from alpha_football.retiros import procesar_retiros
@@ -416,6 +427,7 @@ def avanzar_nueva_temporada(estado: dict) -> None:
         except Exception as e_ret:
             logger.error(f"Error procesando retiros: {e_ret}")
 
+        _pc.mostrar("PASANDO DE TEMPORADA", "Mercado de pretemporada", 0.65)
         # 4c. v2.3.7: ingresos de la IA y mercado de pretemporada (los recién
         #     ascendidos fichan más para intentar mantenerse).
         try:
@@ -438,12 +450,7 @@ def avanzar_nueva_temporada(estado: dict) -> None:
         except Exception as e_foto:
             logger.error(f"Error guardando los objetivos de la IA: {e_foto}")
 
-        try:  # v4.4.0: primera tanda de ofertas para los que piden salir (la J1 ya es ventana)
-            from alpha_football.salidas import ofertas_garantizadas
-            ofertas_garantizadas(estado)
-        except Exception as e_og:
-            logger.error(f"Error creando las ofertas de pretemporada: {e_og}")
-
+        _pc.mostrar("PASANDO DE TEMPORADA", "Contratos y finanzas", 0.8)
         # 4d. v2.9.0: contratos (−1 año; los del user que vencen se van libres) y quiebra.
         try:
             from alpha_football.finanzas import cierre_temporada
@@ -451,6 +458,19 @@ def avanzar_nueva_temporada(estado: dict) -> None:
         except Exception as e_fin:
             logger.error(f"Error en el cierre financiero de la temporada: {e_fin}")
 
+        # DESPUÉS del cierre de contratos: el que se va libre no recibe oferta ni se cotiza con su contrato viejo
+        try:  # v4.4.0: primera tanda de ofertas para los que piden salir (la J1 ya es ventana)
+            from alpha_football.salidas import ofertas_garantizadas
+            ofertas_garantizadas(estado)
+        except Exception as e_og:
+            logger.error(f"Error creando las ofertas de pretemporada: {e_og}")
+        try:  # J1 es ventana: vuelven los préstamos de 1 año y arrancan los acordados
+            from alpha_football.prestamos import revisar_jornada as _prestamos_j1
+            _prestamos_j1(estado)
+        except Exception as e_pr:
+            logger.error(f"Error con los préstamos al empezar la temporada: {e_pr}")
+
+        _pc.mostrar("PASANDO DE TEMPORADA", "Sorteando las copas", 0.9)
         # 5. v3.8.0: copas de la temporada nueva (clasificados por la tabla final de cada 1ª).
         if not estado.get('copa_clasificado_motivo') and getattr(liga, 'division', 1) == 2:
             estado['copa_clasificado_motivo'] = "En 2ª división no se clasifica a copa."
@@ -460,6 +480,7 @@ def avanzar_nueva_temporada(estado: dict) -> None:
         except Exception as e_copa_nueva:
             logger.error(f"Error al sortear las copas de la temporada nueva: {e_copa_nueva}")
 
+        _pc.mostrar("PASANDO DE TEMPORADA", "Guardando la partida", 0.97)
         # 6. Autoguardar la partida de forma automática y atómica en el slot activo
         try:
             from alpha_football import save as _save
@@ -502,6 +523,10 @@ def avanzar_nueva_temporada(estado: dict) -> None:
 
     except Exception as e:
         logger.error(f"Error crítico en avanzar_nueva_temporada: {e}")
+    finally:
+        if liga and mi_equipo:                  # sin partida no hubo carga que mostrar
+            _pc.mostrar("PASANDO DE TEMPORADA", "Listo", 1.0)
+        _pc.cerrar()
 
 
 # v3.9.0: rects expuestos (ayuda H). AVANZAR sube a y=646 (antes 652: la barra de atajos lo pisaba).

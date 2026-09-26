@@ -167,7 +167,8 @@ def test_retornos_de_copa():
 
 def test_pestanas_y_tarjetas_llevan_a_cada_pantalla():
     esperado = {'direccion': ['team_screen', 'plantilla_screen'],
-                'negociaciones': ['buscador_screen', 'ofertas_screen', 'historial_pases_screen', 'ojeador_screen'],
+                'negociaciones': ['buscador_screen', 'favoritos_screen', 'ofertas_screen', 'historial_pases_screen',
+                                  'ojeador_screen'],
                 'oficina': ['correo_screen', 'stats_screen', 'copa_screen', 'career_screen', 'otras_ligas_screen', 'objetivos_screen',
                             'contrato_dt_screen', 'ofertas_dt_screen'],      # v3.2.0: MI CONTRATO · v3.4.0: OFERTAS DT
                 'finanzas': ['finanzas_screen', 'plantilla_screen']}

@@ -44,9 +44,64 @@ def precio_fichaje(jugador) -> int:
         return int(getattr(jugador, 'valor', 0) or 0)
 
 
+def asegurar_agentes_libres(estado: dict) -> list:
+    """
+    Agentes libres de la jornada (antes los generaba la pantalla vieja del mercado). La lista dura
+    toda la jornada; al cambiar de jornada se conservan los que se fueron libres de tu club y los
+    que están analizando tu propuesta de contrato.
+    """
+    liga = estado.get('liga')
+    clave = [int(estado.get('temporada', 1) or 1), int(getattr(liga, 'jornada_actual', 1) or 1)]
+    if estado.get('free_agents_list') and estado.get('free_agents_clave') == clave:
+        return estado['free_agents_list']
+    en_analisis = {(str(a.get('jugador_id')), a.get('jugador'))
+                   for a in (estado.get('datos_carrera') or {}).get('analisis_contratos', [])
+                   if a.get('club_id') is None}
+    conservar = [j for j in estado.get('free_agents_list') or []
+                 if getattr(j, 'fin_de_contrato', False) or (str(j.id), j.nombre_completo) in en_analisis]
+    try:
+        from alpha_football.data.free_agents import get_free_agents
+        estado['free_agents_list'] = conservar + list(get_free_agents(clave[1]) or [])
+    except Exception as e:
+        logger.error(f"No se pudieron generar los agentes libres: {e}")
+        estado['free_agents_list'] = conservar
+    estado['free_agents_clave'] = clave
+    return estado['free_agents_list']
+
+
+ETIQUETA_INTL = {'champions': "INT EUR", 'libertadores': "INT SUD"}
+
+
+def clubes_internacionales(estado: dict) -> list:
+    """
+    (club, etiqueta) de los clubes de relleno de Champions/Libertadores: los que no juegan en
+    ninguna de las 16 ligas. Son los mismos objetos que usa el motor de copas (se fichan de ahí).
+    """
+    out = []
+    try:
+        from alpha_football import competiciones as CP
+        from alpha_football.data.internacional import RELLENO_CHAMPIONS, RELLENO_LIBERTADORES
+        for tipo, nombres in (('champions', RELLENO_CHAMPIONS), ('libertadores', RELLENO_LIBERTADORES)):
+            pool = CP._pool(estado, tipo)
+            out += [(pool[n], ETIQUETA_INTL[tipo]) for n in nombres if n in pool]
+    except Exception as e:
+        logger.error(f"No se pudieron cargar los clubes internacionales del buscador: {e}")
+    return out
+
+
+def es_club_internacional(club) -> bool:
+    try:
+        from alpha_football.data.internacional import RELLENO_CHAMPIONS, RELLENO_LIBERTADORES
+        return getattr(club, 'nombre', None) in set(RELLENO_CHAMPIONS) | set(RELLENO_LIBERTADORES)
+    except Exception:
+        return False
+
+
 def pool_buscador(estado: dict) -> list:
     """(jugador, club o None, etiqueta de liga) de todos los que el user podría fichar."""
     mi = estado.get('mi_equipo')
+    if mi is not None:
+        asegurar_agentes_libres(estado)
     pool = []
     vistos = set()
     for division, clave in ((1, 'primera_division'), (2, 'segunda_division')):
@@ -60,9 +115,56 @@ def pool_buscador(estado: dict) -> list:
                     continue
                 for j in getattr(eq, 'jugadores', []) or []:
                     pool.append((j, eq, etiqueta))
+    for eq, etiqueta in clubes_internacionales(estado):
+        for j in getattr(eq, 'jugadores', []) or []:
+            pool.append((j, eq, etiqueta))
     for j in estado.get('free_agents_list') or []:
         pool.append((j, None, LIBRES))
     return pool
+
+
+# --- Favoritos: jugadores que el user sigue para ficharlos después ───────────────
+# Se guardan por nombre completo (los nombres son únicos en la carrera desde v4.4.0) en
+# datos_carrera['favoritos'], así sobreviven a guardar/cargar y a que el jugador cambie de club.
+
+def _favs(estado: dict) -> list:
+    return estado.setdefault('datos_carrera', {}).setdefault('favoritos', [])
+
+
+def es_favorito(estado: dict, jugador) -> bool:
+    return getattr(jugador, 'nombre_completo', None) in _favs(estado)
+
+
+def alternar_favorito(estado: dict, jugador) -> bool:
+    """Agrega o quita al jugador de favoritos. Devuelve si quedó como favorito."""
+    favs, nombre = _favs(estado), jugador.nombre_completo
+    if nombre in favs:
+        favs.remove(nombre)
+        return False
+    favs.append(nombre)
+    return True
+
+
+def quitar_favorito(estado: dict, jugador) -> None:
+    nombre = getattr(jugador, 'nombre_completo', None)
+    if nombre in _favs(estado):
+        _favs(estado).remove(nombre)
+
+
+def favoritos(estado: dict) -> list:
+    """(jugador, club, etiqueta) de los favoritos en el orden en que se agregaron. Los que ya son
+    del user o no aparecen en ningún lado (retirados) salen de la lista."""
+    favs = _favs(estado)
+    if not favs:
+        return []
+    mi = estado.get('mi_equipo')
+    propios = {j.nombre_completo for j in getattr(mi, 'jugadores', []) or []}
+    por_nombre = {}
+    for j, club, et in pool_buscador(estado):
+        por_nombre.setdefault(j.nombre_completo, (j, club, et))
+    vigentes = [n for n in favs if n in por_nombre and n not in propios]
+    favs[:] = vigentes
+    return [por_nombre[n] for n in vigentes]
 
 
 def filtrar(pool: list, filtros: dict) -> list:
@@ -177,6 +279,8 @@ def fichar(estado: dict, jugador, club, precio: Optional[int] = None) -> tuple[b
     mi = estado.get('mi_equipo')
     if mi is None:
         return False, "No hay equipo."
+    if getattr(jugador, 'prestamo', None):   # préstamos: no se compra a uno que está a préstamo
+        return False, f"{jugador.nombre_completo} está a préstamo: no se puede fichar."
     precio = precio_fichaje(jugador) if precio is None else int(precio)
     try:
         from alpha_football.market import puede_fichar
@@ -186,12 +290,22 @@ def fichar(estado: dict, jugador, club, precio: Optional[int] = None) -> tuple[b
         ok, motivo = mi.balance >= precio, "Presupuesto insuficiente."
     if not ok:
         return False, motivo
+    from alpha_football import traspasos_pendientes as TP
+    if TP.pendiente_de(estado, jugador) is not None:
+        return False, f"Ya está acordado: llega en la jornada {TP.jornada_apertura(estado)}."
+    if not TP.mercado_abierto(estado):
+        return _fichar_diferido(estado, jugador, club, precio)
     try:
         if club is not None:
             if jugador not in club.jugadores:
                 return False, "El jugador ya no está en ese club."
             club.jugadores.remove(jugador)
             club.alineacion_activa = None   # v2.9.1: sus índices quedaron corridos
+            if es_club_internacional(club):
+                # el pool internacional se rehace desde los datos al cargar o cambiar de temporada:
+                # se anota para que el fichado no vuelva a aparecer en su club viejo
+                estado.setdefault('datos_carrera', {}).setdefault('fichados_intl', []).append(
+                    [club.nombre, jugador.nombre_completo])
             club.balance = int(getattr(club, 'balance', 0) or 0) + precio
         elif jugador in (estado.get('free_agents_list') or []):
             estado['free_agents_list'].remove(jugador)
@@ -213,20 +327,55 @@ def fichar(estado: dict, jugador, club, precio: Optional[int] = None) -> tuple[b
         except Exception as e_fin:
             logger.error(f"No se pudo registrar el gasto del fichaje: {e_fin}")
         avisar_llegada(estado, jugador)     # v4.4.0
+        quitar_favorito(estado, jugador)
         return True, f"¡Fichaje de {jugador.nombre_completo}!"
     except Exception as e:
         logger.error(f"Error al fichar: {e}")
         return False, "No se pudo completar el fichaje."
 
 
+def _fichar_diferido(estado: dict, jugador, club, precio: int) -> tuple[bool, str]:
+    """Mercado cerrado: se paga ya y el jugador llega cuando se abra la ventana."""
+    from alpha_football import traspasos_pendientes as TP
+    from alpha_football import correo as C
+    mi = estado['mi_equipo']
+    try:
+        if club is not None:
+            if jugador not in club.jugadores:
+                return False, "El jugador ya no está en ese club."
+            club.balance = int(getattr(club, 'balance', 0) or 0) + precio
+        elif jugador in (estado.get('free_agents_list') or []):
+            estado['free_agents_list'].remove(jugador)   # ya no se lo puede llevar otro
+        mi.balance -= precio
+        aviso = TP.diferir_compra(estado, jugador, club, precio)
+        estado['fichajes_realizados'] = int(estado.get('fichajes_realizados', 0) or 0) + 1
+        de = getattr(club, 'nombre', 'Libre') if club is not None else 'Libre'
+        estado.setdefault('transfer_log', []).append(
+            f"Compra acordada: {jugador.nombre_completo} de {de} por ${precio:,} (llega en la ventana)")
+        try:
+            from alpha_football.finanzas import registrar
+            registrar(estado, 'fichajes', precio)
+        except Exception as e_fin:
+            logger.error(f"No se pudo registrar el gasto del fichaje: {e_fin}")
+        C.enviar(estado, 'club', f"Fichaje acordado: {jugador.nombre_completo}",
+                 f"Pagaste {dinero_exacto(precio)} a {de}. {aviso}")
+        quitar_favorito(estado, jugador)
+        return True, f"¡Acuerdo cerrado! {jugador.nombre_completo} llega en la jornada {TP.jornada_apertura(estado)}."
+    except Exception as e:
+        logger.error(f"Error al fichar con el mercado cerrado: {e}")
+        return False, "No se pudo completar el fichaje."
+
+
 # --- Ojeador ──────────────────────────────────────────────────────────────────
 
 def _clave_ventana(estado: dict) -> tuple:
-    """Ventana de mercado actual o la próxima: (temporada, 'inicio'|'cierre')."""
+    """Ventana de mercado actual o la próxima: (temporada, 'inicio'|'invierno'|'cierre')."""
+    from alpha_football.market import ventanas_mercado
     liga = estado.get('liga')
     j = int(getattr(liga, 'jornada_actual', 1) or 1)
     temporada = int(estado.get('temporada', 1) or 1)
-    return (temporada, 'inicio' if j <= 3 else 'cierre')
+    nombre = next((v[2] for v in ventanas_mercado(getattr(liga, 'num_jornadas', 22)) if j <= v[1]), 'cierre')
+    return (temporada, nombre)
 
 
 def necesidades(mi_equipo) -> dict:
@@ -355,6 +504,9 @@ def buscar_en_club(estado: dict, club_id, jugador_id) -> tuple:
             for eq in getattr(liga, 'equipos', []) or []:
                 if str(eq.id) == str(club_id):
                     return eq, next((j for j in eq.jugadores if str(j.id) == str(jugador_id)), None)
+    for eq, _et in clubes_internacionales(estado):
+        if str(eq.id) == str(club_id):
+            return eq, next((j for j in eq.jugadores if str(j.id) == str(jugador_id)), None)
     return None, None
 
 
@@ -363,6 +515,12 @@ def evaluar_compra(estado: dict, jugador, club, monto: int) -> tuple:
     from alpha_football.finanzas import asegurar_contrato
     asegurar_contrato(jugador)
     monto = int(monto or 0)
+    p_pr = getattr(jugador, 'prestamo', None)
+    if p_pr:   # préstamos: no se vende a uno que está a préstamo (ni tu propio cedido)
+        mi = estado.get('mi_equipo')
+        if p_pr.get('dueno') == getattr(mi, 'nombre', None):
+            return 'rechaza', f"{jugador.nombre_completo} es tuyo (cedido): usa CONCLUIR PRÉSTAMO en PLANTILLA.", 0
+        return 'rechaza', f"{jugador.nombre_completo} está a préstamo en {getattr(club, 'nombre', 'otro club')}: no se vende.", 0
     if club is None:
         return 'acepta', "Agente libre: no hay club con quien negociar.", 0
     clausula = int(jugador.clausula or 0)
@@ -466,6 +624,11 @@ def completar_fichaje(estado: dict, jugador, club, monto: int, salario: int, ani
     ok, msg = fichar(estado, jugador, club, precio=monto)
     if ok:
         _fijar_contrato(jugador, salario, anios, clausula_mult)
+        try:   # agente libre que llega en la ventana: se guarda con su contrato nuevo
+            from alpha_football.traspasos_pendientes import actualizar_datos
+            actualizar_datos(estado, jugador)
+        except Exception as e_tp:
+            logger.error(f"No se pudo actualizar el fichaje pendiente: {e_tp}")
     return ok, msg
 
 
@@ -487,9 +650,11 @@ def iniciar_negociacion(estado: dict, jugador, club, modo: str, volver: str) -> 
     anios = 2 if jugador.edad >= EDAD_CONTRATO_CORTO else 3
     estado['neg'] = {
         'jugador': jugador, 'club': club, 'modo': modo, 'volver': volver,
-        'etapa': 'club' if modo == 'fichaje' and club is not None else 'jugador',
+        'etapa': 'club' if modo in ('fichaje', 'prestamo') and club is not None else 'jugador',
         'monto': precio_fichaje(jugador) if club is not None else 0,
         'salario': int(salario_pedido(jugador, modo, 2.0) * 0.9), 'anios': anios,
         'clausula_mult': 2.0, 'msg': None,
     }
+    if modo == 'prestamo':
+        estado['neg'].update({'meses': 6, 'pct': 50})    # duración y % del sueldo que pagas tú
     return 'negociacion_screen'

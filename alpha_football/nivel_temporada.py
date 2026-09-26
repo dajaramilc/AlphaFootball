@@ -76,11 +76,18 @@ def aplicar(equipo, caso: str, estado: Optional[dict] = None) -> list:
         except Exception as e_sf:
             logger.error(f"No se pudo marcar la salida forzada de {getattr(equipo, 'nombre', '?')}: {e_sf}")
     js = list(getattr(equipo, 'jugadores', []) or [])
+    if caso == 'ascenso':
+        # los que pedían salir por el descenso vuelven a estar en 1ª: ya no tienen motivo para irse
+        from alpha_football.salidas import limpiar
+        for j in js:
+            if getattr(j, 'salida_forzada', False):
+                limpiar(j)
     if plan:
         deltas = deltas_equipo(equipo, plan['medias'], plan['num_jornadas'], caso)
     else:
         deltas = {id(j): NO_ELEGIBLE[caso] for j in js}
     tmp = estado.setdefault('_nivel_tmp', {})
+    base = {id(j): j.overall for j in js}     # media antes del bajón/salto (el correo muestra el total)
     cambios = []
     for j in js:
         d = int(deltas.get(id(j), NO_ELEGIBLE[caso]))
@@ -100,7 +107,7 @@ def aplicar(equipo, caso: str, estado: Optional[dict] = None) -> list:
     estado.setdefault('_nivel_movidos', set()).add(id(equipo))
     mi = estado.get('mi_equipo')
     if mi is not None and equipo is mi:
-        estado['_nivel_user'] = {'caso': caso, 'cambios': cambios}
+        estado['_nivel_user'] = {'caso': caso, 'cambios': cambios, 'base': base}
     return cambios
 
 
@@ -194,7 +201,10 @@ ASUNTOS = {'descenso': "Descenso: los jugadores están en mala forma y perdieron
 
 def _correo_user(estado: dict, user: dict, devueltos: dict) -> None:
     from alpha_football import correo as C
-    cambios = [(j, int(d) + int(devueltos.get(id(j), 0))) for j, d in user.get('cambios') or []]
+    base = user.get('base') or {}
+    # delta real que se ve en la plantilla: bajón/salto + curva por edad + devolución por el tope
+    cambios = [(j, int(j.overall) - int(base[id(j)]) if id(j) in base else int(d) + int(devueltos.get(id(j), 0)))
+               for j, d in user.get('cambios') or []]
     if not cambios:
         return
     prom = sum(d for _j, d in cambios) / len(cambios)

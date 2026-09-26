@@ -401,6 +401,54 @@ def texto_nota_vivo(j, estado):
         return None
 
 
+def baja_de(estado, j, en_partido: bool) -> Optional[str]:
+    """'roja' / 'lesion' si el jugador no está disponible (en vivo: expulsado o lesionado en este
+    partido; fuera del partido: sancionado o lesionado); None si puede jugar."""
+    try:
+        if en_partido:
+            ctx = estado.get('sim_ctx')
+            if ctx is None or id(j) not in ctx.fuera:
+                return None
+            tipo = next((i.get('tipo') for i in ctx.incidencias if i.get('jugador_id') == id(j)), None)
+            return 'roja' if tipo == 'sancion' else 'lesion'
+        from alpha_football.sanciones import sancionado
+        if sancionado(j):                 # la sanción de la competición del próximo partido
+            return 'roja'
+        if getattr(j, 'lesion_partidos', 0) > 0:
+            return 'lesion'
+    except Exception as e:
+        logger.error(f"No se pudo saber si {getattr(j, 'apellido', '?')} está disponible: {e}")
+    return None
+
+
+def _amarillas_ficha(j) -> str:
+    from alpha_football.sanciones import amarillas, limite
+    return f"L {amarillas(j, 'liga')}/{limite('liga')} · C {amarillas(j, 'copa')}/{limite('copa')}"
+
+
+def amarillas_de(estado, j, en_partido: bool) -> int:
+    """Amarillas que lleva el jugador en el partido en vivo (0 fuera del partido)."""
+    if not en_partido:
+        return 0
+    ctx = estado.get('sim_ctx')
+    return int(getattr(ctx, 'amarillas', {}).get(id(j), 0) or 0) if ctx is not None else 0
+
+
+def _oscurecer(color, factor: float = 0.35) -> tuple:
+    return tuple(int(c * factor) for c in color[:3])
+
+
+def _icono_baja(screen, tipo: str, centro: tuple) -> None:
+    """Tarjeta roja o cruz de lesión (mismos íconos que el post-partido), con borde para que se vea."""
+    try:
+        from alpha_football.ui.postpartido import dibujar_icono
+        if tipo in ('roja', 'amarilla'):
+            pygame.draw.rect(screen, (10, 14, 26), pygame.Rect(centro[0] - 7, centro[1] - 9, 14, 18), border_radius=3)
+        dibujar_icono(screen, tipo, centro)
+    except Exception as e:
+        logger.error(f"No se pudo dibujar el ícono de baja: {e}")
+
+
 def _barra_energia(screen, x, y, ancho, e) -> None:
     from alpha_football.energia import UMBRAL_AMARILLO, UMBRAL_ROJO   # v4.4.0
     col = COLORS['verde'] if e >= UMBRAL_AMARILLO else (COLORS['dorado'] if e >= UMBRAL_ROJO else COLORS['rojo'])
@@ -408,15 +456,23 @@ def _barra_energia(screen, x, y, ancho, e) -> None:
     pygame.draw.rect(screen, col, pygame.Rect(x, y, int(ancho * max(0.0, min(100.0, e)) / 100), 5), border_radius=2)
 
 
-def _dibujar_tarjeta(screen, rect, j, seleccionada, hover, sustituido=False, energia=None):
+def _dibujar_tarjeta(screen, rect, j, seleccionada, hover, sustituido=False, energia=None, baja=None,
+                     amarilla=False):
     col = POS_COLOR.get(getattr(j, 'posicion', 'MED'), GRIS_CLAR) if not sustituido else (70, 70, 80)
-    pygame.draw.rect(screen, (30, 45, 75) if hover else (15, 22, 40), rect, border_radius=6)
+    if baja:
+        col = _oscurecer(col)                   # no disponible: la tarjeta se ve apagada
+    pygame.draw.rect(screen, ((30, 45, 75) if hover else (15, 22, 40)) if not baja else (8, 10, 18), rect, border_radius=6)
     pygame.draw.rect(screen, col, pygame.Rect(rect.x, rect.y, rect.width, 22),
                      border_top_left_radius=6, border_top_right_radius=6)
     draw_text(screen, f"{j.posicion}  {j.overall}", (rect.x + 8, rect.y + 2), size='sm', color='blanco', shadow=False)
     draw_text(screen, _truncar(getattr(j, 'apellido', '') or j.nombre, 11), (rect.x + 8, rect.y + 30), size='sm', color='blanco')
     draw_text(screen, _truncar(getattr(j, 'nombre', ''), 11), (rect.x + 8, rect.y + 52), size='sm', color='azul', shadow=False)
-    if sustituido:
+    if baja == 'roja':
+        from alpha_football.sanciones import partidos_sancion as _ps
+        n_s = _ps(j)
+        draw_text(screen, f"SANCIÓN {n_s}" if n_s else "EXPULSADO", (rect.x + 8, rect.y + 76), size='sm', color='rojo', shadow=False)
+        _icono_baja(screen, 'roja', (rect.right - 14, rect.y + 11))
+    elif sustituido:
         draw_text(screen, "SUSTITUIDO", (rect.x + 8, rect.y + 76), size='sm', color='rojo', shadow=False)
     elif getattr(j, 'lesion_partidos', 0) > 0:
         draw_text(screen, f"LESIÓN {j.lesion_partidos}", (rect.x + 8, rect.y + 76), size='sm', color='rojo', shadow=False)
@@ -424,6 +480,10 @@ def _dibujar_tarjeta(screen, rect, j, seleccionada, hover, sustituido=False, ene
         draw_text(screen, f"Moral {getattr(j, 'moral', 70)}", (rect.x + 8, rect.y + 76), size='sm', color='verde', shadow=False)
     _barra_energia(screen, rect.x + 8, rect.bottom - 9, rect.width - 16,
                    float(getattr(j, 'energia', 100.0)) if energia is None else energia)   # v3.1.0
+    if baja == 'lesion':
+        _icono_baja(screen, 'lesion', (rect.right - 14, rect.y + 11))
+    elif amarilla and not baja:
+        _icono_baja(screen, 'amarilla', (rect.right - 14, rect.y + 11))
     pygame.draw.rect(screen, AMARILLO if seleccionada else (60, 80, 110), rect,
                      width=4 if seleccionada else 1, border_radius=6)
 
@@ -561,15 +621,21 @@ def _render_direccion(screen, estado, mi_equipo, alin, es_amistoso, modo_prepart
         hits.append((area, ('campo', k)))
         es_sel = sel == ('campo', k)
         fuera = tipos[k] != j.posicion           # jugando fuera de su puesto
+        baja = baja_de(estado, j, en_partido)    # expulsado / lesionado: ya no lo tenemos
         pygame.draw.circle(screen, (0, 0, 0), (cx + 2, cy + 3), 25)
-        pygame.draw.circle(screen, POS_COLOR.get(j.posicion, GRIS_CLAR), (cx, cy), 25)
+        color_pos = POS_COLOR.get(j.posicion, GRIS_CLAR)
+        pygame.draw.circle(screen, _oscurecer(color_pos) if baja else color_pos, (cx, cy), 25)
         pygame.draw.circle(screen, AMARILLO if es_sel else (BLANCO if not area.collidepoint(mouse_pos) else COLORS['verde']),
                            (cx, cy), 25, 4 if es_sel else 2)
         f = get_font('sm')
-        s = f.render(str(j.overall), True, BLANCO)
+        s = f.render(str(j.overall), True, BLANCO if not baja else (120, 120, 130))
         screen.blit(s, s.get_rect(center=(cx, cy)))
+        if baja:
+            _icono_baja(screen, baja, (cx + 20, cy - 20))
+        elif amarillas_de(estado, j, en_partido):
+            _icono_baja(screen, 'amarilla', (cx + 20, cy - 20))      # amonestado: cuidado con la 2ª
         nombre = _truncar(getattr(j, 'apellido', '') or j.nombre, 12)
-        s = f.render(nombre, True, AMARILLO if es_sel else BLANCO)
+        s = f.render(nombre, True, AMARILLO if es_sel else (BLANCO if not baja else (120, 120, 130)))
         fondo = s.get_rect(center=(cx, cy + 38)).inflate(8, 2)
         pygame.draw.rect(screen, (10, 14, 26), fondo, border_radius=4)
         screen.blit(s, s.get_rect(center=(cx, cy + 38)))
@@ -619,9 +685,10 @@ def _render_direccion(screen, estado, mi_equipo, alin, es_amistoso, modo_prepart
                  ("Goles", getattr(jsel, 'goles', 0)), ("Rasgo", getattr(jsel, 'rasgo', '') or '-'),
                  ("Resistencia", getattr(jsel, 'resistencia', 50)),                        # v3.1.0
                  ("Energía", int(_energia_de(estado, jsel, en_partido))),
-                 ("Personalidad", PERSONALIDAD_TXT.get(getattr(jsel, 'personalidad', ''), '-'))]
+                 ("Personalidad", PERSONALIDAD_TXT.get(getattr(jsel, 'personalidad', ''), '-')),
+                 ("Amarillas", _amarillas_ficha(jsel))]      # acumuladas en la temporada
         for n, (k_, v) in enumerate(datos):
-            yy = _FICHA.y + 84 + n * 23
+            yy = _FICHA.y + 84 + n * 22    # 14 filas: la última no pisa el aviso de sanción/lesión
             draw_text(screen, k_, (_FICHA.x + 16, yy), size='sm', color='azul', shadow=False)
             draw_text(screen, _truncar(str(v), 16), (_FICHA.x + 130, yy), size='sm', color='blanco', shadow=False)
             if isinstance(v, int) and k_ in ("Ataque", "Defensa", "Físico", "Técnica", "Mental", "Moral",
@@ -629,8 +696,15 @@ def _render_direccion(screen, estado, mi_equipo, alin, es_amistoso, modo_prepart
                 barra = pygame.Rect(_FICHA.x + 180, yy + 4, 100, 10)
                 pygame.draw.rect(screen, (40, 50, 70), barra, border_radius=3)
                 pygame.draw.rect(screen, COLORS['verde'], pygame.Rect(barra.x, barra.y, int(barra.width * max(0, min(99, v)) / 99), 10), border_radius=3)
-        if getattr(jsel, 'lesion_partidos', 0) > 0:
-            draw_text(screen, f"LESIONADO ({jsel.lesion_partidos} partidos)", (_FICHA.x + 16, _FICHA.bottom - 60), size='sm', color='rojo')
+        baja_sel = baja_de(estado, jsel, en_partido)
+        if baja_sel == 'roja':
+            from alpha_football.sanciones import partidos_sancion as _ps, competicion_actual as _ca
+            n_s = _ps(jsel)
+            draw_text(screen, f"SANCIONADO ({n_s} p. de {_ca()})" if n_s else "EXPULSADO: juegas con uno menos",
+                      (_FICHA.x + 16, _FICHA.bottom - 60), size='sm', color='rojo')
+        elif getattr(jsel, 'lesion_partidos', 0) > 0 or baja_sel == 'lesion':
+            draw_text(screen, f"LESIONADO ({jsel.lesion_partidos} partidos)" if jsel.lesion_partidos else "LESIONADO en el partido",
+                      (_FICHA.x + 16, _FICHA.bottom - 60), size='sm', color='rojo')
         draw_text(screen, "Clic de nuevo para soltarlo", (_FICHA.x + 16, _FICHA.bottom - 30), size='sm', color='azul', shadow=False)
 
     # --- Banco (10) o reservas abajo ---
@@ -665,7 +739,8 @@ def _render_direccion(screen, estado, mi_equipo, alin, es_amistoso, modo_prepart
         hits.append((rect, s_))
         fuera_partido = en_partido and s_[0] == 'banco' and alin.convocados[s_[1]] in salieron
         _dibujar_tarjeta(screen, rect, j, sel == s_, rect.collidepoint(mouse_pos), fuera_partido,
-                         _energia_de(estado, j, en_partido))
+                         _energia_de(estado, j, en_partido), baja=baja_de(estado, j, en_partido),
+                         amarilla=bool(amarillas_de(estado, j, en_partido)))
     if ver_reservas and not reservas:
         draw_text(screen, "No hay reservas: toda la plantilla está en el once o en el banco.",
                   (16, _BANCO_Y + 50), size='sm', color='blanco')
@@ -814,9 +889,16 @@ def _render_direccion(screen, estado, mi_equipo, alin, es_amistoso, modo_prepart
 
 
 def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
+    """Con un partido de copa en curso, las sanciones que cuentan son las de copa (sanciones.py)."""
+    from alpha_football.sanciones import en_competicion
+    with en_competicion('copa' if estado.get('match_mode') == 'copa' else 'liga'):
+        return _render(screen, estado)
+
+
+def _render(screen: pygame.Surface, estado: dict) -> Optional[str]:
     """
     Renderiza la pantalla de Dirección de Equipo en Pygame.
-    Retorna la pantalla de destino ('league_screen', 'market_screen', etc.) o None.
+    Retorna la pantalla de destino ('league_screen', 'plantilla_screen', etc.) o None.
 
     v0.8.3 (F1): si estado['team_equipo_objetivo'] apunta a un equipo distinto del
     usuario, team_screen funciona en MODO VISOR (read-only): muestra la formación y

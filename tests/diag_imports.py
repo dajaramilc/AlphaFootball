@@ -6,7 +6,7 @@ import pygame; pygame.init()
 errors = []
 mods = [
     'alpha_football.ui.menu', 'alpha_football.ui.league_screen',
-    'alpha_football.ui.match_screen', 'alpha_football.ui.market_screen',
+    'alpha_football.ui.match_screen',
     'alpha_football.ui.copa_screen', 'alpha_football.ui.career_screen',
     'alpha_football.ui.team_screen', 'alpha_football.ui.options_screen',
     'alpha_football.ui.prepartido_screen', 'alpha_football.ui.ofertas_screen',

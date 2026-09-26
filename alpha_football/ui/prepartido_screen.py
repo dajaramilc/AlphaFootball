@@ -130,7 +130,7 @@ def _simular_instantaneo(estado: dict, local: any, visitante: any) -> None:
                 
             estado['prepartido_resultado'] = {
                 'titulo': f"{getattr(local, 'corto', local.nombre)} {gl} - {gv} {getattr(visitante, 'corto', visitante.nombre)}",
-                'goles': [f"{e.get('minuto', 0)}'  {e.get('detalle', 'Gol')}" for e in sorted(goles_ev, key=lambda x: x.get('minuto', 0))],
+                'goles': [f"{PP.fmt_minuto(e.get('minuto', 0))}  {e.get('detalle', 'Gol')}" for e in sorted(goles_ev, key=lambda x: x.get('minuto', 0))],
                 'linea': linea,
             }
             
@@ -202,7 +202,7 @@ def _simular_instantaneo(estado: dict, local: any, visitante: any) -> None:
                 }
             estado['prepartido_resultado'] = {
                 'titulo': f"{local.corto} {gl} - {gv} {visitante.corto}" + (f" ({penales_str} PEN)" if penales_str else ""),
-                'goles': [f"{e.get('minuto', 0)}'  {e.get('detalle', 'Gol')}" for e in sorted(goles_ev, key=lambda x: x.get('minuto', 0))],
+                'goles': [f"{PP.fmt_minuto(e.get('minuto', 0))}  {e.get('detalle', 'Gol')}" for e in sorted(goles_ev, key=lambda x: x.get('minuto', 0))],
                 'penales': penales_payload,
                 'linea': linea,
             }
@@ -216,7 +216,7 @@ def _simular_instantaneo(estado: dict, local: any, visitante: any) -> None:
             # Amistoso no tiene consecuencias de liga/copa ni desarrollo de plantilla
             estado['prepartido_resultado'] = {
                 'titulo': f"{local.corto} {gl} - {gv} {visitante.corto}",
-                'goles': [f"{e.get('minuto', 0)}'  {e.get('detalle', 'Gol')}" for e in sorted(goles_ev, key=lambda x: x.get('minuto', 0))],
+                'goles': [f"{PP.fmt_minuto(e.get('minuto', 0))}  {e.get('detalle', 'Gol')}" for e in sorted(goles_ev, key=lambda x: x.get('minuto', 0))],
                 'linea': linea,
             }
             PP.armar_datos(estado, 'amistoso', local, visitante, gl, gv, ctx, res.notas, res.eventos)
@@ -270,6 +270,7 @@ def _marca_penal(screen, cx: int, cy: int, mete: bool) -> None:
 def _dibujar_linea(screen: pygame.Surface, rect: pygame.Rect, linea: list, scroll: int) -> None:
     """v4.1.0: línea de tiempo del partido: minuto al centro, local a la izquierda, visitante a la derecha."""
     from alpha_football.ui.postpartido import dibujar_icono
+    from alpha_football.ui import postpartido as PP
     draw_panel(screen, rect)
     draw_text(screen, "EL PARTIDO", (rect.x + 20, rect.y + 12), size='md', color='azul')
     if not linea:
@@ -280,7 +281,7 @@ def _dibujar_linea(screen: pygame.Surface, rect: pygame.Rect, linea: list, scrol
     cx = rect.centerx
     ancho = rect.width // 2 - 60
     for x in linea[scroll:scroll + visibles]:
-        m = f"{x['minuto']}'"
+        m = PP.fmt_minuto(x['minuto'])
         draw_text(screen, m, (cx - get_font('sm').size(m)[0] // 2, y), size='sm', color='dorado', shadow=False)
         txt = x['texto']
         while txt and get_font('sm').size(txt)[0] > ancho:
@@ -447,6 +448,13 @@ def _render_resultado(screen: pygame.Surface, estado: dict, mouse_pos, click_pos
 
 
 def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
+    """Con un partido de copa en curso, las sanciones que cuentan son las de copa (sanciones.py)."""
+    from alpha_football.sanciones import en_competicion
+    with en_competicion('copa' if estado.get('match_mode') == 'copa' else 'liga'):
+        return _render(screen, estado)
+
+
+def _render(screen: pygame.Surface, estado: dict) -> Optional[str]:
     try:
         liga = estado.get('liga')
         mi_equipo = estado.get('mi_equipo')

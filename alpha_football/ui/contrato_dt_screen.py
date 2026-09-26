@@ -52,12 +52,31 @@ def _m(v) -> str:
     return f"${int(v) / 1_000_000:.2f}M"
 
 
-def _salir(estado: dict, m: str) -> str:
+def _salir(estado: dict, m: str, firmo: bool = False) -> str:
     estado.pop('contrato_modo', None)
     estado.pop('contrato_sel', None)
+    if estado.pop('renovacion_tardia', None):
+        # renovación elegida en la pantalla de FIN DE CONTRATO
+        if not firmo:
+            return 'despido_screen'              # no firmó: vuelve a ver las ofertas
+        estado.pop('despido_pendiente', None)
+        (estado.get('datos_carrera') or {}).pop('despido_pendiente', None)
+        return 'promo_releg_screen' if estado.get('promo_releg_data') else 'league_screen'
     if m == 'alta' and estado.get('promo_releg_data'):
         return 'promo_releg_screen'
     return 'league_screen'
+
+
+def _rechazar(estado: dict) -> None:
+    """Rechazar la renovación. En FIN DE CONTRATO además desaparece la tarjeta RENOVAR."""
+    if estado.get('renovacion_tardia'):
+        pend = estado.get('despido_pendiente') or {}
+        pend['renovable'] = False
+        guardado = (estado.get('datos_carrera') or {}).get('despido_pendiente')
+        if isinstance(guardado, dict):
+            guardado['renovable'] = False
+        return
+    CD.rechazar_renovacion(estado)
 
 
 def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
@@ -84,21 +103,21 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 elif ev.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE) and m != 'alta':
                     return _salir(estado, m)
                 elif ev.key == pygame.K_r and m == 'renovacion':   # v4.2.0: R = RECHAZAR
-                    CD.rechazar_renovacion(estado)
+                    _rechazar(estado)
                     return _salir(estado, m)
             if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
                 for i, r in enumerate(rects):
                     if r.collidepoint(ev.pos):
                         elegido = i
                 if m == 'renovacion' and R_RECHAZAR.collidepoint(ev.pos):
-                    CD.rechazar_renovacion(estado)
+                    _rechazar(estado)
                     return _salir(estado, m)
                 if m != 'alta' and R_VOLVER.collidepoint(ev.pos):
                     return _salir(estado, m)
         estado['contrato_sel'] = sel
         if elegido is not None:
             CD.firmar(estado, mi, ofertas[elegido], renovacion=(m == 'renovacion'))
-            return _salir(estado, m)
+            return _salir(estado, m, firmo=True)
 
         draw_gradient_bg(screen)
         titulo = {'alta': "CONTRATO DE DT", 'renovacion': "RENOVACIÓN DE CONTRATO", 'ver': "MI CONTRATO"}[m]
@@ -136,7 +155,8 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                       else "Equilibrado", (x, y + 180), size='sm', color='azul')
             draw_button(screen, pygame.Rect(r.x + 20, r.bottom - 68, r.width - 40, 48), "FIRMAR", activo)
         if m == 'renovacion':
-            draw_button(screen, R_RECHAZAR, "RECHAZAR (me voy al final)", R_RECHAZAR.collidepoint(mouse_pos))
+            draw_button(screen, R_RECHAZAR, "RECHAZAR (ver otras ofertas)" if estado.get('renovacion_tardia')
+                        else "RECHAZAR (me voy al final)", R_RECHAZAR.collidepoint(mouse_pos))
         return None
     except Exception as e:
         logger.error(f"Error en contrato_dt_screen: {e}", exc_info=True)

@@ -202,9 +202,16 @@ def minutos_por_id(ctx: EstadoPartido, lado: str) -> dict:
 
 
 def incidencias_de(ctx: EstadoPartido, lado: str) -> list:
-    """Incidencias (lesión/sanción) de un lado, con el objeto jugador en 'jugador'."""
-    return [dict(i, jugador=ctx.jugadores.get(i['jugador_id'])) for i in ctx.incidencias
-            if ctx.lado_jugador.get(i['jugador_id']) == lado]
+    """Incidencias (lesión/sanción) de un lado, con el objeto jugador en 'jugador', más una
+    'amarilla' por cada amonestado que terminó el partido (la doble amarilla ya es roja y no suma
+    a la acumulación: sanciones.py)."""
+    out = [dict(i, jugador=ctx.jugadores.get(i['jugador_id'])) for i in ctx.incidencias
+           if ctx.lado_jugador.get(i['jugador_id']) == lado]
+    expulsados = {i['jugador_id'] for i in ctx.incidencias if i.get('tipo') == 'sancion'}
+    for k, n in ctx.amarillas.items():
+        if n > 0 and k not in expulsados and ctx.lado_jugador.get(k) == lado:
+            out.append({'tipo': 'amarilla', 'jugador_id': k, 'partidos': 0, 'jugador': ctx.jugadores.get(k)})
+    return out
 
 
 def stats_de_equipo(ctx: EstadoPartido, notas: dict, lado: str) -> dict:

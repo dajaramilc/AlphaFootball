@@ -162,6 +162,7 @@ def procesar_retiros(estado: dict, rng: Optional[random.Random] = None) -> list[
     siguiente_id = int(datos.get('regen_id', 700000) or 700000)
     mi_equipo = estado.get('mi_equipo')
     retiros = []
+    a_dueno = []          # (club donde jugaba a préstamo, regen, dueño, retiro)
     for liga, tipo, _div in ligas_de_la_partida(estado):
         for eq in liga.equipos:
             usados = {f"{j.nombre} {j.apellido}" for j in eq.jugadores}
@@ -181,10 +182,42 @@ def procesar_retiros(estado: dict, rng: Optional[random.Random] = None) -> list[
                         'regen': regen.nombre_completo, 'regen_edad': regen.edad, 'regen_pot': regen.potencial,
                         'posicion': j.posicion, 'es_user': eq is mi_equipo,
                     })
+                    p = getattr(j, 'prestamo', None)
+                    if p and p.get('dueno') and p.get('dueno') != eq.nombre:
+                        a_dueno.append((eq, regen, p['dueno'], retiros[-1]))   # el regen es del dueño
+                    if p and getattr(mi_equipo, 'nombre', None) in (p.get('dueno'), p.get('club')):
+                        # estaba a préstamo: el préstamo termina con su retiro
+                        try:
+                            from alpha_football import correo
+                            correo.enviar(estado, 'club', f"{j.nombre_completo} se retiró",
+                                          "Estaba a préstamo: el préstamo terminó con su retiro.")
+                        except Exception as e_co:
+                            logger.error(f"No se pudo avisar el retiro del jugador a préstamo: {e_co}")
+                    j.prestamo = None
                 except Exception as e_ret:
                     logger.error(f"Error procesando el retiro de {getattr(j, 'nombre', '?')}: {e_ret}")
             if reemplazados and eq is mi_equipo:
                 _reacomodar_once_usuario(eq, reemplazados)
+    tipo_de = {id(eq): tipo for liga, tipo, _div in ligas_de_la_partida(estado) for eq in liga.equipos} if a_dueno else {}
+    for eq, regen, nombre_dueno, r in a_dueno:
+        try:
+            from alpha_football.traspasos_pendientes import _club
+            from alpha_football.finanzas import quitar_de_plantilla, completar_plantilla
+            dueno = _club(estado, nombre_dueno)
+            if dueno is None or dueno is eq:
+                continue
+            quitar_de_plantilla(eq, regen)
+            dueno.jugadores.append(regen)
+            if id(dueno) in tipo_de:                   # región y valor de la liga del dueño
+                registrar_region_jugador(regen, tipo_de[id(dueno)])
+                regen.valor = calcular_valor(regen)
+            if eq is mi_equipo:
+                completar_plantilla(eq)
+            if dueno is not mi_equipo:
+                dueno.alineacion_activa = None
+            r['equipo'], r['es_user'] = dueno.nombre, dueno is mi_equipo
+        except Exception as e_du:
+            logger.error(f"No se pudo pasar el regen {getattr(regen, 'nombre', '?')} a {nombre_dueno}: {e_du}")
     datos['regen_id'] = siguiente_id
     estado['retiros_ultimos'] = retiros
     if retiros:

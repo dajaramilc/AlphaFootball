@@ -18,6 +18,7 @@ import pygame
 # Configuración básica del logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s')
 logger = logging.getLogger(__name__)
+from alpha_football.sanciones import sancionado_en_algo  # noqa: E402
 
 # Importación resiliente del tema visual con fallback local si falla
 try:
@@ -353,7 +354,8 @@ TARJETAS = {
         ("PLANTILLA", "Todos tus jugadores, ficha y transferibles", 'plantilla_screen'),
     ],
     'negociaciones': [
-        ("NEGOCIAR", "Buscador de jugadores de las 10 ligas", 'buscador_screen'),
+        ("NEGOCIAR", "Buscador de jugadores de todas las ligas", 'buscador_screen'),
+        ("FAVORITOS", "Jugadores que sigues para ficharlos después", 'favoritos_screen'),
         ("OFERTAS", "Ofertas recibidas por tus jugadores", 'ofertas_screen'),
         ("HISTORIAL", "Pases de todas las ligas y los tuyos", 'historial_pases_screen'),
         ("OJEADOR", "3 fichajes recomendados por ventana", 'ojeador_screen'),
@@ -613,8 +615,10 @@ def _alertas_inicio(estado, mi_equipo) -> list:
             j = jugadores[i]
             if getattr(j, 'lesion_partidos', 0) > 0:
                 avisos.append((f"Lesionado en tu once: {j.nombre} {j.apellido} ({j.lesion_partidos} p.)", 'rojo'))
-            elif getattr(j, 'partidos_sancion', 0) > 0:
-                avisos.append((f"Sancionado en tu once: {j.nombre} {j.apellido}", 'rojo'))
+            elif sancionado_en_algo(j):
+                from alpha_football.sanciones import sancionado as _sc
+                cual = " y ".join(c for c in ('liga', 'copa') if _sc(j, c))
+                avisos.append((f"Sancionado en tu once ({cual}): {j.nombre} {j.apellido}", 'rojo'))
         liga = estado.get('liga')
         if liga is not None and getattr(liga, 'jornada_actual', 1) >= getattr(liga, 'num_jornadas', 10) - 3:
             vencen = sum(1 for j in jugadores if int(getattr(j, 'contrato_anios', 2) or 2) <= 1)
@@ -660,6 +664,12 @@ def _abrir(estado, destino: str) -> str:
     elif destino == 'contratos':        # v2.9.0: la plantilla ordenada por contrato
         estado['plantilla_orden'] = 'contrato'
         return 'plantilla_screen'
+    elif destino in ('negociaciones', 'market_screen'):
+        # el mercado es la pestaña NEGOCIACIONES del hub ('market_screen' = correos viejos)
+        estado['hub_tab'] = 'negociaciones'
+        estado['hub_bar_foco'] = PESTANAS.index('negociaciones')
+        estado['hub_foco'] = 0
+        return 'league_screen'
     return destino
 
 
@@ -697,7 +707,29 @@ def _accion_jugar(estado, partido_usuario, esta_finalizada, fase_copa) -> Option
     return "prepartido_screen"
 
 
-def _textos_jugar(liga, mi_equipo, info) -> tuple:
+def _nombre_dt_rival(estado: Optional[dict], equipo) -> str:
+    """Nombre del DT del club (el del motor de DTs, el puesto en el editor o el estilo como último recurso)."""
+    try:
+        from alpha_football import entrenadores as EN
+        dt = EN.dt_de(estado or {}, equipo)
+        if dt and dt.get('nombre'):
+            return dt['nombre']
+    except Exception as e:
+        logger.error(f"No se pudo leer el DT de {getattr(equipo, 'nombre', '?')}: {e}")
+    return getattr(equipo, 'dt_nombre', '') or (getattr(equipo, 'estilo_dt', '') or '?').capitalize()
+
+
+def _nivel(equipo) -> int:
+    """Media del mejor once actual (la media de toda la plantilla la bajan los juveniles)."""
+    try:
+        from alpha_football.market import nivel_club
+        return nivel_club(equipo)
+    except Exception as e:
+        logger.error(f"No se pudo calcular el nivel de {getattr(equipo, 'nombre', '?')}: {e}")
+        return int(getattr(equipo, 'ovr_promedio', 0) or 0)
+
+
+def _textos_jugar(liga, mi_equipo, info, estado: Optional[dict] = None) -> tuple:
     """(línea grande, línea 2, línea 3, habilitado) del botón JUGAR."""
     partido_usuario, esta_finalizada, fase_copa, rival_copa = info
     if fase_copa:
@@ -709,10 +741,12 @@ def _textos_jugar(liga, mi_equipo, info) -> tuple:
     es_local = partido_usuario.local_id == mi_equipo.id
     op_id = partido_usuario.visitante_id if es_local else partido_usuario.local_id
     op = next((e for e in liga.equipos if e.id == op_id), None)
-    l2 = (f"LIGA · J{partido_usuario.jornada} vs {getattr(op, 'nombre', '?')[:24]} "
-          f"({'LOCAL' if es_local else 'VISITANTE'})")
-    l3 = (f"DT {(getattr(op, 'estilo_dt', '') or '?').upper()}  ·  OVR {getattr(op, 'ovr_promedio', '?')}  ·  "
-          f"Tu OVR {getattr(mi_equipo, 'ovr_promedio', '?')}")
+    from alpha_football.ui.postpartido import posicion_liga
+    puesto = posicion_liga(liga, op_id) if op is not None else 0
+    l2 = (f"LIGA · J{partido_usuario.jornada} vs {getattr(op, 'nombre', '?')[:24]}"
+          + (f" ({puesto}º)" if puesto else "") + f" · {'LOCAL' if es_local else 'VISITANTE'}")
+    l3 = (f"DT {_nombre_dt_rival(estado, op)[:22]}  ·  OVR {_nivel(op) if op is not None else '?'}  ·  "
+          f"Tu OVR {_nivel(mi_equipo)}")
     return "JUGAR", l2, l3, True
 
 
@@ -839,7 +873,7 @@ def _render_inicio(screen, estado, liga, mi_equipo, info, jugados, mouse_pos, cl
         logger.error(f"Error al renderizar historial: {e_hist}")
 
     # --- JUGAR ---
-    l1, l2, l3, habilitado = _textos_jugar(liga, mi_equipo, info)
+    l1, l2, l3, habilitado = _textos_jugar(liga, mi_equipo, info, estado)
     try:
         hover = R_JUGAR.collidepoint(mouse_pos) and habilitado
         draw_styled_button(screen, R_JUGAR, "", hover or foco == 0, COLORS.get('verde', (0, 255, 136)), habilitado)
@@ -931,7 +965,7 @@ def _render_inicio(screen, estado, liga, mi_equipo, info, jugados, mouse_pos, cl
             draw_text(screen, f"Goleador: {goleador.nombre} {goleador.apellido} ({goleador.goles})",
                       (cx0, cy0 + 56), size='sm', color='blanco')
         from alpha_football.directiva import calif_dt                  # v3.1.0
-        draw_text(screen, f"OVR {getattr(mi_equipo, 'ovr_promedio', 0)}  ·  Plantilla {len(mi_equipo.jugadores)}  ·  "
+        draw_text(screen, f"OVR {_nivel(mi_equipo)}  ·  Plantilla {len(mi_equipo.jugadores)}  ·  "
                           f"${getattr(mi_equipo, 'balance', 0) / 1_000_000:.1f}M  ·  Calif. DT {calif_dt(estado)}",
                   (cx0, cy0 + 82), size='sm', color='blanco')
         obj = (estado.get('datos_carrera') or {}).get('objetivo') or {}
@@ -1130,7 +1164,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             destino_am, key_events, click_pos = _am.manejar(estado, key_events, click_pos, dialogo_visible)
             if destino_am:
                 _guardar_foco()
-                return destino_am
+                return _abrir(estado, destino_am)
         except Exception as e_am:
             logger.error(f"Error en el aviso de mercado: {e_am}")
 

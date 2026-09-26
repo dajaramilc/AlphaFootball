@@ -43,7 +43,10 @@ def test_pool_excluye_al_user_y_mejores_ordenados():
     pool = N.pool_buscador(e)
     assert pool and all(club is not e['mi_equipo'] for _j, club, _et in pool)
     etiquetas = {et for _j, _c, et in pool}
-    assert 'COL 1ª' in etiquetas and 'ING 1ª' in etiquetas and len(etiquetas) == 16   # v3.7.0: 8 países × 2
+    assert 'COL 1ª' in etiquetas and 'ING 1ª' in etiquetas
+    # v3.7.0: 8 países × 2 + agentes libres + clubes internacionales de relleno (UCL y Libertadores)
+    assert etiquetas == {et for et in etiquetas if et[-2:] in ('1ª', '2ª')} | {N.LIBRES, 'INT EUR', 'INT SUD'}
+    assert len(etiquetas) == 16 + 3
     top = N.mejores(pool)
     assert len(top) == N.N_MEJORES
     medias = [j.overall for j, _c, _e in top]
@@ -121,7 +124,7 @@ def test_ojeador_recomienda_3_pagables_que_mejoran():
 def test_pantallas_negociaciones():
     from alpha_football.ui import league_screen, buscador_screen, historial_pases_screen, ojeador_screen
     tarj = [t[2] for t in league_screen.TARJETAS['negociaciones']]
-    assert tarj == ['buscador_screen', 'ofertas_screen', 'historial_pases_screen', 'ojeador_screen']
+    assert tarj == ['buscador_screen', 'favoritos_screen', 'ofertas_screen', 'historial_pases_screen', 'ojeador_screen']
     src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'main.py'), encoding='utf-8').read()
     for nombre in ('buscador', 'historial_pases', 'ojeador'):
         assert f"'{nombre}_screen': 'alpha_football.ui.{nombre}_screen'" in src, nombre   # v3.6.0: MODULOS_PANTALLA

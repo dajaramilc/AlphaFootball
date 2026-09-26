@@ -236,6 +236,9 @@ def cobrar_premios_copa(estado: dict) -> int:
         try:   # v4.3.0: aviso de objetivo de copa cumplido en el momento
             from alpha_football.directiva import revisar_objetivo_copa_cumplido
             revisar_objetivo_copa_cumplido(estado)
+            if alcanzada == 'Campeón':        # campeón de copa: si te negaron renovar, se disculpan
+                from alpha_football.carrera_dt import revisar_renovacion_por_hito
+                revisar_renovacion_por_hito(estado)
         except Exception as e_obj:
             logger.error(f"No se pudo revisar el objetivo de copa: {e_obj}")
         return cobrado

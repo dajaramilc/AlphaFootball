@@ -7,6 +7,7 @@ atributos, estadísticas y personalidad. La usan PLANTILLA y OFERTAS; cada panta
 from __future__ import annotations
 
 import logging
+from typing import Optional
 import pygame
 
 try:
@@ -32,8 +33,19 @@ def _valor(j) -> int:
     return v
 
 
-def dibujar_ficha(screen, rect: pygame.Rect, j, estado_txt: str = "") -> int:
-    """Dibuja la ficha de `j` dentro de `rect`. Retorna la y final (para ubicar botones debajo)."""
+def _ajustar(texto: str, ancho: int) -> str:
+    """Recorta `texto` (con …) para que entre en `ancho` píxeles con la fuente chica."""
+    f = get_font('sm')
+    if f.size(texto)[0] <= ancho:
+        return texto
+    while texto and f.size(texto + "…")[0] > ancho:
+        texto = texto[:-1]
+    return texto.rstrip(" ·") + "…"
+
+
+def dibujar_ficha(screen, rect: pygame.Rect, j, estado_txt: str = "", extra: Optional[list] = None) -> int:
+    """Dibuja la ficha de `j` dentro de `rect`. Retorna la y final (para ubicar botones debajo).
+    `extra`: líneas [(texto, color)] al final de la ficha (p. ej. amarillas acumuladas)."""
     from alpha_football.negociacion import dinero_exacto
     try:
         from alpha_football.vestuario import PERSONALIDAD_TXT
@@ -47,7 +59,7 @@ def dibujar_ficha(screen, rect: pygame.Rect, j, estado_txt: str = "") -> int:
         linea = f"{j.posicion}  ·  {j.edad} años  ·  {getattr(j, 'nacionalidad', '') or '—'}"
         if estado_txt:
             linea += f"  ·  {estado_txt}"
-        draw_text(screen, linea[:64], (x, y), size='sm', color='azul')
+        draw_text(screen, _ajustar(linea, rect.width - 40), (x, y), size='sm', color='azul')
         y += 30
         draw_text(screen, f"MEDIA {j.overall}   POTENCIAL {getattr(j, 'potencial', 0) or '?'}", (x, y), size='md', color='verde')
         y += 30
@@ -77,8 +89,8 @@ def dibujar_ficha(screen, rect: pygame.Rect, j, estado_txt: str = "") -> int:
             color = COLORS['verde'] if val >= 80 else COLORS['dorado'] if val >= 65 else COLORS['rojo']
             pygame.draw.rect(screen, color, lleno, border_radius=4)
             draw_text(screen, str(val), (barra.right + 12, y), size='sm', color='blanco')
-            y += 26
-        y += 8
+            y += 22                      # más juntas: deja lugar a las líneas extra
+        y += 4
         nota = float(getattr(j, 'promedio_nota', 0.0) or 0.0)
         stats = f"PJ {j.partidos_jugados}  ·  Goles {j.goles}  ·  Asist. {getattr(j, 'asistencias', 0)}  ·  Nota {nota:.1f}"
         draw_text(screen, stats, (x, y), size='sm', color='blanco')
@@ -96,6 +108,9 @@ def dibujar_ficha(screen, rect: pygame.Rect, j, estado_txt: str = "") -> int:
             junto = pers_txt
         draw_text(screen, junto, (x, y), size='sm', color='azul')
         y += 24
+        for texto, color in extra or []:
+            draw_text(screen, _ajustar(str(texto), rect.width - 40), (x, y), size='sm', color=color)
+            y += 22
     except Exception as e:
         logger.error(f"Error al dibujar la ficha del jugador: {e}")
     return y

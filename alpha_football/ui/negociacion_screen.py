@@ -37,8 +37,10 @@ R_JUG = pygame.Rect(432, 350, 832, 296)
 CLAUSULAS = [1.5, 2.0, 3.0]
 
 
-def _orden_foco(etapa: str) -> list:
+def _orden_foco(etapa: str, modo: str = '') -> list:
     """v4.2.0: botones que recorre el teclado en cada etapa (el primero tiene el foco al entrar)."""
+    if modo == 'prestamo' and etapa == 'jugador':      # préstamo: mismo contrato, solo PROPONER
+        return ['proponer', 'volver']
     return {'club': ['ofertar', 'clausula', 'monto_menos', 'monto_mas', 'volver'],
             'jugador': ['proponer', 'sal_menos', 'sal_mas', 'anios_menos', 'anios_mas', 'clau_ciclo', 'volver'],
             }.get(etapa, ['volver'])
@@ -101,7 +103,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
 
         # v4.2.0: ← → / Tab recorren los botones de la etapa, Enter los pulsa (los dígitos siguen al monto)
         from alpha_football.ui.foco import traducir_eventos, marcar
-        orden_foco = _orden_foco(neg['etapa'])
+        orden_foco = _orden_foco(neg['etapa'], modo)
         _foco, eventos = traducir_eventos(estado, f"foco_neg_{neg['etapa']}", [rects[k] for k in orden_foco],
                                           list(pygame.event.get()))
         for ev in eventos:
@@ -109,7 +111,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 return 'menu'
             if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
                 return salir()
-            if ev.type == pygame.KEYDOWN and neg['etapa'] == 'club':      # v3.5.0: monto tecleable
+            if ev.type == pygame.KEYDOWN and neg['etapa'] == 'club' and modo != 'prestamo':   # v3.5.0: monto tecleable (el % no)
                 neg['monto'] = editar_valor(neg['monto'], ev)
                 continue
             if ev.type != pygame.MOUSEBUTTONDOWN or ev.button != 1:
@@ -118,6 +120,22 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             if rects['volver'].collidepoint(p):
                 return salir()
             if neg['etapa'] == 'club':
+                if modo == 'prestamo':      # préstamo: % del sueldo que pagas y duración
+                    from alpha_football import prestamos as PR
+                    if rects['monto_menos'].collidepoint(p):
+                        neg['pct'] = max(PR.PCT_PASO, neg['pct'] - PR.PCT_PASO)
+                    elif rects['monto_mas'].collidepoint(p):
+                        neg['pct'] = min(100, neg['pct'] + PR.PCT_PASO)
+                    elif rects['clausula'].collidepoint(p):
+                        neg['meses'] = 12 if neg['meses'] == 6 else 6
+                    elif rects['ofertar'].collidepoint(p):
+                        resp, msg = PR.evaluar_pedido(estado, j, club, neg['meses'], neg['pct'])
+                        neg['msg'] = (msg, {'acepta': 'verde', 'analiza': 'azul'}.get(resp, 'rojo'))
+                        if resp == 'acepta':
+                            neg['etapa'] = 'jugador'
+                        elif resp == 'analiza':
+                            neg['etapa'], neg['acuerdo_club'] = 'hecho', False
+                    continue
                 if rects['monto_menos'].collidepoint(p):
                     neg['monto'] = max(0, neg['monto'] - paso_monto)
                 elif rects['monto_mas'].collidepoint(p):
@@ -141,6 +159,18 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                         if contra:
                             neg['contra_club'] = contra
             elif neg['etapa'] == 'jugador':
+                if modo == 'prestamo':      # préstamo: el jugador acepta o no (mismo contrato)
+                    if rects['proponer'].collidepoint(p):
+                        from alpha_football import prestamos as PR
+                        ok_j, msg_j = PR.acepta_jugador(estado, j, club)
+                        if not ok_j:
+                            neg['msg'], neg['etapa'], neg['acuerdo_jugador'] = (msg_j, 'rojo'), 'hecho', False
+                            continue
+                        ok, msg = PR.cerrar_pedido(estado, j, club, neg['meses'], neg['pct'])
+                        neg['msg'] = (msg, 'verde' if ok else 'rojo')
+                        neg['etapa'] = 'hecho'
+                        estado.pop('busq_resultados', None)
+                    continue
                 if rects['sal_menos'].collidepoint(p):
                     neg['salario'] = max(F.SALARIO_MIN, neg['salario'] - paso_sal)
                 elif rects['sal_mas'].collidepoint(p):
@@ -175,9 +205,9 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
 
         # --- Dibujo ---
         draw_gradient_bg(screen)
-        titulo = "RENOVACIÓN" if modo == 'renovar' else "NEGOCIACIÓN"
+        titulo = {"renovar": "RENOVACIÓN", "prestamo": "PRÉSTAMO"}.get(modo, "NEGOCIACIÓN")
         draw_text(screen, f"{titulo}: {j.nombre_completo}"[:52], (16, 14), size='lg', color='dorado')
-        draw_text(screen, f"Tu presupuesto {_m(mi.balance)}  ·  Masa salarial {_m(F.masa_salarial(mi))}/año",
+        draw_text(screen, f"Tu presupuesto {_m(mi.balance)}  ·  Masa salarial {_m(F.masa_salarial(mi, estado))}/año",
                   (16, 50), size='sm', color='verde' if mi.balance >= 0 else 'rojo')
 
         draw_panel(screen, R_INFO)
@@ -204,6 +234,26 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             draw_text(screen, "1. CLUB", (cx, cy), size='md', color='azul')
             draw_text(screen, "Renovación: no hay club con quien negociar." if modo == 'renovar'
                       else "Agente libre: sin traspaso, solo contrato.", (cx, cy + 40), size='md', color='blanco')
+        elif modo == 'prestamo':
+            # préstamo: % del sueldo que pagas (de 10 en 10) y duración 6 meses / 1 año
+            activo = neg['etapa'] == 'club'
+            draw_text(screen, f"1. PRÉSTAMO DE {club.nombre.upper()}"[:44], (cx, cy), size='md',
+                      color='dorado' if activo else 'verde')
+            draw_text(screen, f"Sueldo {_m(j.salario)}/año  ·  Tú pagas {neg['pct']}% = {_m(j.salario * neg['pct'] // 100)}",
+                      (cx, cy + 40), size='sm', color='blanco')
+            draw_text(screen, "% del sueldo que pagas tú:" + ("  (− / +)" if activo else ""), (cx, cy + 72),
+                      size='sm', color='azul')
+            _caja(screen, rects['monto'], f"{neg['pct']}%", 'verde' if activo else 'blanco')
+            if activo:
+                for k, t in (('monto_menos', '−'), ('monto_mas', '+')):
+                    draw_button(screen, rects[k], t, rects[k].collidepoint(mouse_pos))
+                draw_button(screen, rects['ofertar'], "PEDIR", rects['ofertar'].collidepoint(mouse_pos))
+                draw_button(screen, rects['clausula'], f"DURACIÓN: {'6 MESES' if neg['meses'] == 6 else '1 AÑO'} (cambiar)",
+                            rects['clausula'].collidepoint(mouse_pos))
+            elif neg['etapa'] == 'hecho' and not neg.get('acuerdo_club', True):
+                draw_text(screen, "El club lo analiza: respuesta por correo", (cx + 400, R_CLUB.y + 124), size='sm', color='azul')
+            else:
+                draw_text(screen, "Acuerdo cerrado con el club", (cx + 400, R_CLUB.y + 120), size='md', color='verde')
         else:
             activo = neg['etapa'] == 'club'
             draw_text(screen, f"1. OFERTA A {club.nombre.upper()}"[:44], (cx, cy), size='md',
@@ -234,6 +284,12 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                   color='dorado' if activo else ('verde' if neg['etapa'] == 'hecho' else 'azul'))
         if neg['etapa'] == 'club' or not neg.get('acuerdo_club', True):
             draw_text(screen, "Primero cierra el acuerdo con el club.", (jx, jy + 44), size='md', color='blanco')
+        elif modo == 'prestamo':
+            # préstamo: sigue con su contrato; solo hay que convencer al jugador
+            draw_text(screen, f"Mismo contrato. Duración {'6 meses' if neg['meses'] == 6 else '1 año'}; "
+                              f"pagas el {neg['pct']}% del sueldo.", (jx, jy + 44), size='sm', color='blanco')
+            if activo:
+                draw_button(screen, rects['proponer'], "PROPONER PRÉSTAMO", rects['proponer'].collidepoint(mouse_pos))
         else:
             draw_text(screen, f"Salario anual (pide {_m(pedido_ref)})", (jx, jy + 36), size='sm', color='azul')
             draw_text(screen, "Años", (jx + 420, jy + 36), size='sm', color='azul')
@@ -269,7 +325,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 draw_text(screen, texto, (432, 654 + k * 24), size='sm', color=msg[1])
         draw_button(screen, rects['volver'], "VOLVER" if neg['etapa'] == 'hecho' else "CANCELAR",
                     rects['volver'].collidepoint(mouse_pos))
-        orden_foco = _orden_foco(neg['etapa'])
+        orden_foco = _orden_foco(neg['etapa'], modo)
         marcar(screen, rects[orden_foco[int(estado.get(f"foco_neg_{neg['etapa']}", 0) or 0) % len(orden_foco)]])
         return None
     except Exception as e:

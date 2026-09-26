@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+from alpha_football.sanciones import sancionado as _sancionado  # noqa: E402  sanción de la competición que se juega
 
 # ── Parametros tacticos ───────────────────────────────────────────────────────
 # v0.7: "anchelottismo" es la tactica equilibrada: bono_estilo devuelve 1.0 contra
@@ -464,14 +465,14 @@ def _once_titular(equipo: Equipo) -> list:
             for idx in alin.titulares:
                 if 0 <= idx < len(jugadores) and idx not in usados:
                     j = jugadores[idx]
-                    if getattr(j, "lesion_partidos", 0) == 0 and getattr(j, "partidos_sancion", 0) <= 0:
+                    if getattr(j, "lesion_partidos", 0) == 0 and not _sancionado(j):
                         disp.append(j)
                         usados.add(idx)
                         if len(disp) == 11:
                             return disp
             # Si faltan titulares por lesión, completar con los mejores no lesionados
             if len(disp) < 11:
-                candidatos = [j for j in jugadores if j not in disp and getattr(j, "lesion_partidos", 0) == 0 and getattr(j, "partidos_sancion", 0) <= 0]
+                candidatos = [j for j in jugadores if j not in disp and getattr(j, "lesion_partidos", 0) == 0 and not _sancionado(j)]
                 candidatos.sort(key=lambda x: getattr(x, "overall", 0), reverse=True)
                 for j in candidatos:
                     if len(disp) >= 11:
@@ -482,7 +483,7 @@ def _once_titular(equipo: Equipo) -> list:
         # Fallback (equipos de la IA sin alineación): v2.3.6 el mejor 4-3-3 disponible.
         # Antes eran "los primeros 11 de la lista", y como las plantillas vienen
         # ordenadas por posición la IA jugaba con 2 porteros, 7 defensas y 0 delanteros.
-        no_lesionados = [j for j in jugadores if getattr(j, "lesion_partidos", 0) == 0 and getattr(j, "partidos_sancion", 0) <= 0]
+        no_lesionados = [j for j in jugadores if getattr(j, "lesion_partidos", 0) == 0 and not _sancionado(j)]
         if len(no_lesionados) >= 11:
             try:
                 from alpha_football.formaciones import mejor_once
@@ -998,7 +999,7 @@ def suplentes_disponibles(ctx, lado: str, equipo) -> list:
     base = [jugadores[i] for i in convocados if 0 <= i < len(jugadores)] if convocados else jugadores
     return [j for j in base
             if clave(j) not in ctx.entrada
-            and getattr(j, "lesion_partidos", 0) == 0 and getattr(j, "partidos_sancion", 0) <= 0]
+            and getattr(j, "lesion_partidos", 0) == 0 and not _sancionado(j)]
 
 
 def _energia_hoy(ctx, j, minuto: int) -> float:
@@ -1127,7 +1128,9 @@ def _simular_minutos(local, visitante, jl, jv, minutos, gl, gv, narrativa, al, d
     for eq_j, lista_j in ((local, jl), (visitante, jv)):
         mult = factor_gasto_estilo(getattr(eq_j, 'estilo_dt', ''))
         for j in list(lista_j):
-            prev = (minutos_previos or {}).get(id(j), primer - 1)
+            # un suplente que entró en el partido gasta desde su minuto de entrada, no desde el 1'
+            entro = int(ctx.entrada.get(id(j), 0) or 0) if ctx is not None else 0
+            prev = (minutos_previos or {}).get(id(j), max(0, primer - 1 - entro))
             j.energia_vivo = energia_en_minuto(j, prev, mult)
     probs = _probs_ataque(local, visitante)   # v3.7.0: una vez por tramo
     for m in minutos:

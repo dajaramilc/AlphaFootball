@@ -105,7 +105,7 @@ def revisar_renovacion(estado: dict) -> None:
     r = _dc(estado).get('renovacion_dt') or {}
     if r.get('temporada') == t:
         return
-    if calif_dt(estado) >= CALIF_RENOVAR:
+    if calif_dt(estado) >= CALIF_RENOVAR or hito_temporada(estado):   # con un título asegurado no se niega
         _dc(estado)['renovacion_dt'] = {'temporada': t, 'estado': 'ofrecida'}
         C.enviar(estado, 'directiva', "Oferta de renovación de contrato",
                  "Estamos contentos con tu trabajo y queremos que sigas. Mira nuestra propuesta.",
@@ -114,6 +114,58 @@ def revisar_renovacion(estado: dict) -> None:
         _dc(estado)['renovacion_dt'] = {'temporada': t, 'estado': 'negada'}
         C.enviar(estado, 'directiva', "No renovaremos tu contrato",
                  "Tu contrato vence al final de la temporada y la directiva no lo renovará.")
+
+
+CUPOS_ASCENSO = 2      # los 2 primeros de 2ª suben (resumen_temporada_screen)
+
+
+def hito_temporada(estado: dict) -> Optional[str]:
+    """Texto del gran logro de la temporada si ya está asegurado: campeón de liga, ascenso o
+    campeón de la copa internacional. None si todavía no hay ninguno."""
+    try:
+        if estado.get('copa_mejor_fase_temp') == 'Campeón':
+            from alpha_football import competiciones as CP
+            t = CP.tipo_copa_user(estado)
+            return f"campeón de la {CP.NOMBRE_COPA.get(t, 'copa')}" if t else "campeón de la copa"
+        liga, mi = estado.get('liga'), estado.get('mi_equipo')
+        if liga is None or mi is None:
+            return None
+        partidos = list(getattr(liga, 'calendario', []) or [])
+        if not any(p.jugado for p in partidos):
+            return None                                       # temporada sin empezar: no hay tabla
+        quedan = any(not p.jugado for p in partidos)
+        if quedan:
+            from alpha_football.directiva import peor_posicion_posible
+            puesto = peor_posicion_posible(liga, mi)          # lo peor que te puede pasar
+        else:
+            from alpha_football.ui.postpartido import posicion_liga
+            puesto = posicion_liga(liga, mi.id)               # tabla final (desempata por goles)
+        if puesto == 1:
+            return "campeón de liga" if getattr(liga, 'division', 1) != 2 else "campeón de 2ª y ascenso"
+        if getattr(liga, 'division', 1) == 2 and 1 <= puesto <= CUPOS_ASCENSO:
+            return "ascenso a 1ª división"
+    except Exception as e:
+        logger.error(f"No se pudo revisar el hito de la temporada: {e}")
+    return None
+
+
+def revisar_renovacion_por_hito(estado: dict) -> bool:
+    """Si la directiva te negó la renovación esta temporada pero lograste un hito (título, ascenso,
+    copa), se disculpa y te ofrece renovar. Una sola vez. True si ofreció."""
+    from alpha_football import correo as C
+    t, c = _temporada(estado), contrato(estado)
+    r = _dc(estado).get('renovacion_dt') or {}
+    if not c or int(c['hasta']) != t or r.get('temporada') != t or r.get('estado') != 'negada':
+        return False
+    hito = hito_temporada(estado)
+    if not hito:
+        return False
+    _dc(estado)['renovacion_dt'] = {'temporada': t, 'estado': 'ofrecida', 'disculpa': hito}
+    C.enviar(estado, 'directiva', "Te pedimos disculpas: queremos renovarte",
+             f"Nos equivocamos al no renovarte. Con el {hito} demostraste que eres el indicado. "
+             "Te ofrecemos un contrato nuevo: míralo en MI CONTRATO antes de que termine la temporada.",
+             C.accion('contrato_dt_screen', "VER OFERTA"))
+    return True
 
 
 def rechazar_renovacion(estado: dict) -> None:

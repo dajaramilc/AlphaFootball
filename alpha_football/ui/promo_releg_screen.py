@@ -103,9 +103,9 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         _centrado(banner_text, 12, 'xl', banner_color)
         sub = "Resumen de movimientos entre 1ª y 2ª división"
         if user_asc and data.get('premio_ascenso_user'):
-            sub = f"Tu plantilla sube +4 de media y cobras ${data['premio_ascenso_user']:,} por el ascenso"
+            sub = f"Tu plantilla sube de nivel (+3 a +6) y cobras ${data['premio_ascenso_user']:,} por el ascenso"
         elif user_des:
-            sub = "Tu plantilla baja -2 de media por el descenso"
+            sub = "Tu plantilla baja de nivel (−2 a −5) por el descenso"
         _centrado(sub, 64, 'sm', 'azul')
 
         # v2.3.6: Balón de Oro de la temporada que terminó (mejor rendimiento de las 10 ligas)

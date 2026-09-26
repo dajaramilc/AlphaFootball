@@ -20,7 +20,8 @@ PROB_ACEPTA_ANALISIS = 0.5
 RETENCION_CLUB = 0.25        # v4.4.0: de cada venta el club se queda el 25%; el resto va al presupuesto
 
 
-def acreditar_venta(estado: dict, jugador, comprador, monto: int, asunto: Optional[str] = None) -> int:
+def acreditar_venta(estado: dict, jugador, comprador, monto: int, asunto: Optional[str] = None,
+                    remitente: str = 'directiva', extra: str = '') -> int:
     """v4.4.0: cobra una venta del user (75% al presupuesto) y avisa por correo. Retorna lo acreditado."""
     monto = int(monto or 0)
     neto = monto - int(monto * RETENCION_CLUB)
@@ -36,9 +37,10 @@ def acreditar_venta(estado: dict, jugador, comprador, monto: int, asunto: Option
         from alpha_football import correo as C
         from alpha_football.negociacion import dinero_exacto
         nombre = getattr(jugador, 'nombre_completo', None) or f"{jugador.nombre} {jugador.apellido}"
-        C.enviar(estado, 'directiva', asunto or f"Venta cerrada: {nombre}",
+        C.enviar(estado, remitente, asunto or f"Venta cerrada: {nombre}",
                  f"Se vendió a {nombre} a {getattr(comprador, 'nombre', 'otro club')} por {dinero_exacto(monto)}. "
-                 f"El club retiene el {int(RETENCION_CLUB * 100)}%: designamos {dinero_exacto(neto)} a presupuesto.",
+                 f"El club retiene el {int(RETENCION_CLUB * 100)}%: designamos {dinero_exacto(neto)} a presupuesto."
+                 + (f" {extra}" if extra else ""),
                  C.accion('historial_pases_screen', "VER HISTORIAL"))
     except Exception as e:
         logger.error(f"acreditar_venta: no se pudo enviar el correo: {e}")
@@ -65,8 +67,9 @@ def retirar(estado: dict, of: dict) -> None:
     estado['ofertas_recibidas'] = [o for o in (estado.get('ofertas_recibidas') or []) if o is not of]
 
 
-def vender(estado: dict, of: dict) -> bool:
-    """Cierra la venta de `of` (lógica que antes vivía en ofertas_screen._aceptar). True si vendió."""
+def vender(estado: dict, of: dict, asunto: Optional[str] = None, remitente: str = 'directiva') -> bool:
+    """Cierra la venta de `of` (lógica que antes vivía en ofertas_screen._aceptar). True si vendió.
+    `asunto`: título del correo de la venta (uno solo, con el detalle del 25% retenido)."""
     mi_equipo = estado.get('mi_equipo')
     jug = of.get('jugador'); comp = of.get('comprador'); monto = of.get('monto', 0)
     if not mi_equipo or not jug or not comp:
@@ -75,12 +78,31 @@ def vender(estado: dict, of: dict) -> bool:
         # v2.9.1: oferta vieja (ya vendido, venta forzada o se fue libre): no cobrar ni duplicar.
         logger.warning(f"Oferta descartada: {getattr(jug, 'nombre_completo', '?')} ya no está en tu plantilla.")
         return False
+    if getattr(jug, 'prestamo', None):   # a préstamo: no se toca
+        logger.warning(f"Oferta descartada: {getattr(jug, 'nombre_completo', '?')} está a préstamo.")
+        return False
+    from alpha_football import traspasos_pendientes as TP
+    if TP.pendiente_de(estado, jug) is not None:
+        logger.warning(f"{jug.nombre_completo} ya está vendido: se va cuando abra el mercado.")
+        return False
     estado['ofertas_recibidas'] = [o for o in (estado.get('ofertas_recibidas') or [])
                                    if o.get('jugador') is not jug]
+    if not TP.mercado_abierto(estado):
+        # mercado cerrado: la plata llega ya, el jugador se va cuando se abra la ventana
+        try:
+            aviso = TP.diferir_venta(estado, jug, comp, monto)
+            acreditar_venta(estado, jug, comp, monto, asunto, remitente, extra=aviso)
+            comp.balance = max(0, int(getattr(comp, 'balance', 0) or 0) - int(monto))
+            estado.setdefault('transfer_log', []).append(
+                f"Venta acordada: {jug.nombre_completo} -> {comp.nombre} por ${monto:,} (se va en la ventana)")
+            return True
+        except Exception as e_dif:
+            logger.error(f"No se pudo dejar la venta pendiente: {e_dif}")
+            return False
     try:
         from alpha_football.finanzas import quitar_de_plantilla
         quitar_de_plantilla(mi_equipo, jug)     # v2.9.0: reindexa la alineación
-        acreditar_venta(estado, jug, comp, monto)     # v4.4.0: 25% para el club + correo
+        acreditar_venta(estado, jug, comp, monto, asunto, remitente)     # v4.4.0: 25% para el club + correo
         comp.jugadores.append(jug)
         jug.transferible = jug.pide_salir = False     # v3.1.0
         try:  # v4.4.0: se borra la escalada de salida
@@ -147,9 +169,8 @@ def _resolver_ventas(estado: dict, azar: random.Random) -> None:
         nombre = getattr(jug, 'nombre_completo', '?')
         if azar.random() < PROB_ACEPTA_ANALISIS:
             of['monto'] = int(c['pedido'])
-            vender(estado, of)
-            C.enviar(estado, 'club', f"{comp.nombre} acepta tu contraoferta",
-                     f"{nombre} se va a {comp.nombre} por {dinero_exacto(c['pedido'])}.")
+            # un solo correo: el de la venta, con el asunto de la contraoferta aceptada
+            vender(estado, of, f"{comp.nombre} acepta tu contraoferta por {nombre}", remitente='club')
         else:
             retirar(estado, of)
             C.enviar(estado, 'club', f"{comp.nombre} se retira",

@@ -74,7 +74,9 @@ def test_suerte_y_goleadas():
         r = engine.simular_partido(chico, grande)
         gana += r.goles_visitante > r.goles_local
         dif7 += abs(r.goles_local - r.goles_visitante) >= 7
-    assert 0.70 < gana / n < 0.99, gana / n
+    # v4.5.0: la media real ronda 0.72 (medido con 3 semillas, con y sin acumulación de amarillas:
+    # 0.69-0.74); con 600 partidos el ruido es ±0.02, así que el piso de 0.70 fallaba por azar
+    assert 0.65 < gana / n < 0.99, gana / n
     assert dif7 / n < 0.02, dif7 / n
     # Dentro de una liga el pequeño saca resultados con frecuencia
     liga = sorted(load_league_teams('laliga').equipos, key=engine._media_once)

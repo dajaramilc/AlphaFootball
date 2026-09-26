@@ -141,7 +141,8 @@ def evaluar_temporada(estado: dict, posicion: int) -> dict:
     mi = estado.get('mi_equipo')
     pos_max = int(obj.get('pos_max', 99))
     resultado = 'superado' if posicion < pos_max else 'cumplido' if posicion <= pos_max else 'fallado'
-    monto = int(int(obj.get('presupuesto_ref', 0) or 0) * PREMIO[resultado])
+    # abs(): con un presupuesto de referencia negativo el premio seguía siendo multa (y al revés)
+    monto = int(abs(int(obj.get('presupuesto_ref', 0) or 0)) * PREMIO[resultado])
     if mi is not None:
         mi.balance = int(getattr(mi, 'balance', 0) or 0) + monto
     from alpha_football import correo as C
@@ -175,8 +176,13 @@ def evaluar_temporada(estado: dict, posicion: int) -> dict:
                                temporada_fin=temporada_fin)
     elif CD.contrato_vencido(estado, temporada_fin):
         veredicto = 'fin_contrato'
-        marcar_despido(estado, "Terminó tu contrato y no hubo renovación.", temporada_fin=temporada_fin,
-                       indemnizar=False, titulo="FIN DE CONTRATO")
+        ren = dc.get('renovacion_dt') or {}
+        # tenías una oferta de renovación sin responder: todavía puedes aceptarla en la pantalla de fin de contrato
+        renovable = ren.get('estado') == 'ofrecida' and int(ren.get('temporada', -1)) == temporada_fin
+        marcar_despido(estado, "Terminó tu contrato." + (" Tu club mantiene su oferta de renovación."
+                                                           if renovable else " No hubo renovación."),
+                       temporada_fin=temporada_fin, indemnizar=False, titulo="FIN DE CONTRATO",
+                       renovable=renovable)
     elif resultado == 'fallado':
         veredicto = 'regano'
     elif resultado == 'superado' or posicion == 1 or estado.get('copa_mejor_fase_temp') == 'Campeón':
@@ -195,7 +201,7 @@ def evaluar_temporada(estado: dict, posicion: int) -> dict:
 
 
 def marcar_despido(estado: dict, motivo: str, temporada_fin: Optional[int] = None,
-                   indemnizar: bool = True, titulo: str = "¡DESPEDIDO!") -> int:
+                   indemnizar: bool = True, titulo: str = "¡DESPEDIDO!", renovable: bool = False) -> int:
     """
     v2.9.1: deja el despido pendiente en memoria y en datos_carrera (se guarda con la
     partida). v3.2.0: paga la indemnización al patrimonio y guarda el título de la pantalla
@@ -214,8 +220,11 @@ def marcar_despido(estado: dict, motivo: str, temporada_fin: Optional[int] = Non
     else:
         pend = estado['despido_pendiente'] = {'motivo': motivo, 'opciones': opciones_de_club(estado),
                                               'titulo': titulo}
+    if renovable:
+        pend['renovable'] = True         # despido_screen ofrece RENOVAR CON TU CLUB
     _dc(estado)['despido_pendiente'] = {'motivo': pend['motivo'], 'titulo': pend.get('titulo', titulo),
-                                        'opciones_ids': [o.id for o in pend['opciones']]}
+                                        'opciones_ids': [o.id for o in pend['opciones']],
+                                        'renovable': bool(pend.get('renovable'))}
     return monto
 
 
@@ -233,7 +242,8 @@ def restaurar_despido(estado: dict) -> bool:
                 equipos.setdefault(eq.id, eq)
     opciones = [equipos[i] for i in guardado.get('opciones_ids', []) if i in equipos] or opciones_de_club(estado)
     estado['despido_pendiente'] = {'motivo': guardado.get('motivo', ''), 'opciones': opciones,
-                                   'titulo': guardado.get('titulo', "¡DESPEDIDO!")}
+                                   'titulo': guardado.get('titulo', "¡DESPEDIDO!"),
+                                   'renovable': bool(guardado.get('renovable'))}
     return True
 
 
@@ -504,8 +514,10 @@ def evaluar_objetivo_copa(estado: dict, temporada_fin: int) -> Optional[dict]:
 # --- v4.3.0: avisos de objetivo cumplido (uno por objetivo y temporada) ---
 def _ya_avisado(estado: dict, clave: str) -> bool:
     avisados = _dc(estado).setdefault('objetivos_avisados', [])
-    marca = f"{clave}:{int(estado.get('temporada', 1) or 1)}"
-    if marca in avisados:
+    marca_vieja = f"{clave}:{int(estado.get('temporada', 1) or 1)}"
+    # el club va en la marca: si cambias de club a mitad de temporada, el objetivo del nuevo también avisa
+    marca = f"{marca_vieja}:{getattr(estado.get('mi_equipo'), 'nombre', '')}"
+    if marca in avisados or marca_vieja in avisados:
         return True
     avisados.append(marca)
     return False

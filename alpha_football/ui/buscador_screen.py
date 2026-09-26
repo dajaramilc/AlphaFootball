@@ -78,7 +78,11 @@ def _rects() -> dict:
         'liga': pygame.Rect(506, 64, 200, 36),
         'buscar': pygame.Rect(946, 64, 150, 36),
         'limpiar': pygame.Rect(1106, 64, 158, 36),
-        'fichar': pygame.Rect(R_FICHA.x + 20, R_FICHA.bottom - 64, R_FICHA.width - 40, 48),
+        # préstamos: la fila se parte en FICHAR | PRÉSTAMO
+        'fichar': pygame.Rect(R_FICHA.x + 20, R_FICHA.bottom - 64, (R_FICHA.width - 50) // 2, 48),
+        'prestamo': pygame.Rect(R_FICHA.x + 30 + (R_FICHA.width - 50) // 2, R_FICHA.bottom - 64,
+                                (R_FICHA.width - 50) // 2, 48),
+        'favorito': pygame.Rect(R_FICHA.x + 20, R_FICHA.bottom - 120, R_FICHA.width - 40, 48),
     }
     for i, orden in enumerate(N.ORDENES):
         r[f'orden_{orden}'] = pygame.Rect(120 + i * 170, 152, 160, 30)
@@ -295,7 +299,24 @@ def _dibujar_ficha(screen, estado, item, mouse_pos) -> None:
     if not ok:
         draw_text(screen, motivo[:44], (x, y), size='sm', color='rojo')
     r = _rects()['fichar']
-    draw_button(screen, r, "FICHAR" if ok else "NO DISPONIBLE", r.collidepoint(mouse_pos))
+    draw_button(screen, r, "FICHAR", r.collidepoint(mouse_pos))   # el motivo ya se ve en rojo arriba
+    rp = _rects()['prestamo']
+    draw_button(screen, rp, "PRÉSTAMO" if club is not None else "—", rp.collidepoint(mouse_pos))
+    dibujar_boton_favorito(screen, _rects()['favorito'], N.es_favorito(estado, j), mouse_pos)
+
+
+def dibujar_estrella(screen, centro, radio: int, color, llena: bool = True) -> None:
+    """Estrella de 5 puntas dibujada (la fuente no trae el carácter ★)."""
+    import math
+    cx, cy = centro
+    pts = [(cx + (radio if k % 2 == 0 else radio * 0.45) * math.sin(math.pi * k / 5),
+            cy - (radio if k % 2 == 0 else radio * 0.45) * math.cos(math.pi * k / 5)) for k in range(10)]
+    pygame.draw.polygon(screen, color, pts, 0 if llena else 2)
+
+
+def dibujar_boton_favorito(screen, r, es_fav: bool, mouse_pos) -> None:
+    draw_button(screen, r, "QUITAR DE FAVORITOS" if es_fav else "AGREGAR A FAVORITOS", r.collidepoint(mouse_pos))
+    dibujar_estrella(screen, (r.x + 26, r.centery), 11, COLORS['dorado'], es_fav)
 
 
 def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
@@ -387,6 +408,16 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             elif R_SOLO_LIBRES.collidepoint(click_pos):
                 f['solo_libres'] = not f.get('solo_libres', False)
                 b['buscado'], b['sel'], b['scroll'], recalcular = True, 0, 0, True
+            elif rects['favorito'].collidepoint(click_pos) and res:
+                j_fav = res[b['sel']][0]
+                queda = N.alternar_favorito(estado, j_fav)
+                _mensaje(estado, f"{j_fav.nombre_completo} {'agregado a' if queda else 'quitado de'} favoritos")
+            elif rects['prestamo'].collidepoint(click_pos) and res:
+                j, club, _et = res[b['sel']]
+                if club is None:
+                    _mensaje(estado, "Un agente libre no se pide a préstamo: fíchalo.", 'rojo')
+                else:
+                    return N.iniciar_negociacion(estado, j, club, 'prestamo', 'buscador_screen')
             elif rects['fichar'].collidepoint(click_pos) and res:
                 # v2.9.0: fichar ya no es directo: se negocia con el club y con el jugador.
                 j, club, _et = res[b['sel']]
@@ -474,6 +505,8 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                        etiqueta, _dinero(N.precio_fichaje(j))]
             for (_t, x), v in zip(COLUMNAS, valores):
                 draw_text(screen, v, (x, fila.y + 2), size='sm', color='blanco', shadow=False)
+            if N.es_favorito(estado, j):
+                dibujar_estrella(screen, (240, fila.centery), 7, COLORS['dorado'])   # entre JUGADOR y POS
         if not res:
             draw_text(screen, "Ningún jugador cumple los filtros.", (R_LISTA.x + 20, FILA_Y0), size='md', color='blanco')
 

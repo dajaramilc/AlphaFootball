@@ -356,6 +356,7 @@ _TEXTO_TARJETA = {
     'team_screen': "Elige el once, el banco, la formación, el estilo y la mentalidad.",
     'plantilla_screen': "Lista de tus jugadores: ficha, orden por columnas, transferibles y renovaciones.",
     'buscador_screen': "Busca jugadores de todas las ligas por nombre, posición y rangos, y negocia su fichaje.",
+    'favoritos_screen': "Tu lista de jugadores seguidos: búscalos y negocia su fichaje cuando quieras.",
     'ofertas_screen': "Ofertas que otros clubes hacen por tus jugadores: acepta, rechaza o contraoferta.",
     'historial_pases_screen': "Todos los traspasos de la temporada en las ligas y los tuyos.",
     'ojeador_screen': "Tres fichajes recomendados por tu ojeador en cada ventana de pases.",
@@ -671,6 +672,8 @@ def _ayuda_plantilla(estado: dict) -> list:
          "Estado, media, potencial, valor, contrato, atributos y estadísticas del jugador elegido."),
         (r['renovar'], "Renovar contrato", "Abre la negociación para extender su contrato (tecla R)."),
         (r['transferible'], "Transferible", "Lo pone en venta o lo quita (tecla T). Ponerlo baja su moral."),
+        (r['lista_prestamo'], "Préstamo", "Pone al jugador en la lista de préstamo: los clubes te mandan ofertas de cesión (tecla P)."),
+        (r['prestamos'], "Préstamos", "Tus jugadores a préstamo y los cedidos, con CONCLUIR PRÉSTAMO."),
         (r['volver'], "Volver", "Regresa al hub (también ESC)."),
     ]
 
@@ -701,13 +704,32 @@ def _ayuda_buscador(estado: dict) -> list:
          else R(16, 150, 800, 34), "Ordenar",
          "Tras BUSCAR aparecen los botones para ordenar; otro clic invierte el sentido."),
         (B.R_LISTA, "Resultados", "Jugadores que cumplen los filtros. Clic o ↑ ↓ para ver su ficha."),
-        (R(B.R_FICHA.x, B.R_FICHA.y, B.R_FICHA.width, r['fichar'].y - B.R_FICHA.y - 6), "Ficha", "Datos, club y precio del jugador elegido."),
+        (R(B.R_FICHA.x, B.R_FICHA.y, B.R_FICHA.width, r['favorito'].y - B.R_FICHA.y - 6), "Ficha", "Datos, club y precio del jugador elegido."),
+        (r['favorito'], "Favorito", "Agrega o quita al jugador de tu lista de FAVORITOS (en NEGOCIACIONES)."),
         (r['fichar'], "Negociar fichaje", "Abre la negociación con su club y luego con el jugador."),
+        (r['prestamo'], "Préstamo", "Pide al jugador a préstamo por 6 meses o 1 año pagando un % del sueldo."),
         (r['volver'], "Volver", "Regresa al hub (también ESC)."),
     ]
 
 
 AYUDA['buscador_screen'] = _ayuda_buscador
+
+
+# ---------------------------------------------------------------- favoritos
+def _ayuda_favoritos(estado: dict) -> list:
+    from alpha_football.ui import favoritos_screen as FV
+    from alpha_football.ui import buscador_screen as B
+    r = B._rects()
+    return [
+        (FV.R_NOMBRE, "Buscar", "Clic y escribe parte del nombre para filtrar tus favoritos."),
+        (FV.R_LISTA, "Favoritos", "Los jugadores que marcaste en NEGOCIAR. Clic o ↑ ↓ para ver su ficha."),
+        (r['favorito'], "Quitar", "Lo saca de tu lista de favoritos (tecla Supr)."),
+        (r['fichar'], "Negociar fichaje", "Abre la negociación con su club y luego con el jugador (Enter)."),
+        (FV.R_VOLVER, "Volver", "Regresa al hub (también ESC)."),
+    ]
+
+
+AYUDA['favoritos_screen'] = _ayuda_favoritos
 
 
 # ---------------------------------------------------------------- historial de pases
@@ -716,7 +738,7 @@ def _ayuda_historial_pases(estado: dict) -> list:
     r = H._rects()
     return [
         (_union([r['general'], r['propio']]), "Pestañas", "Todos los pases de las ligas o solo los de tu club (← → o Tab)."),
-        (H.R_LISTA, "Pases", "Cuándo, jugador, posición, media, de qué club a cuál y por cuánto. ↑ ↓, RePág/AvPág o rueda."),
+        (H.R_LISTA, "Pases", "Clic en un encabezado ordena por esa columna (otro clic invierte). ↑ ↓, RePág/AvPág o rueda."),
         (r['volver'], "Volver", "Regresa al hub (también ESC)."),
     ]
 
@@ -912,7 +934,7 @@ def _items_direccion(estado: dict, en_partido: bool) -> list:
             (rc['ok'], "Reanudar", "Vuelve al partido con los cambios hechos (Enter)."),
             (rc['cancel'], "Deshacer", "Revierte lo hecho desde que abriste la dirección (ESC)."),
             (T._CAMPO, "Campo", "Clic en un titular y luego en otro para cambiarlos de puesto."),
-            (T._FICHA, "Ficha", "Datos, energía y nota en vivo del jugador seleccionado."),
+            (T._FICHA, "Ficha", "Datos y nota en vivo. Energía: verde bien, amarilla (<70) rinde menos, roja (<55) se cansa el doble."),
             (_union(T.rect_tarjeta_banco(n) for n in range(10)), "Banco",
              "Titular y luego suplente = cambio (máx. 5; el que sale no vuelve a entrar)."),
         ]
@@ -922,7 +944,7 @@ def _items_direccion(estado: dict, en_partido: bool) -> list:
         (rc['ok'], "Confirmar", "Guarda la alineación y vuelve (Enter)."),
         (rc['cancel'], "Cancelar", "Descarta los cambios y vuelve (ESC)."),
         (T._CAMPO, "Campo", "Clic en un jugador y luego en otro para intercambiarlos (puesto o banco)."),
-        (T._FICHA, "Ficha", "Atributos, energía y estado del jugador seleccionado."),
+        (T._FICHA, "Ficha", "Atributos y estado. Energía: verde bien, amarilla (<70) rinde menos, roja (<55) se cansa el doble."),
         (_union(T.rect_tarjeta_banco(n) for n in range(10)), "Banco / reservas", "Los 10 convocados; con VER RESERVAS, el resto de la plantilla."),
         (T.R_BANCO_TOGGLE, "Ver reservas", "Alterna entre el banco y las reservas (tecla R); ◀ ▶ pasan de página."),
     ]
@@ -963,8 +985,8 @@ def _ayuda_partido(estado: dict) -> list:
     if sim == 'finalizado':   # v4.1.0: post-partido
         from alpha_football.ui import postpartido as PP
         return [
-            (_union([PP.R_TAB_CALIF, PP.R_TAB_TABLA]), "Calificaciones / Tabla",
-             "← → cambian: notas de ambos equipos o cómo queda tu liga o tu copa."),
+            (_union([PP.R_TAB_CALIF, PP.R_TAB_TABLA, PP.R_TAB_RES]), "Pestañas",
+             "← → cambian: notas, cómo queda tu liga o copa y los demás resultados de la fecha."),
             (PP.R_PANEL, "Detalle", "Nota de cada jugador con goles, asistencias, tarjetas, lesiones y cambios. ↑ ↓ desplazan."),
             (PP.R_CONTINUAR, "Continuar", "Vuelve al hub (también Enter)."),
         ]
@@ -984,23 +1006,6 @@ def _ayuda_partido(estado: dict) -> list:
 
 
 AYUDA['match_screen'] = _ayuda_partido
-
-
-# ---------------------------------------------------------------- mercado (pantalla heredada)
-def _ayuda_mercado(estado: dict) -> list:
-    from alpha_football.ui import market_screen as M
-    return [
-        (M.R_INFO, "Presupuesto", "Dinero disponible y fichajes hechos en esta ventana."),
-        (M.R_PESTANAS, "Pestañas", "Filtra por posición, agentes libres o mercado internacional (← →)."),
-        (M.R_GRILLA, "Jugadores", "Tarjetas de jugadores en venta: clic para ver la ficha o FICHAR para comprarlo."),
-        (R(880, 100, 340, 32), "País y filtros", "Filtra por país (tecla P) o por precio, media, edad, potencial y nombre (F)."),
-        (_union([M.R_PAG_PREV, M.R_PAG_NEXT]), "Páginas", "Anterior / siguiente página (RePág / AvPág)."),
-        (M.R_HISTORIAL, "Historial", "Últimos traspasos de la ventana."),
-        (M.R_SALIR, "Volver", "Regresa al hub (también ESC)."),
-    ]
-
-
-AYUDA['market_screen'] = _ayuda_mercado
 
 
 # ---------------------------------------------------------------- copa internacional (por pestaña y tipo)

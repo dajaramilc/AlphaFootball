@@ -69,10 +69,15 @@ def estado_juego_actual(estado: dict):
 def guardar_slot(estado: dict, slot_n: int) -> None:
     """v3.6.0: guarda la partida en el slot `slot_n` y lo marca como activo (lanza si falla)."""
     from alpha_football import save
-    estado_juego = estado_juego_actual(estado)
-    liga, mi_equipo = estado.get('liga'), estado.get('mi_equipo')
-    nombre_guardado = f"{mi_equipo.corto} (T{estado_juego.temporada} J{liga.jornada_actual})"
-    save.guardar_en_slot(estado_juego, slot_n, nombre_guardado)
+    from alpha_football.ui import pantalla_carga
+    pantalla_carga.mostrar("GUARDANDO PARTIDA", f"Slot {slot_n}")
+    try:
+        estado_juego = estado_juego_actual(estado)
+        liga, mi_equipo = estado.get('liga'), estado.get('mi_equipo')
+        nombre_guardado = f"{mi_equipo.corto} (T{estado_juego.temporada} J{liga.jornada_actual})"
+        save.guardar_en_slot(estado_juego, slot_n, nombre_guardado)
+    finally:
+        pantalla_carga.cerrar()
     estado['slot_activo'] = slot_n
 
 
@@ -212,6 +217,8 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
 
             # Procesar el click en un slot para realizar el guardado
             if (click_pos and slot_rect.collidepoint(click_pos)) or elegido == i:
+                from alpha_football.ui import pantalla_carga
+                pantalla_carga.mostrar("GUARDANDO PARTIDA", f"Slot {slot_n}")
                 try:
                     estado_juego = None
                     estado_juego = estado_juego_actual(estado)
@@ -223,6 +230,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     
                     # Recordar el slot activo para futuros autoguardados
                     estado['slot_activo'] = slot_n
+                    pantalla_carga.cerrar()
                     # v2.4.0: guardar ya no saca de la partida; se vuelve al hub con un aviso.
                     from alpha_football.ui.league_screen import _toast
                     _toast(estado, f"Guardado en slot {slot_n}")
@@ -239,6 +247,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     except Exception as e_fatal:
                         logger.critical(f"No se pudo guardar la partida con ningún método: {e_fatal}.")
                         _toast(estado, "No se pudo guardar la partida", color='rojo')
+                    pantalla_carga.cerrar()
                     estado.pop('salir_tras_guardar', None)
                     return estado.get('save_slots_return', 'league_screen')
 

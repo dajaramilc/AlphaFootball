@@ -15,6 +15,7 @@ import random
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+from alpha_football.sanciones import sancionado as _sancionado  # noqa: E402  sanción de la competición que se juega
 
 SALARIO_PCT_VALOR = 0.05        # salario anual = 5% del valor de mercado
 SALARIO_MIN = 20_000
@@ -83,11 +84,21 @@ def asegurar_contratos(estado: dict) -> None:
         asegurar_contrato(j)
 
 
-def masa_salarial(equipo) -> int:
+def masa_salarial(equipo, estado: Optional[dict] = None) -> int:
+    """Sueldos anuales que paga el club: los propios, solo su % de los que tiene a préstamo y, con
+    `estado`, el % que sigue pagando de sus cedidos (prestamos.py)."""
     total = 0
     for j in getattr(equipo, 'jugadores', []) or []:
         asegurar_contrato(j)
-        total += int(j.salario)
+        p = getattr(j, 'prestamo', None)
+        total += int(j.salario) * (100 - int(p['pct_dueno'])) // 100 if p else int(j.salario)
+    if estado is not None:
+        try:
+            from alpha_football.prestamos import cedidos
+            for j, _club in cedidos(estado, getattr(equipo, 'nombre', None)):
+                total += int(j.salario) * int(j.prestamo['pct_dueno']) // 100
+        except Exception as e:
+            logger.error(f"No se pudo sumar el sueldo de los cedidos: {e}")
     return total
 
 
@@ -141,8 +152,23 @@ def quitar_de_plantilla(equipo, jugador) -> None:
         return
     try:
         from alpha_football import formaciones as Fm
+        hueco = next((k for k, o in enumerate(tit) if o is jugador), None)
         alin.titulares = [jugadores.index(o) for o in tit if o is not jugador]
         alin.convocados = [jugadores.index(o) for o in conv if o is not jugador]
+        if hueco is not None and len(alin.titulares) == 10:
+            # sale un titular: se cubre solo su puesto (mismo slot) con el mejor disponible,
+            # prefiriendo su misma posición; el resto del once que armó el user queda igual
+            libres = [i for i, o in enumerate(jugadores)
+                      if i not in alin.titulares and getattr(o, 'lesion_partidos', 0) == 0
+                      and not _sancionado(o)]
+            misma = [i for i in libres if getattr(jugadores[i], 'posicion', '') == getattr(jugador, 'posicion', '')]
+            if not misma and getattr(jugador, 'posicion', '') != 'POR':
+                misma = [i for i in libres if getattr(jugadores[i], 'posicion', '') != 'POR']
+            cands = misma or libres
+            if cands:
+                reemplazo = max(cands, key=lambda i: getattr(jugadores[i], 'overall', 0))
+                alin.titulares.insert(min(hueco, len(alin.titulares)), reemplazo)
+                alin.convocados = [i for i in alin.convocados if i != reemplazo]
         if len(alin.titulares) < 11:
             alin.titulares = Fm.mejor_once(jugadores, alin.formacion)
         Fm.normalizar_convocados(alin, jugadores)
@@ -155,12 +181,28 @@ def vender_mejor(estado: dict) -> Optional[str]:
     mi = estado.get('mi_equipo')
     if mi is None or not mi.jugadores:
         return None
-    estrella = max(mi.jugadores, key=_valor)
+    from alpha_football import traspasos_pendientes as TP
+    vendibles = [j for j in mi.jugadores if TP.pendiente_de(estado, j) is None   # no vender dos veces al mismo
+                 and not getattr(j, 'prestamo', None)]                           # a préstamo: no se toca
+    if not vendibles:
+        return None
+    estrella = max(vendibles, key=_valor)
     rivales = [e for e in _todos_los_equipos(estado) if e is not mi and e.id != mi.id]
     if not rivales:
         return None
     comprador = max(rivales, key=lambda e: int(getattr(e, 'balance', 0) or 0))
     monto = int(_valor(estrella) * VENTA_FORZADA_FRAC)
+    if not TP.mercado_abierto(estado):
+        # la venta es inmediata (la plata entra ya), pero el jugador se va cuando abra el mercado
+        aviso = TP.diferir_venta(estado, estrella, comprador, monto)
+        comprador.balance = max(0, int(comprador.balance) - monto)
+        from alpha_football.contraofertas import acreditar_venta
+        acreditar_venta(estado, estrella, comprador, monto, extra=aviso)
+        texto = (f"Quiebra: la directiva vendió a {estrella.nombre_completo} a {comprador.nombre} "
+                 f"por ${monto / 1_000_000:.1f}M (se va en la jornada {TP.jornada_apertura(estado)})")
+        estado.setdefault('transfer_log', []).append(texto)
+        logger.info(texto)
+        return texto
     quitar_de_plantilla(mi, estrella)
     comprador.jugadores.append(estrella)
     estrella.transferible = estrella.pide_salir = False     # v3.1.0
@@ -195,7 +237,7 @@ def procesar_jornada(estado: dict, es_local: bool, gf: int, gc: int) -> dict:
     resultado = 'victoria' if gf > gc else 'derrota' if gf < gc else 'empate'
     patrocinio = int(medio * PATROCINIO_FRAC / n)
     taquilla = int(medio * TAQUILLA_FRAC / max(1, n / 2) * FACTOR_TAQUILLA[resultado]) if es_local else 0
-    salarios = masa_salarial(mi) // n
+    salarios = masa_salarial(mi, estado) // n
     mi.balance = int(mi.balance) + patrocinio + taquilla - salarios
     registrar(estado, 'patrocinio', patrocinio)
     registrar(estado, 'taquilla', taquilla)
@@ -221,6 +263,11 @@ def cierre_temporada(estado: dict) -> list:
     Fin de temporada: contratos −1 año (los del user que llegan a 0 se van libres; la IA
     renueva sola) y despido si el saldo quedó negativo. Devuelve las salidas del user.
     """
+    try:   # cedidos con el contrato por vencer vuelven a su dueño antes de descontar
+        from alpha_football.prestamos import cierre_contratos
+        cierre_contratos(estado)
+    except Exception as e_pr:
+        logger.error(f"No se pudieron cerrar los préstamos por contrato: {e_pr}")
     asegurar_contratos(estado)
     mi = estado.get('mi_equipo')
     salidas = []
@@ -238,6 +285,7 @@ def cierre_temporada(estado: dict) -> list:
                     _limpiar_salida(j)
                 except Exception as e_lim:
                     logger.error(f"No se pudo limpiar la salida: {e_lim}")
+                j.fin_de_contrato = True     # sigue en la lista de libres aunque cambie la jornada
                 estado.setdefault('free_agents_list', []).append(j)
                 salidas.append({'jugador': f"{j.nombre} {j.apellido}", 'posicion': j.posicion, 'media': j.overall})
                 try:
@@ -260,6 +308,18 @@ MINIMO_POR_POSICION = {'POR': 2, 'DEF': 5, 'MED': 5, 'DEL': 3}
 PLANTILLA_MINIMA = 18
 
 
+def generar_reemplazo(posicion: str, estrellas_equipo: float):
+    """Juvenil de relleno para completar la plantilla (nivel según las estrellas del club)."""
+    from alpha_football.models import Jugador
+    from alpha_football.nombres import nombre_unico   # v4.4.0: sin nombres repetidos
+    lo = int(40 + float(estrellas_equipo or 3.0) * 5)
+    hi = min(lo + 20, 76)
+    nombre, apellido = nombre_unico()
+    return Jugador(nombre=nombre, apellido=apellido, posicion=posicion,
+                   ataque=random.randint(lo, hi), defensa=random.randint(lo, hi), fisico=random.randint(lo, hi),
+                   tecnica=random.randint(lo, hi), mental=random.randint(lo, hi))
+
+
 def completar_plantilla(equipo) -> None:
     """
     v2.9.1: tras ventas o fines de contrato la plantilla del user nunca queda sin portero
@@ -267,7 +327,6 @@ def completar_plantilla(equipo) -> None:
     contrato nuevo (antes los reemplazos llegaban sin contrato y se iban en el cierre).
     """
     try:
-        from alpha_football.ui.market_screen import generar_reemplazo_resiliente
         estrellas = getattr(equipo, 'estrellas', 3.0)
         faltan = []
         for pos, minimo in MINIMO_POR_POSICION.items():
@@ -276,7 +335,7 @@ def completar_plantilla(equipo) -> None:
         while len(equipo.jugadores) + len(faltan) < PLANTILLA_MINIMA:
             faltan.append('MED')
         for pos in faltan:
-            nuevo = generar_reemplazo_resiliente(pos, estrellas)
+            nuevo = generar_reemplazo(pos, estrellas)
             nuevo.salario, nuevo.contrato_anios, nuevo.clausula = contrato_inicial(nuevo)
             nuevo.contrato_anios = max(2, nuevo.contrato_anios)
             equipo.jugadores.append(nuevo)

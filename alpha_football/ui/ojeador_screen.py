@@ -55,11 +55,24 @@ def _envolver(texto: str, ancho: int) -> list:
 
 def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
     """Retorna 'league_screen' al salir o None para seguir aquí."""
+    destino = _render(screen, estado)
+    if destino is not None:
+        estado.pop('_ojeador_recs', None)    # al volver a entrar se recalcula (pudo cambiar el mercado)
+    return destino
+
+
+def _render(screen: pygame.Surface, estado: dict) -> Optional[str]:
     try:
         mi = estado.get('mi_equipo')
         if mi is None:
             return 'league_screen'
-        recs = N.recomendaciones_ojeador(estado)
+        # recorrer las 16 ligas cada frame era caro: se calcula una vez al entrar a la pantalla
+        # (se invalida sola si cambia la ventana, el presupuesto o la plantilla)
+        clave_cache = (tuple(N._clave_ventana(estado)), int(mi.balance), len(mi.jugadores))
+        cache = estado.get('_ojeador_recs')
+        if not cache or cache[0] != clave_cache:
+            cache = estado['_ojeador_recs'] = (clave_cache, N.recomendaciones_ojeador(estado))
+        recs = cache[1]
         mouse_pos = pygame.mouse.get_pos()
         from alpha_football.ui.foco import traducir_eventos, marcar   # v4.2.0: teclado
         rects_foco = list(_rects_fichar(len(recs))) + [_volver()]
@@ -86,7 +99,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         except Exception:
             abierta = True
         temporada, ventana = N._clave_ventana(estado)
-        draw_text(screen, f"Informe para la ventana de {'inicio' if ventana == 'inicio' else 'cierre'} de la T{temporada}"
+        draw_text(screen, f"Informe para la ventana de {ventana} de la T{temporada}"
                           f"  ·  Mercado {'ABIERTO' if abierta else 'cerrado (puedes fichar igual)'}"
                           f"  ·  Presupuesto ${mi.balance / 1_000_000:.1f}M",
                   (16, 56), size='sm', color='verde' if abierta else 'azul')

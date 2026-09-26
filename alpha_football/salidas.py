@@ -29,7 +29,9 @@ SALIDA_FORZADA_N = 3
 
 def marcar_salida_forzada(estado: dict, equipo) -> list:
     """Grande que desciende: sus 3 mejores piden salir (el user no puede retenerlos por moral)."""
-    js = sorted(getattr(equipo, 'jugadores', []) or [], key=lambda x: -x.overall)[:SALIDA_FORZADA_N]
+    js = sorted([j for j in getattr(equipo, 'jugadores', []) or []
+                 if not getattr(j, 'prestamo', None)],   # a préstamo: no se toca
+                key=lambda x: -x.overall)[:SALIDA_FORZADA_N]
     mi = estado.get('mi_equipo') if isinstance(estado, dict) else None
     es_user = mi is not None and equipo is mi
     for j in js:
@@ -141,7 +143,7 @@ def revisar_descontento(estado: dict, rng: Optional[random.Random] = None) -> li
             opciones = [i for i in range(5) if i != ultimos.get(causa)]
             idx = azar.choice(opciones)
             ultimos[causa] = idx
-            if causa == 'sueldo':
+            if causa == 'sueldo' and not getattr(j, 'prestamo', None):   # a préstamo: no se renueva
                 acc = {'pantalla': 'negociacion_screen', 'texto': "RENOVAR", 'renovar': j.id}
             else:
                 acc = C.accion('plantilla_screen', "VER PLANTILLA")
@@ -203,6 +205,8 @@ def ofertas_garantizadas(estado: dict, rng: Optional[random.Random] = None) -> l
     for j in list(getattr(mi, 'jugadores', []) or []):
         if not j.pide_salir or any(o.get('jugador') is j for o in pendientes):
             continue
+        if getattr(j, 'prestamo', None):   # a préstamo: no recibe ofertas de traspaso
+            continue
         try:
             valor = int(getattr(j, 'valor', 0) or 0) or calcular_valor(j)
             monto = int(valor * azar.uniform(*MARGEN_OFERTA) * factor_contrato(j))
@@ -212,7 +216,10 @@ def ofertas_garantizadas(estado: dict, rng: Optional[random.Random] = None) -> l
                 comprador = azar.choice(pueden)
             elif clubes:
                 comprador = max(clubes, key=lambda eq: int(getattr(eq, 'balance', 0) or 0))
-                monto = int(max(0, int(comprador.balance)) * 0.95)
+                remate = int(max(0, int(comprador.balance)) * 0.95)
+                if remate < monto * PISO_REMATE:
+                    continue     # una oferta ridícula no sirve de salida: se espera a la próxima jornada
+                monto = remate
             else:
                 continue
             if monto <= 0:
@@ -227,6 +234,10 @@ def ofertas_garantizadas(estado: dict, rng: Optional[random.Random] = None) -> l
     return nuevas
 
 
+# si nadie puede pagar, el más rico ofrece lo que tiene solo si llega a este % de lo que vale
+PISO_REMATE = 0.5
+CUERPO_ESCALON_1_TIEMPO = "Sigo esperando una salida y no llega. Quiero irme del club."
+
 _CORREO_ESCALON = {
     1: ('jugador', "{n}: quiero irme", "No aceptaste la oferta y sigo esperando. Quiero salir del club."),
     2: ('directiva', "Advertencia: la situación de {n}",
@@ -238,7 +249,7 @@ _CORREO_ESCALON = {
 }
 
 
-def subir_escalon(estado: dict, j, pasos: int = 1) -> None:
+def subir_escalon(estado: dict, j, pasos: int = 1, por_rechazo: bool = False) -> None:
     """Sube la escalada del jugador; efectos por cada escalón; un solo correo por jornada."""
     from alpha_football import correo as C, directiva as D
     dc = estado.setdefault('datos_carrera', {})
@@ -255,6 +266,8 @@ def subir_escalon(estado: dict, j, pasos: int = 1) -> None:
         return
     enviados[str(j.id)] = clave
     rem, asunto, cuerpo = _CORREO_ESCALON[min(4, max(1, j.escalon_salida))]
+    if j.escalon_salida <= 1 and not por_rechazo:
+        cuerpo = CUERPO_ESCALON_1_TIEMPO     # nadie rechazó nada: solo pasó el tiempo
     n = _nombre(j)
     C.enviar(estado, rem, asunto.format(n=n), cuerpo.format(n=n), C.accion('ofertas_screen', "VER OFERTAS"))
 
@@ -268,7 +281,7 @@ def oferta_rechazada(estado: dict, jugador) -> None:
         if not _ventana_abierta(estado):        # fuera de la ventana no hay escalada
             return
         jugador.moral = max(0, int(jugador.moral) - MORAL_POR_RECHAZO)
-        subir_escalon(estado, jugador, 1)
+        subir_escalon(estado, jugador, 1, por_rechazo=True)
     except Exception as e:
         logger.error(f"Error al registrar el rechazo de la oferta: {e}")
 

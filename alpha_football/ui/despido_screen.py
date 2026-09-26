@@ -30,7 +30,18 @@ logger = logging.getLogger(__name__)
 
 
 def _rects_opciones(n: int) -> list:
-    return [pygame.Rect(16 + i * 422, 210, 404, 380) for i in range(n)]
+    """Tarjetas en una fila; con 4 (renovar + 3 clubes) se angostan para entrar en 1280."""
+    gap = 18
+    w = min(404, (SCREEN_W - 32 - gap * max(0, n - 1)) // max(1, n))
+    return [pygame.Rect(16 + i * (w + gap), 210, w, 380) for i in range(n)]
+
+
+RENOVAR = 'renovar'       # primera tarjeta cuando el club mantiene su oferta de renovación
+
+
+def items(pend: dict) -> list:
+    """Tarjetas de la pantalla: RENOVAR (si había oferta sin responder) y los clubes que te quieren."""
+    return ([RENOVAR] if pend.get('renovable') else []) + list(pend.get('opciones') or [])
 
 
 def _liga_de(estado, equipo):
@@ -47,7 +58,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         pend = estado.get('despido_pendiente')
         if not pend:
             return 'league_screen'
-        opciones = list(pend.get('opciones') or [])
+        opciones = items(pend)
         rects = _rects_opciones(len(opciones))
         mouse_pos = pygame.mouse.get_pos()
         from alpha_football.ui.foco import traducir_eventos, marcar   # v4.2.0: teclado
@@ -64,6 +75,11 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                         return 'contrato_dt_screen'
                     return 'promo_releg_screen' if estado.get('promo_releg_data') else 'league_screen'
                 for eq, r in zip(opciones, rects):
+                    if r.collidepoint(ev.pos) and eq == RENOVAR:
+                        # se sigue en el club: contrato de renovación (si lo rechazas vuelves aquí)
+                        estado['renovacion_tardia'] = True
+                        estado['contrato_modo'] = 'renovacion'
+                        return 'contrato_dt_screen'
                     if r.collidepoint(ev.pos):
                         D.cambiar_de_club(estado, eq)
                         estado['contrato_modo'] = 'alta'      # v3.2.0: contrato con el club nuevo
@@ -71,8 +87,24 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
 
         draw_gradient_bg(screen)
         draw_text(screen, pend.get('titulo', "¡DESPEDIDO!"), (16, 20), size='xl', color='rojo')   # v3.2.0
-        draw_text(screen, pend.get('motivo', ''), (16, 92), size='md', color='blanco')
-        draw_text(screen, "Te ofrecen el banquillo. Elige dónde sigue tu carrera:",
+        # el motivo puede ser largo: se parte en hasta 2 líneas que entren entre y=78 y y=140
+        motivo = str(pend.get('motivo', ''))
+        palabras, lineas = motivo.split(), ['']
+        if get_font('md').size(motivo)[0] <= SCREEN_W - 32:
+            palabras, lineas = [], [motivo]
+        for p in palabras:
+            prueba = f"{lineas[-1]} {p}".strip()
+            if get_font('sm').size(prueba)[0] <= SCREEN_W - 32 or not lineas[-1]:
+                lineas[-1] = prueba
+            elif len(lineas) < 2:
+                lineas.append(p)
+            else:
+                lineas[-1] = lineas[-1].rstrip('.') + '…'
+                break
+        for k, linea in enumerate(lineas):
+            draw_text(screen, linea, (16, 84 + k * 26), size='sm' if palabras else 'md', color='blanco')
+        draw_text(screen, ("Renueva con tu club o elige otra oferta:" if pend.get('renovable')
+                           else "Te ofrecen el banquillo. Elige dónde sigue tu carrera:"),
                   (16, 150), size='md', color='dorado')
         if not opciones:
             draw_text(screen, "Nadie más te ofrece trabajo: la directiva te da otra oportunidad (clic para seguir).",
@@ -82,6 +114,18 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             draw_panel(screen, r)
             if hover:
                 pygame.draw.rect(screen, COLORS['dorado'], r, width=3, border_radius=8)
+            if eq == RENOVAR:
+                mi = estado.get('mi_equipo')
+                x, y = r.x + 20, r.y + 20
+                pygame.draw.rect(screen, COLORS['verde'], r, width=2, border_radius=8)
+                draw_text(screen, "RENOVAR", (x, y), size='lg', color='verde')
+                draw_text(screen, getattr(mi, 'nombre', 'Tu club')[:24], (x, y + 46), size='md', color='dorado')
+                draw_text(screen, "Tu club mantiene su oferta.", (x, y + 110), size='sm', color='blanco')
+                draw_text(screen, "Sigues con tu plantilla", (x, y + 140), size='sm', color='blanco')
+                draw_text(screen, "y con sueldo de renovación.", (x, y + 164), size='sm', color='blanco')
+                boton = pygame.Rect(r.x + 20, r.bottom - 68, r.width - 40, 48)
+                draw_button(screen, boton, "VER RENOVACIÓN", hover)
+                continue
             liga = _liga_de(estado, eq)
             x, y = r.x + 20, r.y + 20
             draw_text(screen, eq.nombre[:24], (x, y), size='lg', color='dorado')

@@ -1,4 +1,4 @@
-# 🎮 Alpha Football (v0.8.7.4)
+# 🎮 Alpha Football (v4.5.0)
 
 ¡Bienvenido a **Alpha Football**, el simulador definitivo de gestión futbolística (manager) de escritorio con estética neón retro y dosis de humor y parodia!
 
@@ -44,7 +44,8 @@ Este proyecto está desarrollado sobre **Pygame** y simula la experiencia comple
   - Aviso de muerte súbita si hubo más de 5 rondas.
 
 ### 5. Mercado de Pases, Ofertas y Estadísticas
-- **Ventanas de transferencia** restringidas (primeras 3 y últimas 3 jornadas).
+- **Ventanas de transferencia** (v4.5.0): inicio (J1-3), invierno (mitad de temporada) y cierre (3 últimas). Lo que se acuerda con el mercado cerrado se concreta al abrir la próxima ventana.
+- **Préstamos** (v4.5.0): pedir jugadores a préstamo (NEGOCIAR / FAVORITOS) o ceder los tuyos (PLANTILLA → tecla P), por 6 meses o 1 año con el sueldo repartido en %. Panel PRÉSTAMOS en PLANTILLA con CONCLUIR / CANCELAR y correos con el periodo y el % en cada ida y vuelta.
 - **Tope de fichajes por ventana** (v0.8.1): ahora sin límite rígido — solo tope por nivel del club + presupuesto + plantilla máxima (32).
 - **Reset del log de fichajes** entre ventanas (v0.8.1).
 - **Mercado internacional** (v0.7): pestaña para ojear talento de ligas más fuertes.
@@ -72,6 +73,7 @@ Este proyecto está desarrollado sobre **Pygame** y simula la experiencia comple
 - **Desarrollo post-partido** (v0.7): los jugadores suben OVR cuando acumulan suficiente progreso (goles, asist, porterías a cero, nota > 7.5).
 
 ### 9. Persistencia Multislot con Cabecera Rica
+- **Pantallas de carga** (v4.5.0): al guardar, cargar, pasar de temporada e iniciar carrera (con barra de pasos reales en las dos últimas).
 - **5 slots de guardado** con cabecera que muestra: DT, equipo, temporada, jornada y **presupuesto**.
 - **Guardado atómico + checksum SHA-256** (v0.5): detecta corrupción/manipulación → carga al `.bak`.
 - **Carga tolerante con saves v4**.
@@ -225,23 +227,26 @@ AlphaFootball/
 - **v0.8.7.1**: fix contador "Copas Internacionales" en `career_screen` — chequeaba `'campeon'` ASCII contra `'Campeón'` con acento.
 - **v0.8.7.2**: copa en background (NO CLASIFICADO + VER), DT/presupuesto en slots de Cargar/Guardar.
 - **v0.8.7.3**: fix "Campeón" en historial cuando el user no clasificó (chequeo `copa_user_en_copa` antes de derivar `mejor_fase`).
-- **v0.8.7.4** (actual): 3 fixes consolidados — VER ALINEACIÓN RIVAL en carrera ahora setea `team_contexto` + guard defensivo en `team_screen`; ventaja OVR invertida cuando user es visitante (diff desde la perspectiva del user); badge dorado "CHAMPIONS"/"LIBERTADORES" para top 3 en tabla de posiciones.
+- **v0.8.7.4**: 3 fixes consolidados — VER ALINEACIÓN RIVAL en carrera ahora setea `team_contexto` + guard defensivo en `team_screen`; ventaja OVR invertida cuando user es visitante (diff desde la perspectiva del user); badge dorado "CHAMPIONS"/"LIBERTADORES" para top 3 en tabla de posiciones.
+
+### v2.x – v4.x — Carrera completa
+- **v2.3–v2.9**: 1ª/2ª división con ascenso y descenso, 10 ligas vivas, hub por columnas, mentalidad en partido, plantilla con transferibles, negociaciones (buscador, historial, ojeador), objetivos de directiva y despido, finanzas y contratos.
+- **v3.x**: vestuario (moral, personalidades, pedidos de salida), contraofertas, DTs de la IA, ayuda contextual (H), teclado completo.
+- **v4.0–v4.4**: motor del partido más realista, energía y adición, copas por motor, mercado de la IA, nombres únicos.
+- **v4.5.0** (actual): mercado de invierno, traspasos diferidos a la ventana, favoritos, sanciones y amarillas, préstamos (pedir/ceder, panel, correos con periodo y %), pantallas de carga.
 
 ---
 
 ## 🧪 Verificación
 
-Cada versión incluye smoke tests headless (`SDL_VIDEODRIVER=dummy`) que validan la lógica sin necesidad de ejecutar el juego completo. Los tests verifican:
-- Lógica de motor y desarrollo
-- Integridad de saves y cabeceras
-- Flujo de fixtures y brackets
-- Modo espectador y copa en background
-- Cálculos de ventaja OVR y badges de clasificados
+Los tests son headless (`SDL_VIDEODRIVER=dummy`) y viven en `tests/test_*.py` (47 archivos): motor, copas, mercado, finanzas, vestuario, préstamos, sanciones, pantallas de carga, etc.
 
-Para correr los tests:
+Se corren **archivo por archivo** (correr la carpeta entera de una vez con pytest se cuelga por los `smoke_*`/`diag_*`):
 ```bash
-python -m compileall -q alpha_football main.py
+export SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy PYTHONIOENCODING=utf-8
+for f in tests/test_*.py; do python "$f" || echo "FAIL $f"; done
 ```
+No correr dos tests a la vez ni con el juego abierto (`test_ligas_v370` toca la base editada). Los tests de tiempo (`test_motor_v400`, `test_ligas_v370`) pueden fallar con el PC cargado: re-correrlos solos.
 
 ---
 
@@ -257,8 +262,8 @@ python -m compileall -q alpha_football main.py
 
 ## 📋 Pendientes Actuales
 
-1. **Validación en vivo de v0.8.7.4** por Diego (`python main.py`).
-2. **Más atributos por jugador**: ampliar `Jugador` dataclass y `edit_screen.py` con un input por atributo.
+1. **Validación en vivo de v4.5.0** por Diego (`python main.py`): préstamos, mercado de invierno, sanciones y pantallas de carga.
+2. **Decisiones abiertas**: cobrar el playoff aunque se vaya directo a octavos, adición en el primer tiempo, bono ×2 de 2ª división, salarios de la IA.
 3. **Migración a UI HTML/CSS** (decisión futura, no implementada).
 
 ---

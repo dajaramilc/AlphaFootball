@@ -425,6 +425,20 @@ def finalizar_jornada_liga(estado: dict, liga: Any, mi_equipo: Any, partido: Any
             simular_jornada_segunda_division(estado)
         except Exception as e_bg2:
             logger.error(f"Error al simular jornada de 2ª división: {e_bg2}")
+        # traspasos acordados con el mercado cerrado: se concretan al abrirse (antes que la IA)
+        try:
+            from alpha_football import traspasos_pendientes as _tp
+            _tp.ejecutar(estado)
+            _tp.limpiar_ofertas(estado)
+        except Exception as e_tp:
+            logger.error(f"Error con los traspasos pendientes: {e_tp}")
+        import random as _rnd
+        _azar_pr = _rnd.Random()
+        try:  # préstamos acordados / regresos: también antes de que fiche la IA
+            from alpha_football import prestamos as _pr
+            _pr.revisar_jornada(estado, _azar_pr)
+        except Exception as e_pr0:
+            logger.error(f"Error con los préstamos pendientes: {e_pr0}")
         # v2.3.7: con el mercado abierto, los clubes de la IA fichan entre ellos.
         try:
             from alpha_football import market as _mk
@@ -470,6 +484,7 @@ def finalizar_jornada_liga(estado: dict, liga: Any, mi_equipo: Any, partido: Any
             from alpha_football import carrera_dt as _cd
             _cd.pagar_jornada(estado)
             _cd.revisar_renovacion(estado)
+            _cd.revisar_renovacion_por_hito(estado)     # te negaron renovar pero ganaste algo
         except Exception as e_v32:
             logger.error(f"Error en el cierre de jornada v3.2.0: {e_v32}")
         try:  # v3.4.0: vencen ofertas de banquillo y los clubes IA que van mal echan a su DT
@@ -482,6 +497,13 @@ def finalizar_jornada_liga(estado: dict, liga: Any, mi_equipo: Any, partido: Any
             resolver_analisis(estado)
         except Exception as e_co:
             logger.error(f"Error al resolver contraofertas: {e_co}")
+        try:  # préstamos: análisis, ofertas de préstamo y purga de ofertas (idas/vueltas: arriba)
+            from alpha_football import prestamos as _pr
+            _pr.resolver_analisis(estado, _azar_pr)
+            _pr.generar_ofertas(estado, _azar_pr)
+            _pr.limpiar_ofertas(estado)
+        except Exception as e_pr:
+            logger.error(f"Error con los préstamos de la jornada: {e_pr}")
         try:  # v4.3.0: correo cuando la meta de liga ya está asegurada
             from alpha_football.directiva import revisar_objetivo_liga_asegurado
             revisar_objetivo_liga_asegurado(estado)
@@ -573,7 +595,8 @@ def _cambiar_mentalidad_en_vivo(estado: dict, user_eq: Any, local: Any, visitant
 
 
 # v4.1.0: pausas del reloj en vivo (ms a velocidad x1; se dividen por la velocidad).
-PAUSA_MS = {'gol': 2500, 'roja': 2000, 'lesion': 2000, 'amarilla': 1000}
+# duración de cada aviso; NO depende de la velocidad del reloj (en x5 duraban 0.2 s y parecían saltarse solos)
+PAUSA_MS = {'gol': 4000, 'roja': 3500, 'lesion': 3500, 'amarilla': 2500}
 R_AVISO = pygame.Rect(SCREEN_W // 2 - 330, 250, 660, 130)
 R_SELECTOR = pygame.Rect(SCREEN_W // 2 - 300, 120, 600, 470)
 
@@ -608,22 +631,44 @@ def _resimular(estado: dict, local: Any, visitante: Any, user_eq: Any, minuto: i
                 estado.setdefault('sim_eventos_procesados', []).append(ev)
         nuevos = []
         if minuto < fin:
+            ctx_sim = ctx.copia() if ctx is not None else None
             _gl, _gv, nuevos = simular_rango(
                 local, visitante, minuto + 1, fin, mult=estado.get("sim_suerte"),
                 goles_previos=(estado.get("sim_goles_l", 0), estado.get("sim_goles_v", 0)),
                 minutos_previos=_minutos_previos(estado, user_eq, getattr(user_eq, 'alineacion_activa', None)),
-                ctx=ctx.copia() if ctx is not None else None,
+                ctx=ctx_sim,
                 **_ments(local, visitante, user_eq))
+            if ctx is not None and ctx_sim is not None:
+                # los cambios que planea la IA quedan fijos: otra re-simulación no los vuelve a sortear
+                for lado_ia, n_cambios in ctx_sim.objetivo_cambios.items():
+                    ctx.objetivo_cambios.setdefault(lado_ia, n_cambios)
         estado['sim_eventos'] = previos + nuevos
     except Exception as e_resim:
         logger.error(f"Error al re-simular el partido en vivo: {e_resim}")
 
 
 def _pausar(estado: dict, tipo: str, texto: str, color: str) -> None:
-    """v4.1.0: detiene el reloj un momento con un aviso grande (Enter/Espacio lo salta)."""
-    factor = estado.get('sim_velocidad_factor') or 1
-    estado['sim_pausa_hasta'] = pygame.time.get_ticks() + PAUSA_MS.get(tipo, 1000) // max(1, factor)
-    estado['sim_aviso'] = {'tipo': tipo, 'texto': texto, 'color': color}
+    """v4.1.0: detiene el reloj con un aviso grande (Enter/Espacio lo salta). Si ya hay uno en
+    pantalla (dos incidencias en el mismo minuto), el nuevo espera su turno en la cola."""
+    aviso = {'tipo': tipo, 'texto': texto, 'color': color}
+    if pygame.time.get_ticks() < estado.get('sim_pausa_hasta', 0) and estado.get('sim_aviso'):
+        estado.setdefault('sim_avisos_cola', []).append(aviso)
+        return
+    _mostrar_aviso(estado, aviso)
+
+
+def _mostrar_aviso(estado: dict, aviso: dict) -> None:
+    estado['sim_aviso'] = aviso
+    estado['sim_pausa_hasta'] = pygame.time.get_ticks() + PAUSA_MS.get(aviso.get('tipo'), 2500)
+
+
+def _siguiente_aviso(estado: dict) -> bool:
+    """Pasa al próximo aviso de la cola (al vencer o al saltar el actual). True si mostró otro."""
+    cola = estado.get('sim_avisos_cola') or []
+    if not cola:
+        return False
+    _mostrar_aviso(estado, cola.pop(0))
+    return True
 
 
 def _dibujar_aviso(screen: pygame.Surface, estado: dict) -> None:
@@ -823,10 +868,11 @@ def _menu_penales(screen: pygame.Surface, estado: dict, user_eq: Any,
 # v4.1.0: claves del partido en vivo que se limpian al salir
 _CLAVES_SIM = ('sim_resultado', 'sim_eventos', 'sim_desarrollo', 'sim_desarrollo_done', 'sim_minuto',
                'sim_goles_l', 'sim_goles_v', 'sim_comentarios', 'sim_eventos_procesados', 'sim_estado',
-               'sim_tactico_abierto', 'sim_sub_out', 'sim_ctx', 'sim_pausa_hasta', 'sim_aviso',
+               'sim_tactico_abierto', 'sim_sub_out', 'sim_ctx', 'sim_pausa_hasta', 'sim_aviso', 'sim_avisos_cola',
                'sim_cambio_forzado', 'sim_cambio_sel', 'postpartido', 'postpartido_tab', 'postpartido_scroll',
                'sim_penales_resuelto', 'sim_penales_marcador', 'sim_penales_gana_user', 'sim_penales_sel',
-               'sim_penales_secuencia', 'sim_penales_cobradores_l', 'sim_penales_cobradores_v')
+               'sim_penales_secuencia', 'sim_penales_cobradores_l', 'sim_penales_cobradores_v',
+               'sim_ment')   # la mentalidad de la IA no pasa al marcador del próximo partido
 
 
 def _cerrar_partido_vivo(estado: dict, match_mode: str, liga: Any, mi_equipo: Any, partido: Any,
@@ -897,6 +943,11 @@ def _cerrar_partido_vivo(estado: dict, match_mode: str, liga: Any, mi_equipo: An
         logger.error(f"Error al cerrar el partido en vivo: {e_dev}")
     restaurar()   # amistoso o sin carrera: igual se deja la alineación como estaba
     pen = estado.get('sim_penales_marcador') if estado.get('sim_penales_resuelto') else None
+    if pen and mi_equipo is not None and mi_equipo.id == visitante.id:
+        # el marcador de la tanda está en el punto de vista del user; el título va local-visitante
+        partes = str(pen).split('-')
+        if len(partes) == 2:
+            pen = f"{partes[1].strip()}-{partes[0].strip()}"
     PP.armar_datos(estado, match_mode, local, visitante, goles_l, goles_v, ctx, notas,
                    estado.get('sim_eventos', []), penales=pen, pos_antes=pos_antes)
 
@@ -919,6 +970,13 @@ def _salir_partido(estado: dict, match_mode: str) -> str:
 
 
 def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
+    """Con un partido de copa en curso, las sanciones que cuentan son las de copa (sanciones.py)."""
+    from alpha_football.sanciones import en_competicion
+    with en_competicion('copa' if estado.get('match_mode') == 'copa' else 'liga'):
+        return _render(screen, estado)
+
+
+def _render(screen: pygame.Surface, estado: dict) -> Optional[str]:
     """
     Simula y anima el partido en vivo.
     Retorna "league_screen" al terminar, o None para seguir en pantalla.
@@ -1031,6 +1089,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             estado['sim_ajuste_realizado'] = False
             estado['sim_pausa_hasta'] = 0          # v4.1.0: pausa con aviso (gol, tarjeta, lesión)
             estado['sim_aviso'] = None
+            estado['sim_avisos_cola'] = []
             estado['sim_cambio_forzado'] = None    # v4.1.0: lesión del user pendiente de cambio
             # Velocidad de simulación: factor 1 = normal, 2 = el doble de rápido. Se conserva
             # entre partidos (estado), por eso se lee con get en vez de fijarlo siempre a 1.
@@ -1065,6 +1124,10 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         
         # 2. Lógica del Ticker del Reloj
         now = pygame.time.get_ticks()
+        if (now >= estado.get('sim_pausa_hasta', 0) and estado['sim_flash_goles'] == 0
+                and estado.get('sim_cambio_forzado') is None):
+            _siguiente_aviso(estado)          # venció el aviso: si hay otro en cola, se muestra
+            now = pygame.time.get_ticks()
         if (sim_state in ('jugando', 'segundo_tiempo') and estado['sim_flash_goles'] == 0
                 and now >= estado.get('sim_pausa_hasta', 0)                # v4.1.0
                 and estado.get('sim_cambio_forzado') is None
@@ -1254,7 +1317,8 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         # Botón TÁCTICA: abre el menú de formación/táctica/dirección durante el partido.
         rect_tactica = R_TACTICA
         mostrar_tactica = (user_eq is not None and sim_state in ('jugando', 'segundo_tiempo')
-                           and not estado.get('sim_tactico_abierto'))
+                           and not estado.get('sim_tactico_abierto')
+                           and estado.get('sim_cambio_forzado') is None)   # selector de lesión abierto
         if mostrar_tactica:
             draw_button(screen, rect_tactica, "TÁCTICA", rect_tactica.collidepoint(pygame.mouse.get_pos()))
         
@@ -1347,6 +1411,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
               and (pygame.time.get_ticks() < estado.get('sim_pausa_hasta', 0) or estado['sim_flash_goles'] > 0)):
             estado['sim_pausa_hasta'] = 0
             estado['sim_flash_goles'] = 0
+            _siguiente_aviso(estado)          # Enter salta solo el aviso actual, no toda la cola
             teclas = [k for k in teclas if k not in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE)]
             teclas_ev = [ev for ev in teclas_ev if ev.key not in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE)]
 
@@ -1375,7 +1440,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                             _cambiar_mentalidad_en_vivo(estado, user_eq, local, visitante, nueva_m, minuto)
                     except Exception as e_tm:
                         logger.error(f"Error al cambiar la mentalidad con el teclado: {e_tm}")
-        if sim_state in ('jugando', 'segundo_tiempo') and not estado.get('sim_tactico_abierto'):
+        if mostrar_tactica:
             draw_text(screen, "V Velocidad · T Táctica · 1-5 Mentalidad · Enter Saltar aviso · H Ayuda",
                       (60, 612), size='sm', color='blanco')
 

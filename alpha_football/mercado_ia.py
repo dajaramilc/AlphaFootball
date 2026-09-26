@@ -186,6 +186,8 @@ def _buscar_refuerzo(comprador: Any, tipo_c: str, div_c: int, equipos: list, mi_
         top3 = None   # v3.7.0: perezoso (16 ligas: ordenar cada plantilla para cada comprador era lo más caro)
         nivel_v = None
         for j in vendedor.jugadores:
+            if getattr(j, 'prestamo', None):   # a préstamo: no se toca
+                continue
             if j.posicion != posicion or j.overall < ovr_flojo + MEJORA_MINIMA:
                 continue
             if getattr(j, 'lesion_partidos', 0) > 0:
@@ -234,7 +236,8 @@ def _liberar_sobrantes(equipo: Any) -> None:
     from alpha_football.formaciones import mejor_once
     while len(equipo.jugadores) > PLANTILLA_MAX_IA:
         titulares = {id(equipo.jugadores[i]) for i in mejor_once(equipo.jugadores, "4-3-3")}
-        suplentes = [j for j in equipo.jugadores if id(j) not in titulares]
+        suplentes = [j for j in equipo.jugadores if id(j) not in titulares
+                     and not getattr(j, 'prestamo', None)]   # a préstamo: no se toca
         if not suplentes:
             break
         equipo.jugadores.remove(min(suplentes, key=lambda j: (j.overall, -int(getattr(j, 'edad', 25) or 25))))
@@ -309,11 +312,16 @@ def vender_salidas_forzadas(estado: dict, rng: Optional[random.Random] = None) -
         for vendedor in list(liga.equipos):
             if vendedor is mi_equipo:
                 continue
-            for j in [x for x in vendedor.jugadores if getattr(x, 'salida_forzada', False)]:
+            for j in [x for x in vendedor.jugadores if getattr(x, 'salida_forzada', False)
+                      and not getattr(x, 'prestamo', None)]:   # a préstamo: no se toca
+                if len(vendedor.jugadores) <= PLANTILLA_MIN_VENDEDOR:
+                    break   # no se desarma la plantilla: los que quedan salen en la próxima ventana
                 try:
                     from alpha_football.market import calcular_valor
                     valor = int(getattr(j, 'valor', 0) or 0) or calcular_valor(j)
                     cands = [(eq, t) for eq, t in primeras if eq is not vendedor]
+                    # primero los que tienen lugar en la plantilla
+                    cands = [(eq, t) for eq, t in cands if len(eq.jugadores) < PLANTILLA_MAX_IA] or cands
                     if not cands:
                         continue
                     pueden = [(eq, t) for eq, t in cands if int(getattr(eq, 'balance', 0) or 0) >= valor]
@@ -325,6 +333,8 @@ def vender_salidas_forzadas(estado: dict, rng: Optional[random.Random] = None) -
                         precio = min(int(valor * 0.8), max(0, int(getattr(comprador, 'balance', 0) or 0)))
                     _traspasar(j, vendedor, comprador, precio, tipo_c)
                     j.salida_forzada = False
+                    if len(comprador.jugadores) > PLANTILLA_MAX_IA:
+                        _liberar_sobrantes(comprador)
                     try:
                         from alpha_football.negociacion import registrar_pase
                         registrar_pase(estado, j, vendedor.nombre, comprador.nombre, precio, False)
@@ -347,7 +357,7 @@ def pago_clausulas(estado: dict, rng: Optional[random.Random] = None, prob: floa
     """Un club de 1ª de la IA paga la cláusula de un jugador del user (el user no puede negarse)."""
     try:
         from alpha_football import correo as C
-        from alpha_football.finanzas import quitar_de_plantilla, registrar, PLANTILLA_MINIMA, completar_plantilla
+        from alpha_football.finanzas import quitar_de_plantilla, PLANTILLA_MINIMA, completar_plantilla
         azar = rng or random.Random()
         mi = estado.get('mi_equipo')
         if mi is None or azar.random() > prob or len(mi.jugadores) <= PLANTILLA_MINIMA:
@@ -356,6 +366,8 @@ def pago_clausulas(estado: dict, rng: Optional[random.Random] = None, prob: floa
                        if liga is not None for eq in liga.equipos if eq is not mi and eq.id != mi.id]
         cands = []
         for j in mi.jugadores:
+            if getattr(j, 'prestamo', None):   # a préstamo: no se toca
+                continue
             c = int(getattr(j, 'clausula', 0) or 0)
             ricos = [(eq, t) for eq, t in compradores if c > 0 and eq.balance >= c]
             if ricos:

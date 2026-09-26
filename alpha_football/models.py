@@ -91,6 +91,14 @@ class Jugador:
     causas_moral: list = field(default_factory=list)
     jornadas_sin_jugar: int = 0
     descontento_avisado: bool = False
+    # sanciones por competición y amarillas acumuladas de la temporada (sanciones.py);
+    # partidos_sancion queda como la sanción de LIGA
+    sancion_copa: int = 0
+    amarillas_liga: int = 0
+    amarillas_copa: int = 0
+    # préstamo en curso (solo mientras está cedido): dueño, club donde juega, % del sueldo que
+    # paga el dueño, [temporada, jornada] de regreso y duración en meses (prestamos.py)
+    prestamo: Optional[dict] = None
     energia_vivo: Optional[float] = None       # transitorio: energía en el tramo que se simula
 
     def __post_init__(self):
@@ -130,7 +138,8 @@ class Jugador:
     @property
     def disponible(self) -> bool:
         """Indica si el jugador puede ser alineado en el partido."""
-        return self.lesion_partidos == 0 and self.partidos_sancion <= 0
+        from alpha_football.sanciones import sancionado   # la sanción de la competición que se juega
+        return self.lesion_partidos == 0 and not sancionado(self)
 
     def poder_ataque_efectivo(self, mult: float = 1.0) -> float:
         """Calcula la efectividad ofensiva modificada por moral y rasgos."""
@@ -267,6 +276,10 @@ class Jugador:
                 causas_moral=[dict(c) for c in (datos.get("causas_moral") or []) if isinstance(c, dict)][-4:],
                 jornadas_sin_jugar=int(datos.get("jornadas_sin_jugar", 0) or 0),
                 descontento_avisado=bool(datos.get("descontento_avisado", False)),
+                sancion_copa=int(datos.get("sancion_copa", 0) or 0),
+                amarillas_liga=int(datos.get("amarillas_liga", 0) or 0),
+                amarillas_copa=int(datos.get("amarillas_copa", 0) or 0),
+                prestamo=dict(datos["prestamo"]) if isinstance(datos.get("prestamo"), dict) else None,
             )
         except Exception as e:
             logger.warning(f"Excepción al reconstruir Jugador: {e}. Usando fallback.")
