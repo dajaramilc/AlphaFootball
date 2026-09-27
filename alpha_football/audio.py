@@ -267,15 +267,15 @@ def _actualizar_playlist() -> None:
     except Exception as e:
         logger.error(f"Error al escanear la carpeta de musica en {MUSIC_DIR}: {e}")
 
-def _intentar_instalar_ytdlp() -> bool:
+def _intentar_instalar_ytdlp(actualizar: bool = False) -> bool:
     """
-    Intenta instalar la librería de python yt-dlp usando pip de forma automática.
+    Intenta instalar (o con `actualizar`, poner al día) yt-dlp usando pip de forma automática.
     Retorna True si tiene éxito, de lo contrario False.
     """
     try:
-        logger.info("Intentando instalar yt-dlp usando pip de forma automatica...")
+        logger.info("Intentando instalar/actualizar yt-dlp usando pip de forma automatica...")
         subprocess.run(
-            [sys.executable, "-m", "pip", "install", "yt-dlp"],
+            [sys.executable, "-m", "pip", "install"] + (["-U"] if actualizar else []) + ["yt-dlp"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=True
@@ -428,6 +428,19 @@ def _descargar_musica() -> None:
 # Estado simple de la descarga interactiva para que la UI muestre feedback sin bloquearse.
 _DOWNLOAD_STATUS = {"activo": False, "mensaje": ""}
 
+# v4.7.1: YouTube cambia seguido y un yt-dlp viejo recibe HTTP 403 al bajar el audio. Ante un
+# fallo se actualiza yt-dlp una vez por sesión y se reintenta con el módulo recargado.
+_YTDLP_ACTUALIZADO = False
+
+
+def _ytdlp_recargado():
+    """Descarta el yt_dlp ya importado (versión vieja en memoria) y lo importa de nuevo."""
+    for nombre in [m for m in sys.modules if m == 'yt_dlp' or m.startswith('yt_dlp.')]:
+        del sys.modules[nombre]
+    import yt_dlp
+    return yt_dlp
+
+
 def estado_descarga() -> dict:
     """Devuelve una copia del estado de la última/actual descarga interactiva."""
     return dict(_DOWNLOAD_STATUS)
@@ -472,14 +485,30 @@ def descargar_url_async(url: str) -> None:
                     'preferredquality': '192',
                 }],
             }
+            def _bajar(modulo) -> None:
+                o = dict(opts)
+                try:
+                    with modulo.YoutubeDL(o) as ydl:
+                        ydl.download([target_url])
+                except Exception as ffmpeg_err:
+                    logger.warning(f"Descarga MP3 falló ({ffmpeg_err}); intentando formato original…")
+                    o.pop('postprocessors', None)
+                    with modulo.YoutubeDL(o) as ydl:
+                        ydl.download([target_url])
+
             try:
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    ydl.download([target_url])
-            except Exception as ffmpeg_err:
-                logger.warning(f"Descarga MP3 falló ({ffmpeg_err}); intentando formato original…")
-                opts.pop('postprocessors', None)
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    ydl.download([target_url])
+                _bajar(yt_dlp)
+            except Exception as err_viejo:
+                global _YTDLP_ACTUALIZADO
+                if _YTDLP_ACTUALIZADO:
+                    raise
+                _YTDLP_ACTUALIZADO = True
+                logger.warning(f"La descarga falló ({err_viejo}); actualizando yt-dlp y reintentando…")
+                _DOWNLOAD_STATUS = {"activo": True, "mensaje": "Actualizando el descargador (yt-dlp)…"}
+                if not _intentar_instalar_ytdlp(actualizar=True):
+                    raise
+                _DOWNLOAD_STATUS = {"activo": True, "mensaje": "Descargando…"}
+                _bajar(_ytdlp_recargado())
             _actualizar_playlist()
             _DOWNLOAD_STATUS = {"activo": False, "mensaje": "¡Listo! Pista agregada a la música."}
         except Exception as e:
