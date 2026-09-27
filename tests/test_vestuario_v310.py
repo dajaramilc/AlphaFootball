@@ -364,6 +364,7 @@ def test_pago_de_clausulas():
             assert barato not in mi.jugadores and barato in h['comprador'].jugadores
             ok.append(h)
             h['comprador'].jugadores.remove(barato); mi.jugadores.append(barato)   # volver a probar
+            barato.ventana_traspaso = ''       # v4.6.0: si no, ya fue traspasado en esta ventana
     assert 0.06 < len(ok) / 400 < 0.14, len(ok)
     assert any('cláusula' in m['asunto'].lower() for m in C.bandeja(e))
     assert any(h.get('propio') and h['monto'] == 1_000_000 for h in e['datos_carrera']['historial_pases'])

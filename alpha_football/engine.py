@@ -124,7 +124,7 @@ ADICION: tuple = (3, 10)
 BONO_GOL_ADICION: float = 1.25
 
 from alpha_football.partido_ctx import (  # noqa: E402  v4.0.0
-    aplicar_evento as _aplicar_evento, MULT_EXPULSION as _MULT_EXPULSION, MAX_CAMBIOS as _MAX_CAMBIOS,
+    aplicar_evento as _aplicar_evento, mult_bajas as _mult_bajas, MAX_CAMBIOS as _MAX_CAMBIOS,
     clave as _clave)
 from alpha_football.energia import (  # noqa: E402  v4.0.0
     PROB_LESION_90, factor_lesion, DURACION_LESION, PESOS_LESION)
@@ -137,8 +137,8 @@ PROB_PENAL_FALLADO: float = 0.06 / 180
 PROB_ATAJADA: float = 0.5           # de los tiros fallados, los que ataja el portero
 PROB_PALO: float = 0.15             # del resto, los que dan en el palo ('ocasion')
 PROB_FALTA_MIN: float = 0.03        # falta peligrosa (solo comentario)
-PROB_CAMBIO_IA_MIN: float = 0.2
-MINUTO_CAMBIOS_IA: tuple = (60, 80)
+PROB_CAMBIO_IA_MIN: float = 0.3
+MINUTO_CAMBIOS_IA: tuple = (55, 85)   # la IA hace 4-5 cambios (antes 3-5, y a veces menos)
 
 
 # ── Dataclasses ───────────────────────────────────────────────────────────────
@@ -301,13 +301,13 @@ def synergy_equipo(equipo) -> float:
         alin = getattr(equipo, "alineacion_activa", None)
         formacion = getattr(alin, "formacion", None) if alin else None
         syn = 1.0
-        # Bonus si la táctica coincide con la preferida de la formación.
+        # Bonus si la táctica es una de las afines de la formación (v4.7.0: hasta 4).
         # OJO: el motor amplifica mucho los multiplicadores de ataque (umbral gaussiano),
         # así que los bonos son pequeños a propósito (sinergia plena ~ +35% goles, no x2).
         if formacion and estilo:
             try:
-                from alpha_football.formaciones import pref as _pref
-                if estilo == _pref(formacion):
+                from alpha_football.formaciones import afines as _afines
+                if estilo in _afines(formacion):
                     syn += 0.035
             except Exception:
                 pass
@@ -803,7 +803,7 @@ def procesar_minuto(
     Ambos equipos pueden generar una oportunidad en el mismo minuto.
     v2.5.0: `ment_l`/`ment_v` = mentalidad ya resuelta de cada lado (ver EFECTO_MENTALIDAD).
     v4.0.0: con `ctx` (partido_ctx.EstadoPartido) juegan los que están en cancha; cada jugador
-    que falte (expulsado / lesionado sin cambio) resta ataque y defensa; cada evento se aplica al ctx.
+    que falte (expulsado / lesionado sin cambio) resta según su línea; cada evento se aplica al ctx.
     Retorna (goles_local, goles_visitante) actualizados.
     """
     # v3.7.0: `probs` precalculadas por tramo (la posesión no cambia minuto a minuto; con
@@ -824,12 +824,15 @@ def procesar_minuto(
             ja, jd = ctx.en_cancha[lado_a], ctx.en_cancha[lado_d]
             if not ja or not jd:
                 continue
-            menos_a, menos_d = 11 - len(ja), 11 - len(jd)
-            if menos_a > 0:
-                prob *= 0.9 ** menos_a
-                ma *= _MULT_EXPULSION ** menos_a
-            if menos_d > 0:
-                md *= _MULT_EXPULSION ** menos_d
+            # v4.6.0: cada baja pesa según la línea que deja con hueco (ver mult_bajas).
+            if len(ja) < 11:
+                form_a = getattr(getattr(eq_a, "alineacion_activa", None), "formacion", None) or "4-3-3"
+                p_a, a_a, _ = _mult_bajas(ja, form_a)
+                prob *= p_a
+                ma *= a_a
+            if len(jd) < 11:
+                form_d = getattr(getattr(eq_d, "alineacion_activa", None), "formacion", None) or "4-3-3"
+                md *= _mult_bajas(jd, form_d)[2]
         if minuto > 90:   # v4.4.0: en la adición todos van al ataque
             prob *= BONO_GOL_ADICION
         # v2.3.6: con 3+ goles de ventaja el que gana levanta el pie (goleadas de 7 raras).
@@ -1101,7 +1104,7 @@ def _incidencias_minuto(m: int, local, visitante, ctx, eventos: list) -> None:
         # Cambios de la IA por cansancio
         if (MINUTO_CAMBIOS_IA[0] <= m <= MINUTO_CAMBIOS_IA[1] and ctx.auto_cambios.get(lado)
                 and random.random() < PROB_CAMBIO_IA_MIN):
-            objetivo = ctx.objetivo_cambios.setdefault(lado, random.randint(3, 5))
+            objetivo = ctx.objetivo_cambios.setdefault(lado, random.randint(4, 5))
             if ctx.cambios.get(lado, 0) < min(objetivo, _MAX_CAMBIOS):
                 par = elegir_cambio_ia(ctx, lado, eq, m)
                 if par:

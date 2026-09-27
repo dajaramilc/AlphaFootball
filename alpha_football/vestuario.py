@@ -127,7 +127,7 @@ def cierre_temporada(estado: dict, rng: Optional[random.Random] = None) -> list:
         try:
             from alpha_football import correo as C
             C.enviar(estado, 'club', f"Suben de potencial: {len(textos)} joven{'es' if len(textos) != 1 else ''}",
-                     "Buena moral y buena temporada: " + "; ".join(textos) + ".",
+                     "Gracias a su buena moral y a una buena temporada, suben de potencial: " + "; ".join(textos) + ".",
                      C.accion('plantilla_screen', "VER PLANTILLA"))
         except Exception as e:
             logger.error(f"No se pudo avisar el bonus de potencial: {e}")
@@ -161,36 +161,42 @@ def post_partido_user(estado: dict, user_eq, rival, gf: int, gc: int, reporte: l
             de_comp = "de copa" if comp == 'copa' else "de liga"
             if inc['tipo'] == 'lesion':
                 C.enviar(estado, 'medico', f"Lesión: {j.nombre} {j.apellido}",
-                         f"Estará fuera {inc['partidos']} partido(s).", C.accion('team_screen', "VER DIRECCIÓN DE EQUIPO"))
+                         f"Tras la revisión médica, el jugador estará de baja {inc['partidos']} partido(s). Le "
+                         "mantendremos informado de su evolución.", C.accion('team_screen', "VER DIRECCIÓN DE EQUIPO"))
             elif inc['tipo'] == 'aviso_amarillas':
                 C.enviar(estado, 'club', f"En riesgo: {j.nombre} {j.apellido} tiene {S.amarillas(j, comp)} amarillas",
-                         f"Lleva {S.amarillas(j, comp)} amarillas {de_comp}: si ve otra, se pierde el próximo partido {de_comp}.",
+                         f"El jugador acumula {S.amarillas(j, comp)} amarillas {de_comp}: si ve otra, se perderá el "
+                         f"próximo partido {de_comp}.",
                          C.accion('team_screen', "VER DIRECCIÓN DE EQUIPO"))
             elif inc.get('motivo') == 'acumulacion':
                 C.enviar(estado, 'club', f"Suspensión por acumulación: {j.nombre} {j.apellido}",
-                         f"Llegó a {S.limite(comp)} amarillas {de_comp}: se pierde el próximo partido {de_comp}.",
+                         f"El jugador ha llegado a {S.limite(comp)} amarillas {de_comp} y se perderá el próximo "
+                         f"partido {de_comp}.",
                          C.accion('team_screen', "VER DIRECCIÓN DE EQUIPO"))
             else:
                 C.enviar(estado, 'club', f"Suspensión: {j.nombre} {j.apellido}",
-                         f"Expulsado: se pierde {inc['partidos']} partido(s) {de_comp}.",
+                         f"Tras su expulsión, el jugador se perderá {inc['partidos']} partido(s) {de_comp}.",
                          C.accion('team_screen', "VER DIRECCIÓN DE EQUIPO"))
         clasico = es_clasico(user_eq, rival)
         jugaron = {jid for jid, m in minutos.items() if int(m or 0) > 0}
         res = actualizar_moral(user_eq, reporte, gf, gc, clasico, jugaron, rng=azar, no_disponibles=no_disp)
         for j in res['quejas']:
             C.enviar(estado, 'jugador', f"{j.nombre} {j.apellido} está molesto",
-                     f"Su moral bajó a {j.moral}. Minutos, contrato o forma: algo no le gusta.",
+                     f"Míster, no estoy bien (moral {j.moral}). Entre los minutos, el contrato y cómo me estoy "
+                     f"sintiendo, algo no está funcionando. Me gustaría hablarlo con usted.\n{j.nombre} {j.apellido}",
                      C.accion('plantilla_screen', "VER PLANTILLA"))
         for j in res['pide_salir']:
             C.enviar(estado, 'jugador', f"{j.nombre} {j.apellido} quiere irse",
-                     "Lleva semanas descontento y pide salir. Atraerá ofertas como un transferible.",
+                     f"Míster, llevo semanas sin estar a gusto y creo que lo mejor es que salga del club. "
+                     f"Le pido que escuche las ofertas que lleguen por mí.\n{j.nombre} {j.apellido}",
                      C.accion('plantilla_screen', "VER PLANTILLA"))
         dc = estado.setdefault('datos_carrera', {})
         if clasico:
             dc['confianza'] = max(0, min(100, D.confianza(estado) + (6 if gf > gc else -6 if gf < gc else 0)))
             if gf > gc:
                 C.enviar(estado, 'directiva', f"¡Ganaste el clásico a {rival.nombre}!",
-                         "La afición y la directiva lo celebran.")
+                         "La afición y la directiva celebran la victoria en el clásico. Enhorabuena a usted y "
+                         "a todo el cuerpo técnico.")
             elif gf < gc:
                 D.ajustar_calif(estado, D.CALIF['clasico_perdido'])
             p = D.pedido_activo(estado)
@@ -199,10 +205,12 @@ def post_partido_user(estado: dict, user_eq, rival, gf: int, gc: int, reporte: l
         racha = (list(dc.get('racha', [])) + ['G' if gf > gc else 'P' if gf < gc else 'E'])[-3:]
         dc['racha'] = racha
         if racha == ['G'] * 3:
-            C.enviar(estado, 'directiva', "Tres victorias seguidas", "La directiva felicita al cuerpo técnico.")
+            C.enviar(estado, 'directiva', "Tres victorias seguidas",
+                     "La directiva felicita al cuerpo técnico por la racha de tres victorias consecutivas.")
             dc['racha'] = []
         elif racha == ['P'] * 3:
-            C.enviar(estado, 'directiva', "Advertencia: tres derrotas seguidas", "Esperamos una reacción inmediata.",
+            C.enviar(estado, 'directiva', "Advertencia: tres derrotas seguidas",
+                     "Tres derrotas consecutivas preocupan a la directiva. Esperamos una reacción inmediata del equipo.",
                      C.accion('objetivos_screen', "VER OBJETIVOS"))
             dc['racha'] = []
     except Exception as e:

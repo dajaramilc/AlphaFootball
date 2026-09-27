@@ -43,16 +43,26 @@ def _rect_accion() -> pygame.Rect:
     return pygame.Rect(R_MSG.x + 20, R_MSG.bottom - 70, 360, 50)
 
 
+R_BORRAR = pygame.Rect(R_MSG.right - 200, R_MSG.bottom - 70, 180, 50)   # v4.7.0
+LINEAS_CUERPO = 18
+
+
 def _envolver(texto: str, ancho_px: int, size: str = 'sm') -> list:
-    fuente, lineas, linea = get_font(size), [], ""
-    for palabra in str(texto).split():
-        prueba = (linea + " " + palabra).strip()
-        if fuente.size(prueba)[0] > ancho_px and linea:
-            lineas.append(linea)
-            linea = palabra
-        else:
-            linea = prueba
-    return lineas + ([linea] if linea else [])
+    """Parte el texto en líneas que caben en `ancho_px`; v4.7.0: respeta los saltos de párrafo."""
+    fuente, lineas = get_font(size), []
+    for parrafo in str(texto).split('\n'):
+        linea = ""
+        for palabra in parrafo.split():
+            prueba = (linea + " " + palabra).strip()
+            if fuente.size(prueba)[0] > ancho_px and linea:
+                lineas.append(linea)
+                linea = palabra
+            else:
+                linea = prueba
+        lineas.append(linea)
+    while lineas and not lineas[-1]:
+        lineas.pop()
+    return lineas
 
 
 def _ir(estado: dict, msg: dict) -> Optional[str]:
@@ -93,6 +103,10 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                     sel = min(len(mensajes) - 1, sel + 1)
                 elif ev.key == pygame.K_UP:
                     sel = max(0, sel - 1)
+                elif ev.key == pygame.K_DELETE and mensajes:        # v4.7.0: borrar
+                    C.borrar(estado, mensajes[sel]['id'])
+                    mensajes = C.bandeja(estado)
+                    sel = max(0, min(sel, len(mensajes) - 1))
                 elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER) and mensajes:
                     destino = _ir(estado, mensajes[sel])
                     if destino:
@@ -106,7 +120,12 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             for i in range(min(FILAS, len(mensajes) - inicio)):
                 if _rect_fila(i).collidepoint(click):
                     sel = inicio + i
-            if mensajes and _rect_accion().collidepoint(click):
+            if mensajes and R_BORRAR.collidepoint(click):     # v4.7.0
+                C.borrar(estado, mensajes[sel]['id'])
+                mensajes = C.bandeja(estado)
+                sel = max(0, min(sel, len(mensajes) - 1))
+                click = None
+            if click and mensajes and _rect_accion().collidepoint(click):
                 destino = _ir(estado, mensajes[sel])
                 if destino:
                     return destino
@@ -117,7 +136,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         draw_gradient_bg(screen)
         draw_text(screen, "CORREO", (16, 12), size='lg', color='dorado')
         draw_text(screen, f"{len(mensajes)} mensajes  ·  {C.no_leidos(estado)} sin leer  ·  "
-                          f"↑/↓ elegir · Enter acción · Esc volver", (16, 48), size='sm', color='azul')
+                          f"↑/↓ elegir · Enter acción · Supr borrar · Esc volver", (16, 48), size='sm', color='azul')
         draw_button(screen, _volver(), "VOLVER", _volver().collidepoint(mouse_pos))
         draw_panel(screen, R_LISTA)
         draw_panel(screen, R_MSG)
@@ -137,11 +156,12 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         draw_text(screen, C.REMITENTES.get(m['remitente'], m['remitente']), (x, y), size='sm', color='azul')
         for k, linea in enumerate(_envolver(m['asunto'], R_MSG.width - 40, 'md')[:2]):
             draw_text(screen, linea, (x, y + 26 + k * 30), size='md', color='dorado')
-        for k, linea in enumerate(_envolver(m['cuerpo'], R_MSG.width - 40)[:14]):
-            draw_text(screen, linea, (x, y + 100 + k * 26), size='sm', color='blanco')
+        for k, linea in enumerate(_envolver(C.formatear(estado, m), R_MSG.width - 40)[:LINEAS_CUERPO]):
+            draw_text(screen, linea, (x, y + 96 + k * 23), size='sm', color='blanco')
         acc = m.get('accion') or {}
         if acc.get('pantalla'):
             draw_button(screen, _rect_accion(), acc.get('texto', 'IR'), _rect_accion().collidepoint(mouse_pos))
+        draw_button(screen, R_BORRAR, "BORRAR", R_BORRAR.collidepoint(mouse_pos))
         aviso = estado.get('correo_aviso_vis')     # v3.5.0: acuerdo de compra que ya no vale
         if aviso and aviso[0] == m.get('id') and aviso[1]:
             draw_text(screen, str(aviso[1])[:60], (_rect_accion().right + 16, _rect_accion().y + 14), size='sm', color='rojo')

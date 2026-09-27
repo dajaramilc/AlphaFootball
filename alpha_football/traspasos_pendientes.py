@@ -145,7 +145,7 @@ def _ejecutar_venta(estado: dict, p: dict) -> None:
     except Exception as e:
         logger.error(f"No se pudo registrar el pase de {p['jugador']}: {e}")
     C.enviar(estado, 'club', f"{p['jugador']} ya se fue",
-             f"Se abrió el mercado: {p['jugador']} dejó el club y ya es jugador de {p['destino']}.",
+             f"Con la apertura del mercado, {p['jugador']} ha dejado el club y ya es jugador de {p['destino']}.",
              C.accion('plantilla_screen', "VER PLANTILLA"))
 
 
@@ -163,7 +163,8 @@ def _ejecutar_compra(estado: dict, p: dict) -> None:
             if destino is not None:
                 destino.balance = int(getattr(destino, 'balance', 0) or 0) + int(p['monto'])
             C.enviar(estado, 'club', f"Se cayó el fichaje de {p['jugador']}",
-                     f"{p['jugador']} ya no está en {p['origen']}. Te devolvieron ${int(p['monto']):,}.")
+                     f"{p['jugador']} ya no pertenece a {p['origen']}, por lo que el traspaso queda sin efecto. "
+                     f"Se le han devuelto ${int(p['monto']):,}.")
             return
         origen.jugadores.remove(j)
         origen.alineacion_activa = None

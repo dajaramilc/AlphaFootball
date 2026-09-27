@@ -43,7 +43,8 @@ def test_fechas_monotonicas():
     for n in (17, 13):
         for J in (22, 10):
             js = [CP.jornada_de_fecha(i, n, J) for i in range(n)]
-            assert js == sorted(js) and js[0] >= 1 and js[-1] == J - 1, (n, J, js)
+            # v4.7.0: la final cierra la temporada (tras la última jornada); el resto hasta la J-1
+            assert js == sorted(js) and js[0] >= 1 and js[-1] == J and js[-2] <= J - 1, (n, J, js)
     print("  test_fechas_monotonicas: OK")
 
 
@@ -204,6 +205,8 @@ def test_user_eliminado_sigue_copa():
                 else CP.registrar_resultado_user(e, pend['id'], 5, 0)
             pend = CP.partido_pendiente_user(e)
         CP.avanzar(e, random.Random(j))
+    liga.jornada_actual = liga.num_jornadas + 1          # v4.7.0: liga terminada: se juega la final
+    CP.avanzar(e, random.Random(99))
     assert CP.partido_pendiente_user(e) is None and CP.copa(e, t)['campeon'] != mi
     assert CP.copa(e, t)['campeon']                     # la copa siguió sin el user
     assert 'eliminado' in CP.linea_estado_user(e)
@@ -225,7 +228,7 @@ def test_resultado_user_no_se_pisa():
 def test_fases_esperan_al_user():
     e = _estado_con_copas(); t = CP.tipo_copa_user(e)
     c = CP.copa(e, t)
-    e['liga'].jornada_actual = e['liga'].num_jornadas
+    e['liga'].jornada_actual = e['liga'].num_jornadas + 1   # v4.7.0: liga terminada (la final va al cierre)
     CP.avanzar(e, random.Random(3))
     # el user no jugó la fecha 0: la copa se queda en esa fecha (salvo su partido)
     assert not any(p['jugado'] for p in c['partidos'] if p['fecha'] >= 1)
@@ -258,8 +261,8 @@ def test_equipo_por_nombre():
 def test_directiva_meta_copa_nueva():
     from alpha_football import directiva as D
     assert D.meta_copa(1, 36, ventaja=9) == 'Campeón'
-    assert D.meta_copa(4, 36) == 'Finalista' and D.meta_copa(8, 36) == 'Semifinal'
-    assert D.meta_copa(16, 36) == 'Cuartos' and D.meta_copa(30, 36) == 'Octavos'
+    assert D.meta_copa(6, 36) == 'Finalista' and D.meta_copa(12, 36) == 'Semifinal'   # v4.7.0: más altas
+    assert D.meta_copa(24, 36) == 'Cuartos' and D.meta_copa(30, 36) == 'Octavos'
     assert D.FASES_COPA[-1] == 'Campeón' and 'Octavos' in D.FASES_COPA
     print("  test_directiva_meta_copa_nueva: OK")
 

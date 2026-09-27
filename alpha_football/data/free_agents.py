@@ -130,3 +130,53 @@ def get_free_agents(jornada: int) -> list[Jugador]:
     except Exception as e:
         logger.error(f"Error al generar agentes libres: {e}. Retornando lista vacía.")
         return []
+
+
+# ── v4.6.0: jugadores libres creados en el editor ────────────────────────────
+# Están en el mercado desde el inicio de la carrera hasta que alguien los fiche. Se guardan como
+# dicts en datos_carrera['libres_editor'] (sobreviven al guardado) y se rearman cada jornada.
+
+def _libres_de_la_base() -> list:
+    """Jugadores libres de la base editada (clave '_libres')."""
+    try:
+        import json
+        import os
+        from alpha_football.paises import RUTA_DB_EDITADA
+        if not os.path.exists(RUTA_DB_EDITADA):
+            return []
+        with open(RUTA_DB_EDITADA, 'r', encoding='utf-8') as f:
+            db = json.load(f)
+        return [x for x in (db.get('_libres') or []) if isinstance(x, dict)]
+    except Exception as e:
+        logger.error(f"No se pudieron leer los libres del editor: {e}")
+        return []
+
+
+def libres_editor(estado: dict) -> list[Jugador]:
+    """Los libres del editor que nadie fichó todavía (la primera vez se copian de la base)."""
+    dc = estado.setdefault('datos_carrera', {})
+    if 'libres_editor' not in dc:
+        dc['libres_editor'] = _libres_de_la_base()
+    out = []
+    for d in dc['libres_editor']:
+        try:
+            j = Jugador.from_dict(d)
+            if not int(getattr(j, 'valor', 0) or 0):
+                j.valor = calcular_valor(j)
+            if not int(getattr(j, 'potencial', 0) or 0):
+                j.potencial = calcular_potencial(j.overall, j.edad, random.Random(int(j.id or 0)))
+            out.append(j)
+        except Exception as e:
+            logger.error(f"Libre del editor inválido {d.get('nombre', '?')}: {e}")
+    return out
+
+
+def quitar_libre_editor(estado: dict, jugador) -> None:
+    """Alguien lo fichó: deja de estar en la bolsa de libres del editor."""
+    try:
+        dc = estado.get('datos_carrera') or {}
+        clave = (int(getattr(jugador, 'id', -1) or -1), getattr(jugador, 'nombre', ''), getattr(jugador, 'apellido', ''))
+        dc['libres_editor'] = [d for d in dc.get('libres_editor') or []
+                               if (int(d.get('id', -2) or -2), d.get('nombre', ''), d.get('apellido', '')) != clave]
+    except Exception as e:
+        logger.error(f"No se pudo quitar el libre del editor: {e}")

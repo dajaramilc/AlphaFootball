@@ -211,7 +211,8 @@ def _correo_user(estado: dict, user: dict, devueltos: dict) -> None:
     orden = sorted(cambios, key=lambda x: x[1], reverse=user.get('caso') == 'ascenso')
     lista = "; ".join(f"{j.nombre} {j.apellido} {d:+d}" for j, d in orden)
     C.enviar(estado, 'club', ASUNTOS.get(user.get('caso'), "Cambios de nivel en el plantel"),
-             f"Cambio promedio: {prom:+.1f} de media. {lista}.", C.accion('plantilla_screen', "VER PLANTILLA"))
+             f"Le informamos de los cambios de nivel de la plantilla tras la pretemporada. Cambio promedio: "
+             f"{prom:+.1f} de media. {lista}.", C.accion('plantilla_screen', "VER PLANTILLA"))
 
 
 def aplicar_topes(estado: dict) -> dict:

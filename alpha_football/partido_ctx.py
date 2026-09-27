@@ -20,13 +20,24 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 NOTA_BASE = 6.0
-DELTA_NOTA = {'gol': 1.0, 'asistencia': 0.5, 'atajada': 0.4, 'tiro': -0.2, 'ocasion': -0.2,
-              'amarilla': -0.3, 'roja': -1.5, 'penal_fallado': -0.6, 'batido': -0.3, 'defensa': 0.1}
+DELTA_NOTA = {'gol': 1.2, 'asistencia': 0.7, 'atajada': 0.5, 'tiro': -0.2, 'ocasion': -0.2,
+              'amarilla': -0.4, 'roja': -2.0, 'penal_fallado': -0.8, 'batido': -0.4, 'defensa': 0.15}
+GOL_EQUIPO = 0.2            # cada gol: +0.2 a los que están en cancha del que anota, -0.2 al rival
 BONO_VALLA = 0.5            # DEF/POR con >= 60' y su equipo sin goles en contra
 BONO_RESULTADO = {'G': 0.5, 'E': 0.0, 'P': -0.4}
 RUIDO = 0.3
 MAX_CAMBIOS = 5
-MULT_EXPULSION = 0.85
+# v4.6.0: cada baja (roja / lesión sin cambio) castiga según la LÍNEA que queda con hueco:
+# (ocasiones, ataque, defensa) por hueco, acumulativo con 9, 8... Calibrado SIMULANDO (el motor
+# amplifica mucho los multiplicadores) para que en promedio (4-3-3, DEF/MED ven más rojas) cueste
+# lo mismo que el viejo 0.90/0.85/0.85 por baja. Con 10 desde el min 1: sin DEL ~-68% goles a
+# favor y +9% en contra; sin DEF ~-36% a favor y +70% en contra; sin MED ~-54% y +37%.
+MULT_HUECO = {
+    'POR': (1.00, 1.00, 0.70),   # ataja un jugador de campo
+    'DEF': (0.95, 0.88, 0.81),
+    'MED': (0.89, 0.83, 0.88),
+    'DEL': (0.83, 0.76, 0.96),
+}
 
 
 @dataclass
@@ -118,6 +129,11 @@ def aplicar_evento(ctx: EstadoPartido, ev: dict) -> None:
                 ctx.asist[a] = ctx.asist.get(a, 0) + 1
                 _sumar(ctx, a, 'asistencia')
             _sumar(ctx, clave(ev.get('defensor')), 'batido')
+            if lado in ('l', 'v'):
+                for lado_j, signo in ((lado, 1), ('v' if lado == 'l' else 'l', -1)):
+                    for j in ctx.en_cancha.get(lado_j, []):
+                        k = clave(j)
+                        ctx.notas[k] = ctx.notas.get(k, 0.0) + signo * GOL_EQUIPO
         elif t in ('tiro', 'ocasion', 'atajada', 'defensa', 'penal_fallado', 'amarilla'):
             _sumar(ctx, jid, t)
             if t == 'amarilla':
@@ -143,6 +159,42 @@ def aplicar_evento(ctx: EstadoPartido, ev: dict) -> None:
             ctx.cambios[lado] = ctx.cambios.get(lado, 0) + 1
     except Exception as e:
         logger.error(f"aplicar_evento: evento inválido {ev.get('tipo')}: {e}")
+
+
+_CACHE_BAJAS: dict = {}
+
+
+def mult_bajas(en_cancha: list, formacion: str) -> tuple:
+    """
+    (prob, atk, def) de un equipo con menos de 11. Los huecos son las líneas con menos
+    jugadores (por posición natural) que las cuotas de la formación: si echan a un DEF y
+    entra un DEF por un DEL, el hueco pasa al ataque. Si hay más líneas incompletas que
+    bajas (once desbalanceado), el castigo de las bajas se reparte entre ellas.
+    """
+    menos = 11 - len(en_cancha)
+    if menos <= 0:
+        return (1.0, 1.0, 1.0)
+    try:
+        conteo: dict = {}
+        for j in en_cancha:
+            p = getattr(j, 'posicion', 'MED')
+            p = p if p in MULT_HUECO else 'MED'
+            conteo[p] = conteo.get(p, 0) + 1
+        clave_c = (formacion, tuple(sorted(conteo.items())), tuple(MULT_HUECO.values()))
+        if clave_c in _CACHE_BAJAS:            # se llama cada minuto: el motor no se vuelve lento
+            return _CACHE_BAJAS[clave_c]
+        from alpha_football.formaciones import cuotas
+        huecos = {p: max(0, n - conteo.get(p, 0)) for p, n in cuotas(formacion).items()}
+        escala = menos / sum(huecos.values())       # las cuotas suman 11 → suma >= menos
+        res = [1.0, 1.0, 1.0]
+        for p, h in huecos.items():
+            for k, m in enumerate(MULT_HUECO[p]):
+                res[k] *= m ** (h * escala)
+        _CACHE_BAJAS[clave_c] = tuple(res)
+        return _CACHE_BAJAS[clave_c]
+    except Exception as e:
+        logger.error(f"mult_bajas: {e}")
+        return (0.9 ** menos, 0.85 ** menos, 0.85 ** menos)
 
 
 def minutos_jugados(ctx: EstadoPartido, fin: Optional[int] = None) -> dict:

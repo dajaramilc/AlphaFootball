@@ -586,27 +586,43 @@ def _ayuda_editor(estado: dict) -> list:
             (E.R_FORMULARIO, "Formulario", "Un clic fuera de la lista la cierra sin cambiar nada."),
             (E.R_APLICAR, "Aplicar y guardar", "Guarda la base editada en disco para las próximas partidas."),
         ]
-    its = [
-        (_union(E.rect_tab_liga(i) for i in range(len(E.pestanas_editor()))), "Ligas",
-         "País (ING, ESP...) o copa internacional (LIB, UCL) que se edita."),
-        (_union([E.rect_division(1), E.rect_division(2), E.R_NOMBRE_LIGA]), "División y nombre",
-         "1ª o 2ª división del país, y nombre de la liga (clic y escribe)."),
-        (_union(E.rect_fila('equipos', i) for i in range(5)), "Equipos", "Clic en un club para editarlo. ▲ ▼ desplazan la lista."),
-        (_union(E.rect_fila('jugadores', i) for i in range(5)), "Jugadores", "Clic en un jugador para editarlo. ▲ ▼ desplazan la lista."),
-    ]
-    ji = estado.get('edit_jugador_idx', -1)
-    if isinstance(ji, int) and ji >= 0:
-        its += [
-            (_union([E.R_J_NOMBRE, E.R_J_APELLIDO]), "Nombre y apellido", "Clic y escribe; Enter confirma. Mientras escribes, H es una letra."),
-            (_union([E.R_J_OVR, E.R_J_EDAD]), "OVR y edad", "Media (máx. 99) y edad del jugador; solo números."),
-            (E.R_J_POSICION, "Posición", "Despliega la lista: POR, DEF, MED o DEL."),
-            (_union([E.R_J_RASGO, E.R_J_POTENCIAL]), "Rasgo y potencial", "Rasgo especial del jugador y su techo de media (máx. 99)."),
-        ]
+    # v4.6.0: secciones ENTRENADORES / CLUBES / LIGAS / JUGADORES
+    seccion = estado.get('edit_seccion', 'entrenadores')
+    libres = estado.get('edit_liga_sel') == E.LIBRES
+    its = [(_union(E.rect_seccion(i) for i in range(len(E.SECCIONES))), "Secciones",
+            "Entrenadores, clubes, ligas o jugadores (Tab cambia de sección).")]
+    if seccion == 'ligas':
+        its += [(_union(E.rect_fila_lista(i) for i in range(10)), "Ligas", "Las 16 ligas (1ª y 2ª de cada país). ▲ ▼ desplazan."),
+                (E.R_NOMBRE_LIGA, "Nombre", "Clic y escribe el nombre de la liga (máx. 40).")]
     else:
-        its += [
-            (_union([E.R_EQ_NOMBRE, E.R_EQ_PRESUPUESTO]), "Nombre y presupuesto", "Clic y escribe; Enter confirma. Presupuesto en pesos enteros."),
-            (_union([E.R_EQ_ESTILO, E.R_EQ_DT]), "Estilo y DT", "Estilo táctico del club (lista) y nombre de su DT (vacío = el real)."),
-        ]
+        its.append((_union(E.rect_tab_liga(i) for i in range(len(E.pestanas_editor()))), "País",
+                    "País (ING, ESP...) o copa internacional (LIB, UCL) que se edita."))
+        if seccion in ('entrenadores', 'jugadores'):
+            its.append((_union([E.R_LIBRES, E.R_NUEVO]) if libres else E.R_LIBRES, "Libres",
+                        "Los sin club: entran a tus carreras nuevas desde el inicio. + NUEVO crea uno; BORRAR lo quita."))
+    if seccion == 'entrenadores':
+        its += [(_union(E.rect_fila_lista(i) for i in range(10)), "Entrenadores", "El DT de cada club (o los libres)."),
+                (E.R_DT_NOMBRE, "Nombre", "Vacío = el DT real del club."),
+                (_union([E.R_DT_ESTILO, E.R_DT_CALIF]), "Estilo y calificación",
+                 "Estilo táctico (también el del club) y calificación 1-99: define su sueldo.")]
+    elif seccion == 'clubes':
+        its += [(_union(E.rect_fila_lista(i) for i in range(10)), "Clubes", "Clic en un club para editarlo."),
+                (_union([E.R_EQ_NOMBRE, E.R_EQ_PRESUPUESTO]), "Nombre y presupuesto",
+                 "Clic y escribe; Enter confirma. Presupuesto en pesos enteros.")]
+    elif seccion == 'jugadores':
+        if not libres:
+            its += [(_union(E.rect_fila('equipos', i) for i in range(5)), "Clubes", "Clic en un club para ver su plantilla."),
+                    (_union(E.rect_fila('jugadores', i) for i in range(5)), "Jugadores", "Clic en un jugador para editarlo.")]
+        else:
+            its.append((_union(E.rect_fila_lista(i) for i in range(10)), "Jugadores libres", "Clic en uno para editarlo."))
+        ji = estado.get('edit_jugador_idx', -1)
+        if isinstance(ji, int) and ji >= 0:
+            its += [
+                (_union([E.R_J_NOMBRE, E.R_J_APELLIDO]), "Nombre y apellido", "Clic y escribe; Enter confirma. Mientras escribes, H es una letra."),
+                (_union([E.R_J_OVR, E.R_J_EDAD]), "OVR y edad", "Media (máx. 99) y edad del jugador; solo números."),
+                (E.R_J_POSICION, "Posición", "Despliega la lista: POR, DEF, MED o DEL."),
+                (_union([E.R_J_RASGO, E.R_J_POTENCIAL]), "Rasgo y potencial", "Rasgo especial del jugador y su techo de media (máx. 99)."),
+            ]
     its += [
         (_union([E.R_ARCHIVO, E.R_EXPORTAR, E.R_IMPORTAR, E.R_RESTAURAR]), "Archivo y restaurar",
          "Exporta o importa la base en el JSON escrito. RESTAURAR BASE descarta todas las ediciones."),
@@ -761,18 +777,16 @@ def _ayuda_ojeador(estado: dict) -> list:
 # ---------------------------------------------------------------- objetivos de la directiva
 def _ayuda_objetivos(estado: dict) -> list:
     from alpha_football.ui import objetivos_screen as O
-    if estado.get('espaldarazo_abierto'):
-        rs = O._rects_espaldarazo()
-        return [
-            (rs[0], "Nivel 1", "Más presupuesto a cambio de subir la meta 1 puesto (tecla 1)."),
-            (rs[1], "Nivel 2", "Más dinero, meta 2 puestos más alta (tecla 2)."),
-            (rs[2], "Nivel 3", "El mayor aporte, meta 3 puestos más alta (tecla 3). ESC cierra sin pedir."),
-        ]
-    return [
-        (O.R_OBJ, "Objetivo", "Lo que exige la directiva esta temporada y cómo vas para cumplirlo."),
-        (O.R_ESPALDARAZO, "Espaldarazo", "Pide dinero a la directiva a cambio de una meta más alta (una vez por temporada)."),
-        (O.R_CONF, "Confianza y calificación", "Confianza de la directiva y tu calificación de DT, que decide qué clubes te llaman."),
-        (O.R_HIST, "Historial", "Cómo cambió la confianza con cada resultado y decisión."),
+    if estado.get('objetivos_reglas_abierto'):     # v4.6.0
+        return [(O.R_REGLAS, "Reglas", "Premio o multa según cómo termines, y qué cuenta como fallo. Clic o ESC cierra.")]
+    return [      # v4.7.0: por secciones
+        (O.R_TOP, "Directiva", "Confianza, calificación de DT y pedido activo de la directiva."),
+        (O.R_LOCAL, "Local", "Meta de liga y cómo vas."),
+        (O.R_AYUDA_META, "Reglas", "Qué pasa si superas, cumples o fallas (tecla I)."),
+        (O.R_INTER, "Internacional", "Meta de copa y fase alcanzada (solo calificación)."),
+        (O.R_FIN, "Finanzas", "Tope de masa salarial y saldo mínimo al cierre."),
+        (O.R_MARCA, "Marca", "Meta de marca de la temporada: +4 / −3 de calificación."),
+        (O.R_JUV, "Juveniles", "Meta de juveniles de la temporada: +4 / −3 de calificación."),
         (O._volver(), "Volver", "Regresa al hub (también ESC)."),
     ]
 
@@ -821,10 +835,17 @@ AYUDA['despido_screen'] = _ayuda_despido
 # ---------------------------------------------------------------- finanzas
 def _ayuda_finanzas(estado: dict) -> list:
     from alpha_football.ui import finanzas_screen as F
+    if estado.get('espaldarazo_abierto'):      # v4.7.0: el espaldarazo vive en FINANZAS
+        rs = F._rects_espaldarazo()
+        return [
+            (rs[0], "Nivel 1", "Más presupuesto a cambio de subir la meta 1 puesto (tecla 1)."),
+            (rs[1], "Nivel 2", "Más dinero, meta 2 puestos más alta (tecla 2)."),
+            (rs[2], "Nivel 3", "El mayor aporte, meta 3 puestos más alta (tecla 3). ESC cierra sin pedir."),
+        ]
     return [
-        (F.R_SALDO, "Saldo", "Dinero del club. En rojo no puedes fichar; 3 jornadas en rojo = venta forzada."),
+        (F.R_SALDO, "Saldo y valor", "Saldo, valor del club (plantilla + saldo), sus proyecciones y la masa salarial contra el tope."),
         (F.R_LIBRO, "Ingresos y gastos", "Taquilla, patrocinio y premios contra salarios y fichajes de la temporada."),
-        (F.R_CONTR, "Contratos que vencen", "Jugadores con 1 año o menos: se van libres al cerrar la temporada si no renuevas."),
+        (F.R_ESPALDARAZO, "Espaldarazo financiero", "Dinero ya a cambio de una meta más alta; la mitad se descuenta al cierre."),
         (F._volver(), "Volver", "Regresa al hub (también ESC)."),
     ]
 
@@ -925,7 +946,8 @@ def _items_direccion(estado: dict, en_partido: bool) -> list:
     from alpha_football.ui import team_screen as T
     rc = T._rects_cabecera()
     its = [
-        (_union([rc['form_prev'], rc['form_box'], rc['form_next']]), "Formación", "< > cambian el dibujo táctico (teclas [ y ])."),
+        (rc['form_box'], "Formación", "Clic para elegir el dibujo táctico en la lista (también teclas [ y ])."),
+        (rc['form_ayuda'], "Tácticas afines", "Las tácticas que encajan con esta formación: con una de ellas rindes un poco más."),
         (_union([rc['tact_prev'], rc['tact_box'], rc['tact_next']]), "Estilo", "Estilo de juego del DT (teclas - y =). La familiaridad sube jugándolo."),
         (_union([rc['ment_prev'], rc['ment_box'], rc['ment_next']]), "Mentalidad", "De autobús a todo o nada: más ataque = más goles a favor y en contra (, y .)."),
     ]
@@ -1000,6 +1022,7 @@ def _ayuda_partido(estado: dict) -> list:
     if estado.get('mi_equipo') is not None or estado.get('amis_local') is not None:
         its += [
             (M.R_TACTICA, "Táctica", "Pausa y abre la dirección en vivo: formación, estilo y hasta 5 cambios (tecla T)."),
+            (M.R_RIVAL, "Rival", "Pausa y muestra al rival en cancha: formación, notas en vivo, goles y cambios (tecla R)."),
             (_union(M._rects_tira_mentalidad()), "Mentalidad", "Cambia la actitud al instante sin pausar (teclas 1 a 5)."),
         ]
     return its

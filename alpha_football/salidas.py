@@ -45,8 +45,8 @@ def marcar_salida_forzada(estado: dict, equipo) -> list:
             nombres = ", ".join(_nombre(j) for j in js)
             # el asunto se corta a 80 caracteres: lo importante va primero y los nombres también en el cuerpo
             C.enviar(estado, 'directiva', f"Tras el descenso piden salir: {nombres}",
-                     f"{nombres} quieren seguir en 1ª división. Llegarán ofertas: si las rechazas, "
-                     "la directiva se enojará.",
+                     f"Tras el descenso, {nombres} han manifestado su deseo de seguir en 1ª división. Llegarán "
+                     "ofertas por ellos; le advertimos que rechazarlas generará malestar en la directiva.",
                      C.accion('plantilla_screen', "VER PLANTILLA"))
         except Exception as e:
             logger.error(f"No se pudo avisar la salida forzada: {e}")
@@ -59,6 +59,11 @@ MORAL_RENOVAR_BIEN = 10
 MARGEN_OFERTA = (0.9, 1.2)
 EFECTO_ESCALON = {2: (-5, 0), 3: (-5, -2), 4: (-10, -4)}      # (confianza, calificación DT)
 
+CIERRE_DESCONTENTO = {   # v4.7.0: los correos de los jugadores, un poco más largos
+    'minutos': "Le pido que lo tenga en cuenta en los próximos partidos; estoy listo para cuando me necesite.",
+    'equipo': "Lo digo porque quiero a este club y me duele verlo así. Cuente conmigo para cambiarlo.",
+    'sueldo': "Espero que podamos sentarnos a hablarlo pronto, con respeto y sin prisas.",
+}
 TEXTOS_DESCONTENTO = {
     'minutos': (
         "No estoy teniendo minutos y así no puedo demostrar lo que valgo. Necesito jugar.",
@@ -147,7 +152,9 @@ def revisar_descontento(estado: dict, rng: Optional[random.Random] = None) -> li
                 acc = {'pantalla': 'negociacion_screen', 'texto': "RENOVAR", 'renovar': j.id}
             else:
                 acc = C.accion('plantilla_screen', "VER PLANTILLA")
-            C.enviar(estado, 'jugador', f"{_nombre(j)} está descontento", TEXTOS_DESCONTENTO[causa][idx], acc)
+            C.enviar(estado, 'jugador', f"{_nombre(j)} está descontento",
+                     "Míster, " + TEXTOS_DESCONTENTO[causa][idx][0].lower() + TEXTOS_DESCONTENTO[causa][idx][1:]
+                     + " " + CIERRE_DESCONTENTO[causa] + f"\n{_nombre(j)}", acc)
             j.descontento_avisado = True
             avisados.append(j)
         except Exception as e:
@@ -166,7 +173,8 @@ def revisar_curados(estado: dict) -> list:
             curados.append(j)
             try:
                 C.enviar(estado, 'jugador', f"{_nombre(j)} se queda contento",
-                         "Recuperó la confianza y ya no pide salir.", C.accion('plantilla_screen', "VER PLANTILLA"))
+                         f"Míster, quería decirle que ya estoy bien. Recuperé la confianza y ya no pido salir: "
+                         f"quiero seguir aquí y darlo todo.\n{_nombre(j)}", C.accion('plantilla_screen', "VER PLANTILLA"))
             except Exception as e:
                 logger.error(f"No se pudo avisar que {j.nombre} se queda: {e}")
     return curados
@@ -197,7 +205,7 @@ def ofertas_garantizadas(estado: dict, rng: Optional[random.Random] = None) -> l
     if not _ventana_abierta(estado):
         return []
     from alpha_football import correo as C
-    from alpha_football.market import calcular_valor, factor_contrato
+    from alpha_football.market import calcular_valor, factor_contrato, traspasado_en_ventana
     azar = rng or random.Random()
     mi = estado.get('mi_equipo')
     pendientes = estado.setdefault('ofertas_recibidas', [])
@@ -205,7 +213,7 @@ def ofertas_garantizadas(estado: dict, rng: Optional[random.Random] = None) -> l
     for j in list(getattr(mi, 'jugadores', []) or []):
         if not j.pide_salir or any(o.get('jugador') is j for o in pendientes):
             continue
-        if getattr(j, 'prestamo', None):   # a préstamo: no recibe ofertas de traspaso
+        if getattr(j, 'prestamo', None) or traspasado_en_ventana(estado, j):   # a préstamo / recién llegado
             continue
         try:
             valor = int(getattr(j, 'valor', 0) or 0) or calcular_valor(j)
@@ -228,7 +236,8 @@ def ofertas_garantizadas(estado: dict, rng: Optional[random.Random] = None) -> l
             pendientes.append(of)
             nuevas.append(of)
             C.enviar(estado, 'club', f"Oferta por {j.nombre} {j.apellido}",
-                     f"{comprador.nombre} ofrece ${monto:,}. Él quiere irse.", C.accion('ofertas_screen', "VER OFERTAS"))
+                     f"{comprador.nombre} ofrece ${monto:,} por el jugador, que ha manifestado su deseo de salir.",
+                     C.accion('ofertas_screen', "VER OFERTAS"))
         except Exception as e:
             logger.error(f"No se pudo crear la oferta garantizada por {getattr(j, 'nombre', '?')}: {e}")
     return nuevas
@@ -236,16 +245,20 @@ def ofertas_garantizadas(estado: dict, rng: Optional[random.Random] = None) -> l
 
 # si nadie puede pagar, el más rico ofrece lo que tiene solo si llega a este % de lo que vale
 PISO_REMATE = 0.5
-CUERPO_ESCALON_1_TIEMPO = "Sigo esperando una salida y no llega. Quiero irme del club."
+CUERPO_ESCALON_1_TIEMPO = ("Míster, sigo esperando una salida y no llega. Le pido de corazón que me deje ir: "
+                           "necesito un cambio y creo que es lo mejor para los dos.")
 
 _CORREO_ESCALON = {
-    1: ('jugador', "{n}: quiero irme", "No aceptaste la oferta y sigo esperando. Quiero salir del club."),
+    1: ('jugador', "{n}: quiero irme", "Míster, rechazó la oferta y sigo esperando. Quiero salir del club; "
+                                          "no es nada personal, pero necesito otro destino.\n{n}"),
     2: ('directiva', "Advertencia: la situación de {n}",
-        "El vestuario está incómodo: {n} quiere irse y sigue en el club. Tu confianza baja."),
+        "El vestuario está incómodo: {n} quiere irse y sigue en el club. Esta situación reduce la confianza "
+        "de la directiva."),
     3: ('directiva', "Recordatorio: {n} quiere salir",
-        "Te recordamos que {n} pidió salir. Resuélvelo: bajan tu confianza y tu calificación."),
-    4: ('directiva', "Regaño de la directiva por {n}",
-        "Estamos molestos: {n} sigue en el club contra su voluntad. Tu calificación baja."),
+        "Le recordamos que {n} ha pedido salir. Le rogamos que lo resuelva: la situación está afectando a "
+        "la confianza de la directiva y a su calificación."),
+    4: ('directiva', "Llamado de atención por {n}",
+        "La directiva está molesta: {n} sigue en el club contra su voluntad. Esto reduce su calificación."),
 }
 
 

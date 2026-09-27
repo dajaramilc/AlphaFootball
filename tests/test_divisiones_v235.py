@@ -60,7 +60,8 @@ def check_consistencia(estado):
     assert len(todas) == 2 * len(_T)
     for l in todas:
         assert l.jornada_actual == 1 and not l.calendario, f"{l.nombre} no se reinició"
-        assert all(e.pj == 0 and e.puntos == 0 for e in l.equipos), f"{l.nombre} con stats viejas"
+        # v4.6.0: un club que quebró arranca con su sanción de puntos
+        assert all(e.pj == 0 and e.puntos == -int(getattr(e, 'sancion_puntos', 0) or 0) for e in l.equipos),             f"{l.nombre} con stats viejas"
 
 
 def roundtrip(estado):

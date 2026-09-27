@@ -149,6 +149,33 @@ def _reacomodar_once_usuario(equipo: Any, indices_retirados: list) -> None:
         logger.error(f"No se pudo normalizar el banco tras los retiros: {e_conv}")
 
 
+_POSICION_TXT = {'POR': "bajo los tres palos", 'DEF': "en la defensa", 'MED': "en el mediocampo",
+                 'DEL': "en el ataque"}
+
+
+def despedida(estado: dict, j: Any, eq: Any) -> None:
+    """v4.7.0: carta del jugador que se retira (a su manera, sin plantilla formal)."""
+    try:
+        from alpha_football import correo
+        nombre = getattr(j, 'nombre_completo', None) or f"{j.nombre} {j.apellido}"
+        donde = _POSICION_TXT.get(getattr(j, 'posicion', ''), "en la cancha")
+        variantes = [
+            (f"Míster, ha llegado el momento. Con {j.edad} años cuelgo los botines y no quería irme sin escribirle. "
+             f"Defender la camiseta de {eq.nombre} {donde} fue lo más lindo que me pasó en el fútbol. Gracias por la "
+             f"confianza, por las charlas en el vestuario y por exigirme cuando más lo necesitaba. Me llevo a los "
+             f"compañeros, a la hinchada y cada partido en el corazón. Ojalá el equipo siga creciendo con usted. "
+             f"Un abrazo enorme,\n{nombre}"),
+            (f"Míster, le escribo para despedirme: dejo el fútbol profesional a los {j.edad}. No fue una decisión "
+             f"fácil, pero el cuerpo ya pide descanso. Jugar {donde} para {eq.nombre} fue un orgullo, y aprendí "
+             f"mucho de usted. Si algún día necesita una mano con los juveniles, sabe dónde encontrarme. Gracias "
+             f"por todo, de verdad.\n{nombre}"),
+        ]
+        cuerpo = variantes[sum(map(ord, nombre)) % len(variantes)]
+        correo.enviar(estado, 'jugador', f"{nombre}: me retiro, gracias por todo", cuerpo)
+    except Exception as e:
+        logger.error(f"No se pudo enviar la despedida de {getattr(j, 'nombre', '?')}: {e}")
+
+
 def procesar_retiros(estado: dict, rng: Optional[random.Random] = None) -> list[dict]:
     """
     Sortea los retiros de las 10 ligas y pone un regen en el lugar de cada retirado.
@@ -177,6 +204,8 @@ def procesar_retiros(estado: dict, rng: Optional[random.Random] = None) -> list[
                     registrar_region_jugador(regen, tipo)
                     regen.valor = calcular_valor(regen)
                     reemplazados.append(idx)
+                    if eq is mi_equipo and not getattr(j, 'prestamo', None):
+                        despedida(estado, j, eq)          # v4.7.0: el retirado se despide del míster
                     retiros.append({
                         'nombre': j.nombre_completo, 'edad': j.edad, 'ovr': j.overall, 'equipo': eq.nombre,
                         'regen': regen.nombre_completo, 'regen_edad': regen.edad, 'regen_pot': regen.potencial,
@@ -190,7 +219,8 @@ def procesar_retiros(estado: dict, rng: Optional[random.Random] = None) -> list[
                         try:
                             from alpha_football import correo
                             correo.enviar(estado, 'club', f"{j.nombre_completo} se retiró",
-                                          "Estaba a préstamo: el préstamo terminó con su retiro.")
+                                          "Le informamos que el jugador se ha retirado; al estar cedido, "
+                                          "el préstamo queda sin efecto.")
                         except Exception as e_co:
                             logger.error(f"No se pudo avisar el retiro del jugador a préstamo: {e_co}")
                     j.prestamo = None

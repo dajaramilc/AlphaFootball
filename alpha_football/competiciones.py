@@ -50,8 +50,11 @@ CUADRO = {
 # ════════════════════════════════════════════════════════════════════════════
 
 def jornada_de_fecha(i: int, n_fechas: int, num_jornadas: int) -> int:
-    """v3.8.0: la fecha i (0-based) se juega tras la jornada ceil((i+1)(J-1)/N); la final tras la J-1."""
+    """v3.8.0: la fecha i (0-based) se juega tras la jornada ceil((i+1)(J-1)/N).
+    v4.7.0: la final (última fecha) se juega tras la última jornada: cierra la temporada."""
     try:
+        if int(i) >= int(n_fechas) - 1:
+            return max(1, int(num_jornadas))
         return max(1, math.ceil((int(i) + 1) * (int(num_jornadas) - 1) / max(1, int(n_fechas))))
     except Exception:
         return 1
@@ -682,8 +685,14 @@ def _nombre_user(estado: dict) -> str:
 
 
 def _jornada_actual(estado: dict) -> int:
+    """Jornada de liga en curso; v4.7.0: con la liga terminada vale J+1 (así vence la final)."""
     try:
-        return int(getattr(estado.get('liga'), 'jornada_actual', 1) or 1)
+        liga = estado.get('liga')
+        j = int(getattr(liga, 'jornada_actual', 1) or 1)
+        cal = getattr(liga, 'calendario', None) or []
+        if cal and all(p.jugado for p in cal):
+            return int(getattr(liga, 'num_jornadas', j) or j) + 1
+        return j
     except Exception:
         return 1
 

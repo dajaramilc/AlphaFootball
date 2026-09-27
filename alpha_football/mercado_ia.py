@@ -40,6 +40,10 @@ PRESUPUESTO_RANGO = {
     ('ecuador', 2): (500_000, 2_500_000),
 }
 INGRESO_TEMPORADA = 0.7        # fracción del presupuesto base que ingresa cada temporada (IA)
+PRECIO_REMATE = 0.60           # v4.6.0: un club en quiebra remata a sus figuras al 60% del valor
+N_REMATE = (2, 3)
+COLCHON_QUIEBRA_IA = 0.10      # v4.6.0: quiebra si el rojo supera esta fracción de sus ingresos (calibración)
+VARIACION_INGRESOS_IA = (0.75, 1.15)   # v4.6.0: temporadas buenas y malas (taquilla, TV, patrocinios)
 BONO_ASCENSO_FRACCION = 1.0    # premio por ascenso = mínimo del rango de 1ª de ese país
 SUBE_ASCENSO = 4
 BAJA_DESCENSO = 2
@@ -88,15 +92,84 @@ def asignar_presupuestos_realistas(estado: dict, incluir_usuario: bool,
                 logger.error(f"No se pudo fijar el presupuesto de {getattr(eq, 'nombre', '?')}: {e_bal}")
 
 
-def ingresos_fin_temporada(estado: dict, rng: Optional[random.Random] = None) -> None:
-    """Ingresos (TV, patrocinio, taquilla) de los clubes de la IA al empezar la temporada."""
+def ingresos_fin_temporada(estado: dict, rng: Optional[random.Random] = None) -> list:
+    """
+    v4.6.0: al empezar la temporada cada club de la IA cobra sus ingresos (patrocinio + taquilla,
+    como el user) y paga su masa salarial. El que queda en rojo quiebra (quiebra_ia).
+    Devuelve los nombres de los clubes que quebraron.
+    """
+    from alpha_football.finanzas import ingresos_esperados, masa_salarial
+    from alpha_football.entrenadores import dt_de, sueldo as sueldo_dt
+    azar = rng or random.Random()
     mi_equipo = estado.get('mi_equipo')
+    quebrados = []
     for liga, tipo, division in ligas_de_la_partida(estado):
         for eq in liga.equipos:
+            for j in eq.jugadores:
+                j.remate = False          # el remate dura hasta la temporada siguiente
             if eq is mi_equipo:
-                continue  # el user cobra su bono por posición (resumen de temporada)
-            base = presupuesto_realista(tipo, division, getattr(eq, 'estrellas', 3.0), rng)
-            eq.balance = int(getattr(eq, 'balance', 0) or 0) + int(base * INGRESO_TEMPORADA)
+                continue  # el user cobra por jornada (finanzas.procesar_jornada)
+            ingreso = int(ingresos_esperados(eq, tipo, division) * azar.uniform(*VARIACION_INGRESOS_IA))
+            eq.balance = (int(getattr(eq, 'balance', 0) or 0) + ingreso - masa_salarial(eq)
+                          - sueldo_dt(dt_de(estado, eq)))          # v4.6.0: + el sueldo de su DT
+            if eq.balance < -COLCHON_QUIEBRA_IA * ingreso:
+                quebrados.append(eq)
+    for eq in quebrados:
+        try:
+            quiebra_ia(estado, eq, azar)
+        except Exception as e_q:
+            logger.error(f"Quiebra de {getattr(eq, 'nombre', '?')} fallida: {e_q}")
+    return [eq.nombre for eq in quebrados]
+
+
+def quiebra_ia(estado: dict, eq: Any, rng: Optional[random.Random] = None) -> list:
+    """v4.6.0: remate de 2-3 figuras al 60%, sin fichajes esta temporada, −6 puntos y noticia."""
+    from alpha_football.finanzas import PUNTOS_QUIEBRA
+    from alpha_football.market import traspasado_en_ventana, calcular_valor
+    azar = rng or random.Random()
+    temporada = int(estado.get('temporada', 1) or 1)
+    mi_equipo = estado.get('mi_equipo')
+    eq.sin_fichajes_hasta = temporada
+    eq.puntos = int(getattr(eq, 'puntos', 0) or 0) - PUNTOS_QUIEBRA
+    eq.sancion_puntos = int(getattr(eq, 'sancion_puntos', 0) or 0) + PUNTOS_QUIEBRA
+    compradores = [(c, t) for liga, t, d in ligas_de_la_partida(estado) if d == 1 for c in liga.equipos
+                   if c is not eq and c is not mi_equipo]
+    figuras = sorted([j for j in eq.jugadores if not getattr(j, 'prestamo', None)
+                      and not traspasado_en_ventana(estado, j)], key=lambda j: -j.overall)
+    rematados = []
+    for j in figuras[:azar.randint(*N_REMATE)]:
+        if len(eq.jugadores) <= PLANTILLA_MIN_VENDEDOR:
+            break
+        precio = int((int(getattr(j, 'valor', 0) or 0) or calcular_valor(j)) * PRECIO_REMATE)
+        pueden = [(c, t) for c, t in compradores
+                  if int(getattr(c, 'balance', 0) or 0) >= precio and len(c.jugadores) < PLANTILLA_MAX_IA]
+        if not pueden:
+            j.remate = True           # nadie pudo pagar: el user lo puede comprar al precio de remate
+            rematados.append((j, None, precio))
+            continue
+        comprador, tipo_c = azar.choice(pueden)
+        _traspasar(j, eq, comprador, precio, tipo_c)
+        try:
+            from alpha_football.negociacion import registrar_pase
+            registrar_pase(estado, j, eq.nombre, comprador.nombre, precio, False)
+        except Exception as e_h:
+            logger.error(f"No se pudo registrar el remate: {e_h}")
+        rematados.append((j, comprador, precio))
+    try:
+        from alpha_football import correo as C
+        lineas = [f"{j.nombre_completo} ({j.posicion} {j.overall}) → "
+                  + (f"{comp.nombre} por ${p / 1_000_000:.1f}M" if comp is not None
+                     else f"sin comprador: disponible por ${p / 1_000_000:.1f}M")
+                  for j, comp, p in rematados]
+        C.enviar(estado, 'prensa', f"Quiebra en {eq.nombre}",
+                 f"{eq.nombre} se ha declarado en quiebra. La liga le resta {PUNTOS_QUIEBRA} puntos y no podrá "
+                 "fichar esta temporada. "
+                 + ("Jugadores rematados: " + "; ".join(lineas) + "." if lineas else "No tenía jugadores para rematar."),
+                 C.accion('buscador_screen', "VER BUSCADOR"))
+    except Exception as e_c:
+        logger.error(f"No se pudo enviar la noticia de la quiebra: {e_c}")
+    logger.info(f"Quiebra de la IA: {eq.nombre} ({len(rematados)} rematados)")
+    return rematados
 
 
 def _mover_media(jugador: Any, delta: int) -> None:
@@ -168,8 +241,9 @@ def _puesto_mas_flojo(equipo: Any, rng: random.Random) -> Optional[tuple[str, in
 
 
 def _buscar_refuerzo(comprador: Any, tipo_c: str, div_c: int, equipos: list, mi_equipo: Any,
-                     limite: float, ascendido: bool, rng: random.Random) -> Optional[tuple]:
-    from alpha_football.market import precio_compra
+                     limite: float, ascendido: bool, rng: random.Random,
+                     estado: Optional[dict] = None) -> Optional[tuple]:
+    from alpha_football.market import precio_compra, traspasado_en_ventana
     flojo = _puesto_mas_flojo(comprador, rng)
     if flojo is None:
         return None
@@ -187,6 +261,8 @@ def _buscar_refuerzo(comprador: Any, tipo_c: str, div_c: int, equipos: list, mi_
         nivel_v = None
         for j in vendedor.jugadores:
             if getattr(j, 'prestamo', None):   # a préstamo: no se toca
+                continue
+            if traspasado_en_ventana(estado, j):   # ya cambió de club en esta ventana
                 continue
             if j.posicion != posicion or j.overall < ovr_flojo + MEJORA_MINIMA:
                 continue
@@ -264,6 +340,8 @@ def ronda_fichajes_ia(estado: dict, modo: str = 'ventana',
     azar.shuffle(compradores)
     log = []
     for comprador, tipo_c, div_c in compradores:
+        if int(getattr(comprador, 'sin_fichajes_hasta', 0) or 0) >= int(estado.get('temporada', 1) or 1):
+            continue   # v4.6.0: quebró esta temporada
         es_asc = getattr(comprador, 'nombre', '') in ascendidos
         if modo == 'pretemporada':
             intentos, fraccion = (3 if es_asc else 2), 0.9
@@ -276,7 +354,7 @@ def ronda_fichajes_ia(estado: dict, modo: str = 'ventana',
                 limite = max(0, int(getattr(comprador, 'balance', 0) or 0)) * fraccion
                 if limite <= 0:
                     break
-                hallado = _buscar_refuerzo(comprador, tipo_c, div_c, equipos, mi_equipo, limite, es_asc, azar)
+                hallado = _buscar_refuerzo(comprador, tipo_c, div_c, equipos, mi_equipo, limite, es_asc, azar, estado)
                 if hallado is None:
                     break
                 jugador, vendedor, precio = hallado
@@ -303,6 +381,7 @@ def ronda_fichajes_ia(estado: dict, modo: str = 'ventana',
 
 def vender_salidas_forzadas(estado: dict, rng: Optional[random.Random] = None) -> list[str]:
     """v4.4.0: los clubes de la IA venden a los que pidieron salir tras descender (a clubes de 1ª)."""
+    from alpha_football.market import traspasado_en_ventana
     azar = rng or random.Random()
     mi_equipo = estado.get('mi_equipo')
     primeras = [(eq, tipo) for liga, tipo, div in ligas_de_la_partida(estado) if div == 1 for eq in liga.equipos
@@ -313,7 +392,8 @@ def vender_salidas_forzadas(estado: dict, rng: Optional[random.Random] = None) -
             if vendedor is mi_equipo:
                 continue
             for j in [x for x in vendedor.jugadores if getattr(x, 'salida_forzada', False)
-                      and not getattr(x, 'prestamo', None)]:   # a préstamo: no se toca
+                      and not getattr(x, 'prestamo', None)     # a préstamo: no se toca
+                      and not traspasado_en_ventana(estado, x)]:
                 if len(vendedor.jugadores) <= PLANTILLA_MIN_VENDEDOR:
                     break   # no se desarma la plantilla: los que quedan salen en la próxima ventana
                 try:
@@ -365,8 +445,9 @@ def pago_clausulas(estado: dict, rng: Optional[random.Random] = None, prob: floa
         compradores = [(eq, tipo) for tipo, liga in (estado.get('primera_division') or {}).items()
                        if liga is not None for eq in liga.equipos if eq is not mi and eq.id != mi.id]
         cands = []
+        from alpha_football.market import traspasado_en_ventana
         for j in mi.jugadores:
-            if getattr(j, 'prestamo', None):   # a préstamo: no se toca
+            if getattr(j, 'prestamo', None) or traspasado_en_ventana(estado, j):   # a préstamo / recién llegado
                 continue
             c = int(getattr(j, 'clausula', 0) or 0)
             ricos = [(eq, t) for eq, t in compradores if c > 0 and eq.balance >= c]
@@ -381,7 +462,8 @@ def pago_clausulas(estado: dict, rng: Optional[random.Random] = None, prob: floa
                 and azar.random() < PROB_NEGATIVA):
             j.moral = min(100, j.moral + 5)
             C.enviar(estado, 'jugador', f"{j.nombre} {j.apellido} rechazó irse a {comprador.nombre}",
-                     f"{comprador.nombre} pagó su cláusula (${c:,}) pero él prefiere quedarse.",
+                     f"Míster, {comprador.nombre} pagó mi cláusula (${c:,}), pero yo quiero seguir aquí. "
+                     "Estoy a gusto en este club y quiero seguir peleando con este grupo.",
                      C.accion('plantilla_screen', "VER PLANTILLA"))
             return {'jugador': j, 'comprador': comprador, 'monto': c, 'rechazo': True}
         from alpha_football.market import registrar_region_jugador

@@ -66,8 +66,9 @@ def test_notas_desde_eventos():
     PC.aplicar_evento(ctx, {'minuto': 20, 'tipo': 'gol', 'equipo_id': a.id, 'lado': 'l', 'jugador': del_,
                             'asistente': med, 'defensor': df, 'penal': False, 'detalle': ''})
     assert ctx.goles[K(del_)] == 1 and ctx.asist[K(med)] == 1
-    assert abs(PC.nota_en_vivo(ctx, K(del_)) - 7.0) < 1e-9
-    assert abs(PC.nota_en_vivo(ctx, K(df)) - 5.7) < 1e-9
+    assert abs(PC.nota_en_vivo(ctx, K(del_)) - 7.4) < 1e-9      # gol 1.2 + gol del equipo 0.2
+    assert abs(PC.nota_en_vivo(ctx, K(df)) - 5.4) < 1e-9        # batido -0.4 + gol en contra -0.2
+    assert abs(PC.nota_en_vivo(ctx, K(por_l)) - 6.2) < 1e-9     # solo el gol del equipo
     notas = PC.notas_finales(ctx, 1, 0, rng=random.Random(1))
     assert 3.0 <= min(notas.values()) and max(notas.values()) <= 10.0
     assert notas[K(del_)] > notas[K(df)]

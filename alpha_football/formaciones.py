@@ -19,11 +19,12 @@ import logging
 logger = logging.getLogger(__name__)
 from alpha_football.sanciones import sancionado as _sancionado  # noqa: E402  sanción de la competición que se juega
 
-# Cada entrada: {"cuotas": {...}, "posiciones": [(x,y)*11], "pref": estilo_dt}
+# Cada entrada: {"cuotas": {...}, "posiciones": [(x,y)*11], "afines": [estilo_dt, ...]}
+# v4.7.0: hasta 4 tácticas afines por formación (la 1ª es la principal).
 FORMACIONES: dict[str, dict] = {
     "4-3-3": {
         "cuotas": {"POR": 1, "DEF": 4, "MED": 3, "DEL": 3},
-        "pref": "anchelottismo",
+        "afines": ["anchelottismo", "kloppismo", "cruyffismo", "fullbackismo"],
         "posiciones": [
             (0.50, 0.88),                                              # POR
             (0.18, 0.68), (0.39, 0.68), (0.61, 0.68), (0.82, 0.68),   # DEF
@@ -33,7 +34,7 @@ FORMACIONES: dict[str, dict] = {
     },
     "4-4-2": {
         "cuotas": {"POR": 1, "DEF": 4, "MED": 4, "DEL": 2},
-        "pref": "anchelottismo",
+        "afines": ["anchelottismo", "choloismo", "haramball"],
         "posiciones": [
             (0.50, 0.88),
             (0.18, 0.68), (0.39, 0.68), (0.61, 0.68), (0.82, 0.68),
@@ -43,7 +44,7 @@ FORMACIONES: dict[str, dict] = {
     },
     "4-3-2-1": {
         "cuotas": {"POR": 1, "DEF": 4, "MED": 5, "DEL": 1},
-        "pref": "cruyffismo",
+        "afines": ["cruyffismo", "artetismo", "anchelottismo"],
         "posiciones": [
             (0.50, 0.88),
             (0.18, 0.68), (0.39, 0.68), (0.61, 0.68), (0.82, 0.68),
@@ -54,7 +55,7 @@ FORMACIONES: dict[str, dict] = {
     },
     "5-4-1": {
         "cuotas": {"POR": 1, "DEF": 5, "MED": 4, "DEL": 1},
-        "pref": "haramball",
+        "afines": ["haramball", "choloismo"],
         "posiciones": [
             (0.50, 0.88),
             (0.12, 0.70), (0.31, 0.70), (0.50, 0.70), (0.69, 0.70), (0.88, 0.70),
@@ -64,7 +65,7 @@ FORMACIONES: dict[str, dict] = {
     },
     "3-5-2": {
         "cuotas": {"POR": 1, "DEF": 3, "MED": 5, "DEL": 2},
-        "pref": "cruyffismo",
+        "afines": ["cruyffismo", "fullbackismo", "choloismo"],
         "posiciones": [
             (0.50, 0.88),
             (0.27, 0.70), (0.50, 0.70), (0.73, 0.70),
@@ -74,7 +75,7 @@ FORMACIONES: dict[str, dict] = {
     },
     "3-4-1-2": {
         "cuotas": {"POR": 1, "DEF": 3, "MED": 5, "DEL": 2},
-        "pref": "haramball",
+        "afines": ["haramball", "fullbackismo", "choloismo"],
         "posiciones": [
             (0.50, 0.88),
             (0.27, 0.70), (0.50, 0.70), (0.73, 0.70),
@@ -85,12 +86,122 @@ FORMACIONES: dict[str, dict] = {
     },
     "4-2-4": {
         "cuotas": {"POR": 1, "DEF": 4, "MED": 2, "DEL": 4},
-        "pref": "flickismo",
+        "afines": ["flickismo", "kloppismo"],
         "posiciones": [
             (0.50, 0.88),
             (0.18, 0.68), (0.39, 0.68), (0.61, 0.68), (0.82, 0.68),
             (0.35, 0.47), (0.65, 0.47),
             (0.16, 0.24), (0.39, 0.24), (0.61, 0.24), (0.84, 0.24),
+        ],
+    },
+    # v4.6.0: 10 formaciones más; con ellas cada una de las 9 tácticas tiene formación preferida.
+    "4-2-2-2": {
+        "cuotas": {"POR": 1, "DEF": 4, "MED": 4, "DEL": 2},
+        "afines": ["flickismo", "anchelottismo", "kloppismo"],
+        "posiciones": [
+            (0.50, 0.88),
+            (0.18, 0.68), (0.39, 0.68), (0.61, 0.68), (0.82, 0.68),
+            (0.38, 0.50), (0.62, 0.50),                               # doble pivote
+            (0.22, 0.34), (0.78, 0.34),                               # mediapuntas abiertos
+            (0.38, 0.20), (0.62, 0.20),
+        ],
+    },
+    "4-2-3-1": {
+        "cuotas": {"POR": 1, "DEF": 4, "MED": 5, "DEL": 1},
+        "afines": ["kloppismo", "anchelottismo", "flickismo", "artetismo"],
+        "posiciones": [
+            (0.50, 0.88),
+            (0.18, 0.68), (0.39, 0.68), (0.61, 0.68), (0.82, 0.68),
+            (0.38, 0.50), (0.62, 0.50),
+            (0.20, 0.34), (0.50, 0.34), (0.80, 0.34),
+            (0.50, 0.18),
+        ],
+    },
+    "3-4-3": {
+        "cuotas": {"POR": 1, "DEF": 3, "MED": 4, "DEL": 3},
+        "afines": ["kloppismo", "flickismo", "fullbackismo"],
+        "posiciones": [
+            (0.50, 0.88),
+            (0.27, 0.70), (0.50, 0.70), (0.73, 0.70),
+            (0.12, 0.47), (0.39, 0.47), (0.61, 0.47), (0.88, 0.47),
+            (0.22, 0.24), (0.50, 0.24), (0.78, 0.24),
+        ],
+    },
+    "4-1-4-1": {
+        "cuotas": {"POR": 1, "DEF": 4, "MED": 5, "DEL": 1},
+        "afines": ["artetismo", "cruyffismo", "choloismo"],
+        "posiciones": [
+            (0.50, 0.88),
+            (0.18, 0.68), (0.39, 0.68), (0.61, 0.68), (0.82, 0.68),
+            (0.50, 0.54),                                             # pivote
+            (0.16, 0.38), (0.39, 0.38), (0.61, 0.38), (0.84, 0.38),
+            (0.50, 0.20),
+        ],
+    },
+    "4-1-2-1-2": {
+        "cuotas": {"POR": 1, "DEF": 4, "MED": 4, "DEL": 2},
+        "afines": ["artetismo", "cruyffismo", "anchelottismo"],
+        "posiciones": [
+            (0.50, 0.88),
+            (0.18, 0.68), (0.39, 0.68), (0.61, 0.68), (0.82, 0.68),
+            (0.50, 0.56),                                             # rombo
+            (0.30, 0.46), (0.70, 0.46),
+            (0.50, 0.34),
+            (0.35, 0.20), (0.65, 0.20),
+        ],
+    },
+    "4-4-1-1": {
+        "cuotas": {"POR": 1, "DEF": 4, "MED": 5, "DEL": 1},
+        "afines": ["choloismo", "haramball", "anchelottismo"],
+        "posiciones": [
+            (0.50, 0.88),
+            (0.18, 0.68), (0.39, 0.68), (0.61, 0.68), (0.82, 0.68),
+            (0.16, 0.50), (0.39, 0.50), (0.61, 0.50), (0.84, 0.50),
+            (0.50, 0.37),                                             # segundo punta
+            (0.50, 0.17),
+        ],
+    },
+    "5-3-2": {
+        "cuotas": {"POR": 1, "DEF": 5, "MED": 3, "DEL": 2},
+        "afines": ["choloismo", "haramball", "fullbackismo"],
+        "posiciones": [
+            (0.50, 0.88),
+            (0.12, 0.70), (0.31, 0.70), (0.50, 0.70), (0.69, 0.70), (0.88, 0.70),
+            (0.25, 0.47), (0.50, 0.47), (0.75, 0.47),
+            (0.35, 0.24), (0.65, 0.24),
+        ],
+    },
+    "4-2-1-3": {
+        "cuotas": {"POR": 1, "DEF": 4, "MED": 3, "DEL": 3},
+        "afines": ["dezerbismo", "flickismo", "fullbackismo"],
+        "posiciones": [
+            (0.50, 0.88),
+            (0.18, 0.68), (0.39, 0.68), (0.61, 0.68), (0.82, 0.68),
+            (0.29, 0.50), (0.71, 0.50),
+            (0.50, 0.38),
+            (0.20, 0.17), (0.50, 0.17), (0.80, 0.17),
+        ],
+    },
+    "3-2-4-1": {
+        "cuotas": {"POR": 1, "DEF": 3, "MED": 6, "DEL": 1},
+        "afines": ["dezerbismo", "artetismo", "cruyffismo"],
+        "posiciones": [
+            (0.50, 0.88),
+            (0.27, 0.70), (0.50, 0.70), (0.73, 0.70),
+            (0.38, 0.50), (0.62, 0.50),                               # doble pivote
+            (0.12, 0.34), (0.37, 0.34), (0.63, 0.34), (0.88, 0.34),
+            (0.50, 0.18),
+        ],
+    },
+    "3-4-2-1": {
+        "cuotas": {"POR": 1, "DEF": 3, "MED": 6, "DEL": 1},
+        "afines": ["fullbackismo", "dezerbismo", "kloppismo"],
+        "posiciones": [
+            (0.50, 0.88),
+            (0.27, 0.70), (0.50, 0.70), (0.73, 0.70),
+            (0.12, 0.52), (0.37, 0.52), (0.63, 0.52), (0.88, 0.52),   # carrileros y doble pivote
+            (0.35, 0.30), (0.65, 0.30),                               # interiores por dentro
+            (0.50, 0.18),
         ],
     },
 }
@@ -119,10 +230,15 @@ def posiciones(formacion: str) -> list[tuple[float, float]]:
     return list(datos["posiciones"])
 
 
-def pref(formacion: str) -> str:
-    """Táctica preferida de la formación (fallback a anchelottismo)."""
+def afines(formacion: str) -> list[str]:
+    """v4.7.0: tácticas afines de la formación (1 a 4; fallback a anchelottismo)."""
     datos = FORMACIONES.get(formacion)
-    return datos["pref"] if datos else "anchelottismo"
+    return list(datos["afines"]) if datos else ["anchelottismo"]
+
+
+def pref(formacion: str) -> str:
+    """Táctica principal de la formación (la primera afín)."""
+    return afines(formacion)[0]
 
 
 def mejor_once(jugadores: list, formacion: str, puntaje=None) -> list[int]:
@@ -190,6 +306,39 @@ def normalizar_convocados(alin, jugadores: list, n: int = 10) -> list[int]:
         validos += resto[:n - len(validos)]
     alin.convocados = validos[:n]
     return alin.convocados
+
+
+def retirar_no_disponibles(alin, jugadores: list, n: int = 10) -> list:
+    """
+    Al empezar un partido: los lesionados y sancionados salen del once y del banco (quedan en
+    reservas). Cada titular que sale lo cubre el mejor disponible de su puesto (primero del banco);
+    el banco se completa con los mejores disponibles. Devuelve los jugadores retirados.
+    """
+    def disponible(i):
+        return (0 <= i < len(jugadores) and getattr(jugadores[i], 'lesion_partidos', 0) == 0
+                and not _sancionado(jugadores[i]))
+
+    titulares = list(getattr(alin, 'titulares', []) or [])
+    convocados = list(getattr(alin, 'convocados', []) or [])
+    retirados = [jugadores[i] for i in titulares + convocados if 0 <= i < len(jugadores) and not disponible(i)]
+    if not retirados:
+        return []
+    for slot, i in enumerate(titulares):
+        if disponible(i):
+            continue
+        libres = [k for k in range(len(jugadores)) if disponible(k) and k not in titulares]
+        if not libres:
+            continue
+        pos = getattr(jugadores[i], 'posicion', '') if 0 <= i < len(jugadores) else ''
+        mismos = [k for k in libres if getattr(jugadores[k], 'posicion', '') == pos] or \
+                 [k for k in libres if getattr(jugadores[k], 'posicion', '') != 'POR'] or libres
+        titulares[slot] = max(mismos, key=lambda k: (k in convocados, getattr(jugadores[k], 'overall', 0)))
+    alin.titulares = titulares
+    validos = [i for i in convocados if disponible(i) and i not in titulares]
+    resto = sorted((k for k in range(len(jugadores)) if disponible(k) and k not in titulares and k not in validos),
+                   key=lambda k: -getattr(jugadores[k], 'overall', 60))
+    alin.convocados = (validos + resto)[:n]
+    return retirados
 
 
 def puestos(formacion: str) -> list[str]:

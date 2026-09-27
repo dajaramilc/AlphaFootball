@@ -113,6 +113,11 @@ def avanzar_nueva_temporada(estado: dict) -> None:
         temp_anterior = estado.get('temporada', 1)
         nueva_temp = temp_anterior + 1
         estado['temporada'] = nueva_temp
+        try:   # v4.7.0: la bandeja arranca limpia (quedan los correos del cierre que vienen ahora)
+            from alpha_football.correo import limpiar_temporadas_anteriores
+            limpiar_temporadas_anteriores(estado)
+        except Exception as e_co:
+            logger.error(f"No se pudo limpiar el correo: {e_co}")
 
         # 2. Guardar registro en el historial de campañas (Career Screen)
         #    v0.8.1: claves correctas (pos/pts/gf/gc/campeon_liga/libertadores) +
@@ -172,14 +177,21 @@ def avanzar_nueva_temporada(estado: dict) -> None:
             except Exception as e_bal:
                 logger.error(f"Error al acreditar bono de fin de temporada: {e_bal}")
 
+            try:   # v4.7.0: si llegaste a mitad de temporada, solo cuenta lo que hiciste tú
+                from alpha_football.ofertas_dt import desde_llegada
+                _tuyo = desde_llegada(estado, mi_equipo, temp_anterior)
+            except Exception as e_ll:
+                logger.error(f"No se pudo calcular lo hecho desde la llegada: {e_ll}")
+                _tuyo = {'pts': getattr(mi_equipo, 'puntos', 0), 'gf': getattr(mi_equipo, 'gf', 0),
+                         'gc': getattr(mi_equipo, 'gc', 0)}
             registro = {
                 "temporada": temp_anterior,
                 "equipo": mi_equipo.nombre,
                 # v0.8.1: claves que lee career_screen.py
                 "pos": posicion,
-                "pts": getattr(mi_equipo, 'puntos', 0),
-                "gf": getattr(mi_equipo, 'gf', 0),
-                "gc": getattr(mi_equipo, 'gc', 0),
+                "pts": _tuyo['pts'],
+                "gf": _tuyo['gf'],
+                "gc": _tuyo['gc'],
                 "campeon_liga": campeon_nombre,
                 "libertadores": mejor_fase,
                 # Información del bono (se muestra en el resumen de la temporada)
@@ -188,7 +200,7 @@ def avanzar_nueva_temporada(estado: dict) -> None:
                 "bono_total": bono_total,
                 # Compatibilidad con saves viejos que usaban 'posicion' y 'puntos'
                 "posicion": posicion,
-                "puntos": getattr(mi_equipo, 'puntos', 0),
+                "puntos": _tuyo['pts'],
             }
             try:  # v3.1.0: pedido abierto = fallado; bonus de potencial por moral
                 from alpha_football.directiva import cerrar_pedido_temporada
@@ -205,6 +217,7 @@ def avanzar_nueva_temporada(estado: dict) -> None:
                 registro['objetivo_resultado'] = ev_dir.get('resultado', '')
                 registro['directiva_monto'] = ev_dir.get('monto', 0)
                 registro['despedido'] = bool(ev_dir.get('despido'))
+                registro['fallos_financieros'] = list(ev_dir.get('fallos_financieros') or [])   # v4.6.0
             except Exception as e_dir:
                 logger.error(f"Error al evaluar el objetivo de la directiva: {e_dir}")
             try:  # v3.4.0: DTs de la IA que no cumplieron (usa la tabla final: antes del swap)
@@ -378,6 +391,7 @@ def avanzar_nueva_temporada(estado: dict) -> None:
         for liga_r in todas:
             for eq in liga_r.equipos:
                 eq.puntos = 0
+                eq.sancion_puntos = 0           # v4.6.0: la sanción por quiebra dura una temporada
                 eq.pj = 0
                 eq.pg = 0
                 eq.pe = 0

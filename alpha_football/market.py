@@ -584,6 +584,32 @@ def proxima_apertura(jornada: int, num_jornadas: int) -> int:
     return next((v[0] for v in ventanas_mercado(num_jornadas) if v[0] > int(jornada)), 1)
 
 
+def clave_ventana_traspaso(temporada: int, jornada: int, num_jornadas: int) -> str:
+    """Ventana de traspasos en curso: el cierre de una temporada y el inicio de la siguiente son
+    la misma ventana de verano. '' con el mercado cerrado."""
+    v = ventana_actual(jornada, num_jornadas)
+    if v is None:
+        return ''
+    if v[2] == 'invierno':
+        return f"{int(temporada)}-invierno"
+    return f"{int(temporada) + (1 if v[2] == 'cierre' else 0)}-verano"
+
+
+def traspasado_en_ventana(estado: Any, jugador: Any) -> bool:
+    """True si el jugador ya cambió de club en la ventana abierta (no se lo puede volver a traspasar)."""
+    try:
+        marca = getattr(jugador, 'ventana_traspaso', '') or ''
+        if not marca or not isinstance(estado, dict):
+            return False
+        liga = estado.get('liga')
+        return marca == clave_ventana_traspaso(int(estado.get('temporada', 1) or 1),
+                                               int(getattr(liga, 'jornada_actual', 1) or 1),
+                                               int(getattr(liga, 'num_jornadas', 22) or 22))
+    except Exception as e:
+        logger.error(f"No se pudo revisar la ventana de traspaso: {e}")
+        return False
+
+
 def ventana_mercado_abierta(jornada: int, num_jornadas: int) -> bool:
     """El mercado está abierto en las jornadas 1-3, en el invierno (mitad de temporada) y en las 3 últimas."""
     try:

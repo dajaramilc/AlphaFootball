@@ -1009,9 +1009,9 @@ def _render_tarjetas(screen, estado, tab, mouse_pos, click_pos) -> Optional[str]
         n_ofertas = len(estado.get('ofertas_recibidas') or [])
         from alpha_football.correo import no_leidos
         n_correo = no_leidos(estado)                                  # v3.1.0
-        try:  # v3.4.0: badge de OFERTAS DT
-            from alpha_football.entrenadores import ofertas_activas
-            n_ofertas_dt = len(ofertas_activas(estado))
+        try:  # v3.4.0: badge de OFERTAS DT (v4.7.0: + la oferta por calificación)
+            from alpha_football.ui.ofertas_dt_screen import filas as _filas_dt
+            n_ofertas_dt = len(_filas_dt(estado))
         except Exception as e_odt:
             logger.error(f"Error al contar las ofertas de banquillo: {e_odt}")
             n_ofertas_dt = 0
@@ -1080,7 +1080,18 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         except Exception as e_sync:
             logger.error(f"Error al sincronizar la copa: {e_sync}")
 
-        try:  # v2.8.0: objetivo de la temporada (una vez por temporada / club)
+        try:  # v2.9.0: contratos para toda la partida (una vez; saves viejos incluidos)
+            dc = estado.setdefault('datos_carrera', {})
+            from alpha_football.finanzas import asegurar_contratos, migrar_economia
+            if not dc.get('contratos_v290'):
+                asegurar_contratos(estado)
+                dc['contratos_v290'] = True
+                dc['economia_v2'] = True          # v4.6.0: carrera nueva: ya nace con los sueldos nuevos
+            else:
+                migrar_economia(estado)           # v4.6.0: save viejo: sueldos ×1.6 una sola vez
+        except Exception as e_con:
+            logger.error(f"Error al asignar contratos: {e_con}")
+        try:  # v2.8.0 (v4.6.0: después de migrar sueldos): objetivo de la temporada (una vez por temporada / club)
             from alpha_football.directiva import definir_objetivo
             definir_objetivo(estado)
         except Exception as e_obj:
@@ -1094,14 +1105,6 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             asegurar_dts(estado)
         except Exception as e_dt:
             logger.error(f"Error en contrato/objetivo de copa: {e_dt}")
-        try:  # v2.9.0: contratos para toda la partida (una vez; saves viejos incluidos)
-            dc = estado.setdefault('datos_carrera', {})
-            if not dc.get('contratos_v290'):
-                from alpha_football.finanzas import asegurar_contratos
-                asegurar_contratos(estado)
-                dc['contratos_v290'] = True
-        except Exception as e_con:
-            logger.error(f"Error al asignar contratos: {e_con}")
 
         info = _info_partido(estado, liga, mi_equipo)
         partido_usuario, esta_finalizada, fase_copa, _rival = info

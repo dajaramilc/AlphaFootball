@@ -48,7 +48,7 @@ def gasto_por_minuto(j) -> float:
 
 
 def energia_en_minuto(j, minutos: int, mult: float = 1.0) -> float:
-    # v3.3.0: `mult` = multiplicador del gasto por estilo (Kloppismo ×1.3).
+    # v3.3.0: `mult` = multiplicador del gasto por estilo (Kloppismo ×1.2).
     return max(0.0, float(getattr(j, 'energia', 100.0)) - gasto_por_minuto(j) * mult * max(0, int(minutos)))
 
 

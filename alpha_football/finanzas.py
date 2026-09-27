@@ -17,13 +17,23 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 from alpha_football.sanciones import sancionado as _sancionado  # noqa: E402  sanción de la competición que se juega
 
-SALARIO_PCT_VALOR = 0.05        # salario anual = 5% del valor de mercado
+SALARIO_PCT_VALOR = 0.08        # v4.6.0: salario anual = 8% del valor (antes 5%: nadie quebraba)
+FACTOR_MIGRACION_SALARIOS = 0.08 / 0.05
+# v4.6.0: ingresos por (liga, división) para que la masa salarial media de cada liga sea ~70% de sus
+# ingresos (medido con las plantillas de la base: las bandas de presupuesto de BetPlay, Uruguay,
+# Ecuador y las 2ª no cuadraban con el valor de sus jugadores). Sin entrada = 1.0.
+FACTOR_INGRESOS = {
+    ('betplay', 1): 2.7, ('uruguay', 1): 1.6, ('ecuador', 1): 1.3,
+    ('premier', 2): 1.5, ('laliga', 2): 3.4, ('seriea', 2): 2.7, ('brasil', 2): 1.2,
+    ('argentina', 2): 2.4, ('betplay', 2): 4.4, ('uruguay', 2): 2.6, ('ecuador', 2): 2.5,
+}
 SALARIO_MIN = 20_000
 CLAUSULA_MULT_INICIAL = 2.0
 PATROCINIO_FRAC = 0.40          # patrocinio de la temporada = 40% del presupuesto medio de la liga
 TAQUILLA_FRAC = 0.50            # taquilla de la temporada (de local) = 50% del presupuesto medio
 FACTOR_TAQUILLA = {'victoria': 1.2, 'empate': 1.0, 'derrota': 0.85}
-JORNADAS_ROJO_VENTA = 3
+JORNADAS_ROJO_VENTA = 4         # v4.6.0: antes 3
+PUNTOS_QUIEBRA = 6              # v4.6.0: cerrar la temporada en rojo resta puntos en la siguiente
 VENTA_FORZADA_FRAC = 0.8        # la directiva malvende al 80% del valor
 CLAVES_LIBRO = ['taquilla', 'patrocinio', 'salarios', 'fichajes', 'ventas', 'premios', 'directiva']  # v3.2.0: + espaldarazo
 
@@ -84,6 +94,12 @@ def asegurar_contratos(estado: dict) -> None:
         asegurar_contrato(j)
 
 
+def valor_club(equipo) -> int:
+    """v4.7.0: valor del club = valor de mercado de la plantilla + saldo."""
+    return (sum(int(getattr(j, 'valor', 0) or 0) for j in getattr(equipo, 'jugadores', []) or [])
+            + int(getattr(equipo, 'balance', 0) or 0))
+
+
 def masa_salarial(equipo, estado: Optional[dict] = None) -> int:
     """Sueldos anuales que paga el club: los propios, solo su % de los que tiene a préstamo y, con
     `estado`, el % que sigue pagando de sus cedidos (prestamos.py)."""
@@ -109,6 +125,45 @@ def presupuesto_medio(liga) -> int:
     except Exception:
         lo, hi = 1_000_000, 5_000_000
     return (lo + hi) // 2
+
+
+def presupuesto_base(equipo, tipo: str, division: int) -> int:
+    """v4.6.0: presupuesto de referencia del club (punto medio de su banda según estrellas, sin azar)."""
+    try:
+        from alpha_football.mercado_ia import _rango
+        lo, hi = _rango(tipo or 'betplay', int(division or 1))
+    except Exception:
+        lo, hi = 1_000_000, 5_000_000
+    t = max(0.0, min(1.0, (float(getattr(equipo, 'estrellas', 3.0) or 3.0) - 2.0) / 3.0))
+    return int(lo + t * (hi - lo))
+
+
+def base_ingresos(equipo, tipo: str, division: int) -> int:
+    """v4.6.0: base de patrocinio y taquilla del club (su presupuesto de referencia × factor de su liga)."""
+    return int(presupuesto_base(equipo, tipo, division) * FACTOR_INGRESOS.get((tipo, int(division or 1)), 1.0))
+
+
+def ingresos_esperados(equipo, tipo: str, division: int) -> int:
+    """v4.6.0: patrocinio + taquilla de una temporada (todos empates): base del tope salarial y de la IA."""
+    base = base_ingresos(equipo, tipo, division)
+    return int(base * PATROCINIO_FRAC) + int(base * TAQUILLA_FRAC)
+
+
+def migrar_economia(estado: dict) -> bool:
+    """v4.6.0: saves viejos: los sueldos pasan del 5% al 8% del valor (una sola vez)."""
+    dc = estado.setdefault('datos_carrera', {})
+    if dc.get('economia_v2'):
+        return False
+    for eq in _todos_los_equipos(estado):
+        for j in getattr(eq, 'jugadores', []) or []:
+            if int(getattr(j, 'salario', 0) or 0) > 0:
+                j.salario = int(round(j.salario * FACTOR_MIGRACION_SALARIOS / 1000)) * 1000
+    for p in dc.get('traspasos_pendientes') or []:     # v4.7.0: fichajes acordados (agentes libres guardados)
+        d = p.get('datos') if isinstance(p, dict) else None
+        if isinstance(d, dict) and int(d.get('salario', 0) or 0) > 0:
+            d['salario'] = int(round(d['salario'] * FACTOR_MIGRACION_SALARIOS / 1000)) * 1000
+    dc['economia_v2'] = True
+    return True
 
 
 def libro(estado: dict) -> dict:
@@ -233,7 +288,7 @@ def procesar_jornada(estado: dict, es_local: bool, gf: int, gc: int) -> dict:
     if mi is None or liga is None:
         return {}
     n = max(1, int(getattr(liga, 'num_jornadas', 10) or 10))
-    medio = presupuesto_medio(liga)
+    medio = base_ingresos(mi, getattr(liga, 'tipo', ''), getattr(liga, 'division', 1) or 1)   # v4.6.0: según el club y su liga
     resultado = 'victoria' if gf > gc else 'derrota' if gf < gc else 'empate'
     patrocinio = int(medio * PATROCINIO_FRAC / n)
     taquilla = int(medio * TAQUILLA_FRAC / max(1, n / 2) * FACTOR_TAQUILLA[resultado]) if es_local else 0
@@ -244,16 +299,29 @@ def procesar_jornada(estado: dict, es_local: bool, gf: int, gc: int) -> dict:
     registrar(estado, 'salarios', salarios)
     dc = estado.setdefault('datos_carrera', {})
     estado.pop('aviso_finanzas', None)
+    from alpha_football import correo as C
+    ir = C.accion('finanzas_screen', "VER FINANZAS")
     if mi.balance < 0:
-        dc['jornadas_en_rojo'] = int(dc.get('jornadas_en_rojo', 0)) + 1
-        if dc['jornadas_en_rojo'] >= JORNADAS_ROJO_VENTA:
+        dc['jornadas_en_rojo'] = n_rojo = int(dc.get('jornadas_en_rojo', 0)) + 1
+        if n_rojo >= JORNADAS_ROJO_VENTA:
             dc['jornadas_en_rojo'] = 0
-            estado['aviso_finanzas'] = vender_mejor(estado) or "Quiebra: no se pudo vender a nadie."
+            texto = vender_mejor(estado) or "Quiebra: no se pudo vender a nadie."
+            estado['aviso_finanzas'] = texto
+            C.enviar(estado, 'directiva', "Venta forzada por deudas",
+                     f"Tras {JORNADAS_ROJO_VENTA} jornadas consecutivas con saldo negativo, la directiva se ha "
+                     f"visto obligada a vender. {texto}", ir)
         else:
-            faltan = JORNADAS_ROJO_VENTA - dc['jornadas_en_rojo']
-            estado['aviso_finanzas'] = (f"Saldo negativo: en {faltan} jornada{'s' if faltan != 1 else ''} "
-                                        f"la directiva venderá a tu mejor jugador")
+            faltan = JORNADAS_ROJO_VENTA - n_rojo
+            estado['aviso_finanzas'] = aviso = (f"Saldo negativo: en {faltan} jornada{'s' if faltan != 1 else ''} "
+                                                f"la directiva venderá a tu mejor jugador")
+            C.enviar(estado, 'directiva',
+                     "Saldo negativo" if n_rojo == 1 else f"Siguen los números rojos ({n_rojo}/{JORNADAS_ROJO_VENTA})",
+                     f"El saldo del club es de −${abs(mi.balance) / 1_000_000:.1f}M. {aviso}. Le rogamos que "
+                     "venda jugadores o reduzca la masa salarial para volver a números positivos.", ir)
     else:
+        if int(dc.get('jornadas_en_rojo', 0) or 0) > 0:
+            C.enviar(estado, 'directiva', "Saldo recuperado",
+                     "El club ha vuelto a números positivos, por lo que se cancela la venta forzada.", ir)
         dc['jornadas_en_rojo'] = 0
     return {'patrocinio': patrocinio, 'taquilla': taquilla, 'salarios': salarios}
 
@@ -298,9 +366,27 @@ def cierre_temporada(estado: dict) -> list:
     if mi is not None:
         completar_plantilla(mi)
     estado.setdefault('datos_carrera', {})['salidas_libres'] = salidas
-    if mi is not None and mi.balance < 0:
-        from alpha_football.directiva import marcar_despido
-        marcar_despido(estado, f"Quiebra: cerraste la temporada con saldo negativo (${mi.balance / 1_000_000:.1f}M).")
+    if mi is not None:     # v4.6.0: 1ª temporada en rojo = −6 puntos; 2ª seguida = despido
+        dc = estado.setdefault('datos_carrera', {})
+        if mi.balance < 0:
+            dc['temporadas_en_rojo'] = int(dc.get('temporadas_en_rojo', 0) or 0) + 1
+            if dc['temporadas_en_rojo'] >= 2:
+                from alpha_football.directiva import marcar_despido
+                marcar_despido(estado, f"Quiebra: dos temporadas seguidas en números rojos "
+                                       f"(${mi.balance / 1_000_000:.1f}M).")
+            else:
+                # el cierre corre después del reset de la tabla: los puntos ya son de la temporada nueva
+                mi.puntos = int(getattr(mi, 'puntos', 0) or 0) - PUNTOS_QUIEBRA
+                mi.sancion_puntos = int(getattr(mi, 'sancion_puntos', 0) or 0) + PUNTOS_QUIEBRA
+                from alpha_football import correo as C
+                if not estado.get('despido_pendiente'):     # v4.7.0: al despedido no se le advierte
+                    C.enviar(estado, 'directiva', "Temporada cerrada en rojo",
+                             f"El club ha cerrado la temporada con −${abs(mi.balance) / 1_000_000:.1f}M. La liga le "
+                             f"resta {PUNTOS_QUIEBRA} puntos para esta temporada. Si vuelve a cerrar en números "
+                             "rojos, prescindiremos de sus servicios.",
+                             C.accion('finanzas_screen', "VER FINANZAS"))
+        else:
+            dc['temporadas_en_rojo'] = 0
     return salidas
 
 

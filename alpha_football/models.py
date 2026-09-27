@@ -99,6 +99,10 @@ class Jugador:
     # préstamo en curso (solo mientras está cedido): dueño, club donde juega, % del sueldo que
     # paga el dueño, [temporada, jornada] de regreso y duración en meses (prestamos.py)
     prestamo: Optional[dict] = None
+    # ventana en la que cambió de club ('<temporada>-verano'|'<temporada>-invierno'): en esa misma
+    # ventana no puede volver a ser traspasado (solo cedido a préstamo)
+    ventana_traspaso: str = ""
+    remate: bool = False                        # v4.6.0: rematado por un club en quiebra (precio 60%)
     energia_vivo: Optional[float] = None       # transitorio: energía en el tramo que se simula
 
     def __post_init__(self):
@@ -280,6 +284,8 @@ class Jugador:
                 amarillas_liga=int(datos.get("amarillas_liga", 0) or 0),
                 amarillas_copa=int(datos.get("amarillas_copa", 0) or 0),
                 prestamo=dict(datos["prestamo"]) if isinstance(datos.get("prestamo"), dict) else None,
+                ventana_traspaso=str(datos.get("ventana_traspaso", "") or ""),
+                remate=bool(datos.get("remate", False)),
             )
         except Exception as e:
             logger.warning(f"Excepción al reconstruir Jugador: {e}. Usando fallback.")
@@ -324,6 +330,10 @@ class Equipo:
     division: int = 1
     rival: str = ""          # v3.1.0: nombre del club clásico
     dt_nombre: str = ""      # v3.4.0: DT puesto a mano en el editor
+    dt_estilo: str = ""      # v4.6.0: estilo del DT puesto en el editor ("" = el real / el del club)
+    dt_calif: int = 0        # v4.6.0: calificación del DT puesta en el editor (0 = según estrellas)
+    sin_fichajes_hasta: int = 0   # v4.6.0: quebró: no ficha hasta terminar esa temporada
+    sancion_puntos: int = 0       # v4.6.0: puntos restados por quiebra esta temporada (el recuento los respeta)
 
     # Estadísticas de liga acumuladas
     puntos: int = 0
@@ -434,8 +444,12 @@ class Equipo:
                 gc=int(datos.get("gc", 0)),
                 # v2.3: division default 1 (retrocompatible con saves viejos)
                 division=int(datos.get("division", 1)),
+                sin_fichajes_hasta=int(datos.get("sin_fichajes_hasta", 0) or 0),
+                sancion_puntos=int(datos.get("sancion_puntos", 0) or 0),
                 rival=str(datos.get("rival", "") or ""),
                 dt_nombre=str(datos.get("dt_nombre", "") or ""),  # v3.4.0
+                dt_estilo=_normalizar_estilo(datos["dt_estilo"]) if datos.get("dt_estilo") else "",  # v4.6.0
+                dt_calif=int(datos.get("dt_calif", 0) or 0),
             )
         except Exception as e:
             logger.error(f"Error al reconstruir Equipo: {e}")

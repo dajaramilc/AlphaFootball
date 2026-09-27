@@ -277,7 +277,7 @@ def test_dropdown_rasgo_no_restaura():
     orig = ED.restaurar_base
     ED.restaurar_base = lambda *a, **k: llamado.append(1)
     try:
-        e = {}; pygame.event.clear(); ED.render(screen, e)             # inicializa el editor
+        e = {'edit_seccion': 'jugadores'}; pygame.event.clear(); ED.render(screen, e)   # inicializa el editor
         e['edit_dropdown_activo'] = 'rasgo'                            # (modo equipo: el rasgo no aplica)
         click(ED.R_RESTAURAR.center); ED.render(screen, e)
         assert not llamado and not e['edit_dropdown_activo']

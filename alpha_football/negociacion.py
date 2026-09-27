@@ -38,7 +38,10 @@ def dinero_exacto(v) -> str:
 
 def precio_fichaje(jugador) -> int:
     try:
-        from alpha_football.market import precio_compra, factor_contrato
+        from alpha_football.market import precio_compra, factor_contrato, calcular_valor
+        if getattr(jugador, 'remate', False):   # v4.6.0: club en quiebra: 60% del valor
+            from alpha_football.mercado_ia import PRECIO_REMATE
+            return int((int(getattr(jugador, 'valor', 0) or 0) or calcular_valor(jugador)) * PRECIO_REMATE)
         return int(int(precio_compra(jugador)) * factor_contrato(jugador))   # v3.5.0: último año −25%
     except Exception:
         return int(getattr(jugador, 'valor', 0) or 0)
@@ -60,8 +63,10 @@ def asegurar_agentes_libres(estado: dict) -> list:
     conservar = [j for j in estado.get('free_agents_list') or []
                  if getattr(j, 'fin_de_contrato', False) or (str(j.id), j.nombre_completo) in en_analisis]
     try:
-        from alpha_football.data.free_agents import get_free_agents
-        estado['free_agents_list'] = conservar + list(get_free_agents(clave[1]) or [])
+        from alpha_football.data.free_agents import get_free_agents, libres_editor
+        ya = {(str(j.id), j.nombre_completo) for j in conservar}      # v4.6.0: + los libres del editor
+        del_editor = [j for j in libres_editor(estado) if (str(j.id), j.nombre_completo) not in ya]
+        estado['free_agents_list'] = conservar + del_editor + list(get_free_agents(clave[1]) or [])
     except Exception as e:
         logger.error(f"No se pudieron generar los agentes libres: {e}")
         estado['free_agents_list'] = conservar
@@ -226,6 +231,7 @@ def registrar_pase(estado: dict, jugador, de: str, a: str, monto: int, propio: b
     try:
         liga = estado.get('liga')
         hist = estado.setdefault('datos_carrera', {}).setdefault('historial_pases', [])
+        jugador.remate = False               # v4.6.0: cambió de club: se terminó el remate
         hist.append({
             'temporada': int(estado.get('temporada', 1) or 1),
             'jornada': int(getattr(liga, 'jornada_actual', 1) or 1),
@@ -234,6 +240,11 @@ def registrar_pase(estado: dict, jugador, de: str, a: str, monto: int, propio: b
             'media': int(getattr(jugador, 'overall', 0) or 0),
             'de': str(de), 'a': str(a), 'monto': int(monto or 0), 'propio': bool(propio),
         })
+        if not str(a).startswith('Libre'):   # cambió de club: no se mueve otra vez en esta ventana
+            from alpha_football.market import clave_ventana_traspaso
+            jugador.ventana_traspaso = clave_ventana_traspaso(
+                int(estado.get('temporada', 1) or 1), int(getattr(liga, 'jornada_actual', 1) or 1),
+                int(getattr(liga, 'num_jornadas', 22) or 22))
         # v2.9.1: el tope solo recorta pases ajenos (la IA hace cientos por temporada y
         # borraba los tuyos de la pestaña PROPIO).
         exceso = sum(1 for h in hist if not h.get('propio')) - MAX_HISTORIAL
@@ -265,8 +276,8 @@ def avisar_llegada(estado: dict, jugador) -> None:
         registrar(jugador)
         nombre = getattr(jugador, 'nombre_completo', None) or f"{jugador.nombre} {jugador.apellido}"
         C.enviar(estado, 'club', f"{nombre} ha llegado",
-                 f"{nombre} ha llegado, acomódalo en tu plantilla.",
-                 C.accion('plantilla_screen', "VER PLANTILLA"))
+                 f"{nombre} ya se ha incorporado al club. Puede acomodarlo en su formación.",
+                 C.accion('team_screen', "VER FORMACIÓN"))
     except Exception as e:
         logger.error(f"No se pudo avisar la llegada del fichaje: {e}")
 
@@ -281,6 +292,9 @@ def fichar(estado: dict, jugador, club, precio: Optional[int] = None) -> tuple[b
         return False, "No hay equipo."
     if getattr(jugador, 'prestamo', None):   # préstamos: no se compra a uno que está a préstamo
         return False, f"{jugador.nombre_completo} está a préstamo: no se puede fichar."
+    from alpha_football.market import traspasado_en_ventana
+    if club is not None and traspasado_en_ventana(estado, jugador):
+        return False, f"{jugador.nombre_completo} ya fue traspasado en esta ventana: solo a préstamo."
     precio = precio_fichaje(jugador) if precio is None else int(precio)
     try:
         from alpha_football.market import puede_fichar
@@ -309,6 +323,8 @@ def fichar(estado: dict, jugador, club, precio: Optional[int] = None) -> tuple[b
             club.balance = int(getattr(club, 'balance', 0) or 0) + precio
         elif jugador in (estado.get('free_agents_list') or []):
             estado['free_agents_list'].remove(jugador)
+            from alpha_football.data.free_agents import quitar_libre_editor   # v4.6.0
+            quitar_libre_editor(estado, jugador)
         mi.balance -= precio
         jugador.transferible = jugador.pide_salir = False     # v3.1.0
         try:  # v4.4.0: se borra la escalada de salida
@@ -346,6 +362,8 @@ def _fichar_diferido(estado: dict, jugador, club, precio: int) -> tuple[bool, st
             club.balance = int(getattr(club, 'balance', 0) or 0) + precio
         elif jugador in (estado.get('free_agents_list') or []):
             estado['free_agents_list'].remove(jugador)   # ya no se lo puede llevar otro
+            from alpha_football.data.free_agents import quitar_libre_editor   # v4.6.0
+            quitar_libre_editor(estado, jugador)
         mi.balance -= precio
         aviso = TP.diferir_compra(estado, jugador, club, precio)
         estado['fichajes_realizados'] = int(estado.get('fichajes_realizados', 0) or 0) + 1
@@ -358,7 +376,7 @@ def _fichar_diferido(estado: dict, jugador, club, precio: int) -> tuple[bool, st
         except Exception as e_fin:
             logger.error(f"No se pudo registrar el gasto del fichaje: {e_fin}")
         C.enviar(estado, 'club', f"Fichaje acordado: {jugador.nombre_completo}",
-                 f"Pagaste {dinero_exacto(precio)} a {de}. {aviso}")
+                 f"Se han pagado {dinero_exacto(precio)} a {de}. {aviso}")
         quitar_favorito(estado, jugador)
         return True, f"¡Acuerdo cerrado! {jugador.nombre_completo} llega en la jornada {TP.jornada_apertura(estado)}."
     except Exception as e:
@@ -472,6 +490,8 @@ def _dinero(v: int) -> str:
 
 def minimo_club(jugador, club) -> int:
     """Lo mínimo que acepta el club: el precio de mercado (+25% si es una de sus 3 figuras)."""
+    if getattr(jugador, 'remate', False):
+        return precio_fichaje(jugador)        # v4.6.0: remate: sin recargo de figura
     precio = precio_fichaje(jugador)
     figuras = sorted(getattr(club, 'jugadores', []) or [], key=lambda j: -j.overall)[:3]
     return int(precio * RECARGO_FIGURA) if any(f is jugador for f in figuras) else precio
@@ -523,6 +543,9 @@ def evaluar_compra(estado: dict, jugador, club, monto: int) -> tuple:
         return 'rechaza', f"{jugador.nombre_completo} está a préstamo en {getattr(club, 'nombre', 'otro club')}: no se vende.", 0
     if club is None:
         return 'acepta', "Agente libre: no hay club con quien negociar.", 0
+    from alpha_football.market import traspasado_en_ventana
+    if traspasado_en_ventana(estado, jugador):
+        return 'rechaza', f"{jugador.nombre_completo} llegó a {club.nombre} en esta ventana: solo a préstamo.", 0
     clausula = int(jugador.clausula or 0)
     if monto >= clausula > 0:
         return 'acepta', f"Pagas la cláusula: {club.nombre} no puede negarse.", 0

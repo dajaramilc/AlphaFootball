@@ -74,7 +74,7 @@ def test_fichaje_avisa_llegada():
     e = estado_carrera(); mi = e['mi_equipo']; mi.balance = 10 ** 10
     club = e['liga'].equipos[2]; j = sorted(club.jugadores, key=lambda x: x.overall)[0]
     ok, _ = N.fichar(e, j, club, precio=1000)
-    assert ok and "acomódalo en tu plantilla" in C.bandeja(e)[0]['cuerpo']
+    assert ok and "acomodarlo en su plantilla" in C.bandeja(e)[0]['cuerpo']
 
 
 def test_contrato_en_analisis_renovacion_y_fichaje():
@@ -103,7 +103,7 @@ def test_contrato_en_analisis_renovacion_y_fichaje():
     assert N.analizar_contrato(e, e['neg'])
     e['liga'].jornada_actual = 3
     CO.resolver_analisis(e, rng=RngFijo(0.0))
-    assert f in mi.jugadores and "acomódalo" in C.bandeja(e)[0]['cuerpo']
+    assert f in mi.jugadores and "acomodarlo" in C.bandeja(e)[0]['cuerpo']
     # Rechazo: correo con lo que pide.
     g = sorted(club.jugadores, key=lambda x: x.overall)[1]
     N.iniciar_negociacion(e, g, club, 'fichaje', 'buscador_screen')

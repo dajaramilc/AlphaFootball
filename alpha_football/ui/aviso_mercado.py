@@ -83,10 +83,12 @@ def _abrir(estado: dict, tipo: str, jornada: int) -> None:
         n = int(getattr(_liga(estado), 'num_jornadas', 22) or 22)
         if tipo == 'abre':
             C.enviar(estado, 'club', "Se abrió el mercado de pases",
-                     f"Hasta la jornada {_hasta(jornada, n)}: fichajes, ofertas y cláusulas.",
+                     f"Hasta la jornada {_hasta(jornada, n)} se pueden cerrar fichajes, recibir ofertas y pagar "
+                     "cláusulas.",
                      C.accion('negociaciones', "IR A NEGOCIACIONES"))
         else:
-            C.enviar(estado, 'club', "Se cerró el mercado de pases", _reabre(jornada, n))
+            C.enviar(estado, 'club', "Se cerró el mercado de pases",
+                     "El mercado de pases ha cerrado. " + _reabre(jornada, n))
     except Exception as e:
         logger.error(f"No se pudo enviar el correo del mercado: {e}")
 

@@ -676,6 +676,15 @@ def _render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         except Exception as e_kbd_pp:
             logger.error(f"Error en teclado de prepartido_screen: {e_kbd_pp}")
 
+        if click_pos and (btn_jugar.collidepoint(click_pos) or btn_sim.collidepoint(click_pos)):
+            try:  # lesionados y sancionados: fuera del once y del banco (a reservas)
+                from alpha_football.formaciones import retirar_no_disponibles
+                controlado = estado.get('amis_local') if match_mode == 'amistoso' else mi_equipo
+                alin_c = getattr(controlado, 'alineacion_activa', None)
+                if alin_c is not None:
+                    retirar_no_disponibles(alin_c, list(controlado.jugadores))
+            except Exception as e_ret:
+                logger.error(f"No se pudo retirar a los no disponibles de la alineación: {e_ret}")
         if click_pos:
             if btn_jugar.collidepoint(click_pos):
                 estado.pop('sim_resultado', None)

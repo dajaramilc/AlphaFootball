@@ -159,7 +159,7 @@ def test_espaldarazo():
         (0.15, 1, 6_000_000), (0.30, 2, 12_000_000), (0.50, 3, 20_000_000)]
     ok, _ = D.pedir_espaldarazo(e, 1)
     obj = e['datos_carrera']['objetivo']
-    assert ok and obj['pos_max'] == 4 and obj['espaldarazo'] == {'pct': 0.30, 'puestos': 2}
+    assert ok and obj['pos_max'] == 4 and obj['espaldarazo'] == {'pct': 0.30, 'puestos': 2, 'deuda': 6_000_000}
     assert e['mi_equipo'].balance == 52_000_000
     assert "4" in obj['texto']
     ok2, msg = D.pedir_espaldarazo(e, 0)
@@ -206,9 +206,9 @@ def test_meta_copa_por_ranking():
     # v3.8.0: r ≤ n/8 Finalista, r ≤ n/4 Semifinal, r ≤ n/2 Cuartos, si no Octavos
     assert D.meta_copa(1, 8, ventaja=9) == 'Campeón'
     assert D.meta_copa(1, 8, ventaja=2) == 'Finalista'
-    assert D.meta_copa(2, 8) == 'Semifinal'
-    assert D.meta_copa(4, 8) == 'Cuartos'
-    assert D.meta_copa(6, 8) == 'Octavos'
+    assert D.meta_copa(2, 8) == 'Semifinal'     # v4.7.0: metas más altas
+    assert D.meta_copa(5, 8) == 'Cuartos'
+    assert D.meta_copa(7, 8) == 'Octavos'
     assert D.meta_copa(1, 1) == 'Octavos'
 
 
@@ -261,12 +261,12 @@ def test_despido_lleva_a_contrato():
 
 
 def test_objetivos_screen_espaldarazo_y_copa():
-    from alpha_football.ui import objetivos_screen as O
+    from alpha_football.ui import objetivos_screen as O, finanzas_screen as FS
     e = _con_objetivo(6); e['copa_user_en_copa'] = False
     pygame.event.clear(); assert O.render(screen, e) is None
-    click(O.R_ESPALDARAZO.center); O.render(screen, e)
+    click(FS.R_ESPALDARAZO.center); FS.render(screen, e)      # v4.7.0: el espaldarazo está en FINANZAS
     assert e.get('espaldarazo_abierto')
-    key(pygame.K_1); O.render(screen, e)
+    key(pygame.K_1); FS.render(screen, e)
     assert e['datos_carrera']['objetivo']['pos_max'] == 5 and not e.get('espaldarazo_abierto')
 
 

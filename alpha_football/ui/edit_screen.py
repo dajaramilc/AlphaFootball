@@ -37,20 +37,32 @@ from alpha_football.estilos import ESTILOS_UI as ESTILOS_TACTICOS, NOMBRE_ESTILO
 RASGOS_JUGADOR = ["ninguno", "regateador", "pulmon_de_hierro", "rustico", "lider"]
 POSICIONES = ["POR", "DEF", "MED", "DEL"]
 
+# v4.6.0: el editor se ordena en 4 secciones (pestañas de arriba): ENTRENADORES, CLUBES, LIGAS y
+# JUGADORES. En ENTRENADORES y JUGADORES, LIBRES muestra los DTs / jugadores sin club de la base.
+SECCIONES = [('entrenadores', 'ENTRENADORES'), ('clubes', 'CLUBES'), ('ligas', 'LIGAS'), ('jugadores', 'JUGADORES')]
+LIBRES = '_libres'            # valor de edit_liga_sel en modo "sin club"
+ID_BASE_LIBRES = 90000        # ids de los jugadores libres creados en el editor
+COPAS = ('libertadores', 'champions')
+
 # v3.6.0: RESTAURAR BASE y las listas de los dropdowns con rects fijos, para despachar el clic
 # ANTES que cualquier otro control (con un dropdown abierto el clic es solo suyo).
 R_RESTAURAR = pygame.Rect(530, 505, 200, 36)
 
 # v3.9.0: resto de rects del editor expuestos (los usa la ayuda H); render los usa tal cual.
 R_COL_LISTAS = pygame.Rect(40, 100, 450, 500)
-R_NOMBRE_LIGA = pygame.Rect(155, 146, 315, 28)
 R_EQ_UP, R_EQ_DOWN = pygame.Rect(440, 180, 30, 30), pygame.Rect(440, 315, 30, 30)
 R_JUG_UP, R_JUG_DOWN = pygame.Rect(440, 405, 30, 30), pygame.Rect(440, 540, 30, 30)
+R_LISTA_UP, R_LISTA_DOWN = pygame.Rect(440, 180, 30, 30), pygame.Rect(440, 540, 30, 30)   # listas de 10
+R_LIBRES = pygame.Rect(155, 146, 100, 28)
+R_NUEVO = pygame.Rect(265, 146, 205, 28)
 R_FORMULARIO = pygame.Rect(510, 100, 730, 500)
+R_BORRAR = pygame.Rect(1090, 112, 130, 32)
+R_DT_NOMBRE = pygame.Rect(530, 205, 350, 38)
+R_DT_ESTILO = pygame.Rect(530, 290, 350, 38)
+R_DT_CALIF = pygame.Rect(900, 290, 140, 38)
 R_EQ_NOMBRE = pygame.Rect(530, 205, 350, 38)
 R_EQ_PRESUPUESTO = pygame.Rect(530, 290, 350, 38)
-R_EQ_ESTILO = pygame.Rect(530, 375, 350, 38)
-R_EQ_DT = pygame.Rect(900, 375, 320, 38)
+R_NOMBRE_LIGA = pygame.Rect(530, 205, 500, 38)
 R_J_NOMBRE = pygame.Rect(530, 195, 300, 36)
 R_J_APELLIDO = pygame.Rect(860, 195, 300, 36)
 R_J_OVR = pygame.Rect(530, 275, 140, 36)
@@ -63,6 +75,11 @@ R_EXPORTAR = pygame.Rect(950, 455, 120, 36)
 R_IMPORTAR = pygame.Rect(1085, 455, 120, 36)
 R_APLICAR = pygame.Rect(40, 615, 300, 50)
 R_VOLVER = pygame.Rect(360, 615, 240, 50)          # v3.9.0: 240 (en 200 no cabía "VOLVER AL MENÚ")
+
+
+def rect_seccion(i: int) -> pygame.Rect:
+    """v4.6.0: pestaña i de las secciones (ENTRENADORES, CLUBES, LIGAS, JUGADORES)."""
+    return pygame.Rect(40 + i * 200, 62, 190, 32)
 
 
 def rect_tab_liga(i: int) -> pygame.Rect:
@@ -80,6 +97,11 @@ def rect_fila(lista: str, i: int) -> pygame.Rect:
     return pygame.Rect(55, (180 if lista == 'equipos' else 405) + i * 36, 380, 32)
 
 
+def rect_fila_lista(i: int) -> pygame.Rect:
+    """v4.6.0: fila visible i (0-9) de las listas de una sola columna (DTs, clubes, ligas, libres)."""
+    return pygame.Rect(55, 180 + i * 36, 380, 32)
+
+
 def _boton(screen, rect, texto: str, hover: bool, size: str = 'sm', color: str = 'blanco') -> None:
     """v3.9.0: botón con el texto UNA sola vez y en un tamaño que cabe (antes se escribía dos veces)."""
     draw_button(screen, rect, "", hover)
@@ -91,7 +113,8 @@ def _boton(screen, rect, texto: str, hover: bool, size: str = 'sm', color: str =
 def _opciones_dropdown(tipo: str) -> list:
     """v3.6.0: [(valor, texto, rect)] de la lista desplegada del dropdown `tipo`."""
     if tipo == 'estilo_dt':
-        return [(est, NOMBRE_ESTILO.get(est, est).upper(), pygame.Rect(530, 413 + i * 30, 350, 30))
+        r = R_DT_ESTILO
+        return [(est, NOMBRE_ESTILO.get(est, est).upper(), pygame.Rect(r.x, r.bottom + i * 30, r.width, 30))
                 for i, est in enumerate(ESTILOS_TACTICOS)]
     if tipo == 'posicion':
         return [(pos, pos.upper(), pygame.Rect(860, 311 + i * 30, 300, 30)) for i, pos in enumerate(POSICIONES)]
@@ -100,11 +123,11 @@ def _opciones_dropdown(tipo: str) -> list:
     return []
 
 
-def _dibujar_dropdown(screen, estado: dict, mouse_pos, modo_jugador: bool) -> None:
+def _dibujar_dropdown(screen, estado: dict, mouse_pos, aplica: dict) -> None:
     """v3.6.0: dibuja la lista del dropdown abierto AL FINAL (encima de IMPORTAR/RESTAURAR BASE)."""
     try:
         drop = estado.get('edit_dropdown_activo')
-        if not drop or (drop == 'estilo_dt') == modo_jugador:
+        if not drop or not aplica.get(drop):
             return
         foco_d = int(estado.get('edit_drop_foco', 0) or 0)   # v4.2.0: opción con foco de teclado
         for i, (_valor, texto, r) in enumerate(_opciones_dropdown(drop)):
@@ -113,6 +136,55 @@ def _dibujar_dropdown(screen, estado: dict, mouse_pos, modo_jugador: bool) -> No
             draw_text(screen, texto, (r.x + 12, r.y + 5), size='sm', color='blanco')
     except Exception as e:
         logger.error(f"No se pudo dibujar el dropdown del editor: {e}")
+
+
+def _campo(screen, rect, texto: str, activo: bool, size: str = 'md', color: str = 'blanco') -> None:
+    """v4.6.0: caja de texto / valor de un formulario."""
+    pygame.draw.rect(screen, (10, 14, 26) if activo else (20, 26, 46), rect, border_radius=6)
+    pygame.draw.rect(screen, (0, 255, 136) if activo else (0, 191, 255), rect, width=1, border_radius=6)
+    draw_text(screen, texto, (rect.x + 12, rect.y + 8), size=size, color=color)
+
+
+def _lista(screen, estado: dict, filas_txt: list, sel: int, clave_off: str, click_pos, mouse_pos,
+           visibles: int = 10, fila=rect_fila_lista, up=R_LISTA_UP, down=R_LISTA_DOWN):
+    """v4.6.0: lista con scroll; `filas_txt` = [(izquierda, derecha)]. Devuelve el índice clicado."""
+    off = max(0, min(int(estado.get(clave_off, 0) or 0), max(0, len(filas_txt) - visibles)))
+    estado[clave_off] = off
+    elegido = None
+    for k, idx in enumerate(range(off, min(len(filas_txt), off + visibles))):
+        r = fila(k)
+        es = idx == sel
+        pygame.draw.rect(screen, (20, 50, 80) if es else ((20, 26, 46) if r.collidepoint(mouse_pos) else (10, 14, 26)),
+                         r, border_radius=4)
+        pygame.draw.rect(screen, (0, 191, 255), r, width=1, border_radius=4)
+        izq, der = filas_txt[idx]
+        draw_text(screen, izq, (r.x + 10, r.y + 6), size='sm', color='verde' if es else 'blanco')
+        if der:
+            draw_text(screen, der, (r.right - 10 - get_font('sm').size(der)[0], r.y + 6), size='sm', color='dorado')
+        if click_pos and r.collidepoint(click_pos):
+            elegido = idx
+    for r, txt in ((up, "▲"), (down, "▼")):
+        pygame.draw.rect(screen, (20, 26, 46) if r.collidepoint(mouse_pos) else (10, 14, 26), r, border_radius=4)
+        draw_text(screen, txt, (r.x + 8, r.y + 5), size='sm', color='blanco')
+    if click_pos:
+        if up.collidepoint(click_pos):
+            estado[clave_off] = max(0, off - 1)
+        elif down.collidepoint(click_pos):
+            estado[clave_off] = min(max(0, len(filas_txt) - visibles), off + 1)
+    return elegido
+
+
+def _a_la_vista(estado: dict, clave_off: str, idx: int, visibles: int, total: int) -> None:
+    """Corre el scroll para que la fila `idx` quede visible (navegación con teclado)."""
+    off = int(estado.get(clave_off, 0) or 0)
+    if idx >= 0 and not off <= idx < off + visibles:
+        estado[clave_off] = max(0, min(idx, total - visibles))
+
+
+def _truncar(txt: str, n: int) -> str:
+    txt = str(txt or '')
+    return txt if len(txt) <= n else txt[:n - 1] + "…"
+
 
 def _backfill_internacionales(db: dict) -> None:
     """
@@ -313,18 +385,83 @@ def restaurar_base(estado: dict) -> dict:
     return db
 
 
+def dt_efectivo(club: dict) -> tuple:
+    """v4.6.0: (nombre, estilo, calif) que tendrá el DT del club en la carrera: lo editado o, si
+    no, el real de la tabla (nombre '' = uno al azar) y la calificación según las estrellas."""
+    from types import SimpleNamespace
+    from alpha_football.data.entrenadores import DT_REALES
+    from alpha_football.entrenadores import calif_inicial
+    real = DT_REALES.get(club.get('nombre', ''))
+    nombre = str(club.get('dt_nombre') or '').strip() or (real[0] if real else '')
+    estilo = club.get('dt_estilo') or (real[1] if real else normalizar_estilo(club.get('estilo_dt')))
+    calif = int(club.get('dt_calif') or 0) or calif_inicial(SimpleNamespace(estrellas=club.get('estrellas', 3.0)))
+    return nombre, estilo, calif
+
+
+def campos_dt(libre: bool) -> tuple:
+    """Claves (nombre, estilo, calif) del DT: las del DT libre o las del DT de un club."""
+    return ('nombre', 'estilo', 'calif') if libre else ('dt_nombre', 'dt_estilo', 'dt_calif')
+
+
+def ligas_editor() -> list:
+    """v4.6.0: [(clave, texto)] de las 16 ligas (8 países × 1ª/2ª) de la sección LIGAS."""
+    return [(_paises.clave_db(p['liga_id'], d), f"{p['corto']} {d}ª") for p in _paises.PAISES for d in (1, 2)]
+
+
+def nuevo_dt_libre(db: dict) -> int:
+    """Agrega un DT sin club a la base y devuelve su índice."""
+    lista = db.setdefault('_dts_libres', [])
+    lista.append({'nombre': 'Nuevo DT', 'estilo': 'anchelottismo', 'calif': 50})
+    return len(lista) - 1
+
+
+def nuevo_jugador_libre(db: dict) -> int:
+    """Agrega un jugador libre (MED, 70, 27 años) a la base y devuelve su índice."""
+    from alpha_football.models import Jugador
+    lista = db.setdefault('_libres', [])
+    jid = max([ID_BASE_LIBRES - 1] + [int(j.get('id', 0) or 0) for j in lista]) + 1
+    j = Jugador(nombre='Nuevo', apellido=f'Libre {jid - ID_BASE_LIBRES + 1}', posicion='MED', ataque=70,
+                defensa=70, fisico=70, tecnica=70, mental=70, moral=70, id=jid, edad=27).to_dict()
+    j['potencial'] = 70
+    lista.append(j)
+    return len(lista) - 1
+
+
+def borrar_libre(db: dict, clave: str, idx: int) -> None:
+    lista = db.get(clave) or []
+    if 0 <= idx < len(lista):
+        del lista[idx]
+
+
+def cambiar_seccion(estado: dict, seccion: str) -> None:
+    """v4.6.0: cambia de pestaña; CLUBES y LIGAS no tienen LIBRES y ENTRENADORES no tiene copas."""
+    if seccion == estado.get('edit_seccion') or seccion not in dict(SECCIONES):
+        return
+    estado['edit_seccion'] = seccion
+    liga = estado.get('edit_liga_sel', 'premier')
+    if (liga == LIBRES and seccion in ('clubes', 'ligas')) or (liga in COPAS and seccion in ('entrenadores', 'ligas')):
+        estado['edit_liga_sel'] = 'premier'
+    for k, v in (('edit_equipo_idx', 0), ('edit_jugador_idx', -1), ('edit_squad_offset', 0),
+                 ('edit_teams_offset', 0), ('edit_input_activo', None), ('edit_dropdown_activo', None)):
+        estado[k] = v
+
+
+def _mensaje(estado: dict, texto: str) -> None:
+    estado['edit_mensaje'] = texto
+    estado['edit_mensaje_ticks'] = pygame.time.get_ticks()
+
+
 def render(screen: pygame.Surface, estado: dict) -> str | None:
-    """Renderiza la pantalla de edición de base de datos."""
+    """Renderiza el editor: pestañas de sección, lista a la izquierda y formulario a la derecha."""
     try:
-        # 1. Asegurar base de datos cargada
         db = cargar_base_datos_inicial(estado)
-        
-        # Inicializar variables de UI en estado si faltan
+
+        estado.setdefault('edit_seccion', 'entrenadores')   # v4.6.0
         estado.setdefault('edit_liga_sel', 'premier')
         estado.setdefault('edit_equipo_idx', 0)
-        estado.setdefault('edit_jugador_idx', -1)  # -1 significa editar equipo, >=0 editar ese jugador
+        estado.setdefault('edit_jugador_idx', -1)  # -1 = ningún jugador elegido
         estado.setdefault('edit_input_activo', None)  # Campo activo de texto
-        estado.setdefault('edit_dropdown_activo', None)  # Dropdown activo ('estilo_dt' o 'rasgo' o 'posicion')
+        estado.setdefault('edit_dropdown_activo', None)  # 'estilo_dt' / 'rasgo' / 'posicion'
         estado.setdefault('edit_squad_offset', 0)
         estado.setdefault('edit_teams_offset', 0)
         estado.setdefault('edit_filepath', 'alpha_football_db_custom.json')
@@ -332,27 +469,43 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         estado.setdefault('edit_mensaje_ticks', 0)
         # v3.9.0: con un campo de texto activo, H se escribe (no abre la ayuda)
         estado['texto_activo'] = bool(estado.get('edit_input_activo'))
-        
-        liga_sel = estado['edit_liga_sel']
-        equipos = db.get(liga_sel, [])
-        
-        # Asegurar límites correctos del equipo seleccionado
-        if not equipos:
-            estado['edit_equipo_idx'] = 0
-            equipo_sel = None
-        else:
-            estado['edit_equipo_idx'] = max(0, min(estado['edit_equipo_idx'], len(equipos) - 1))
-            equipo_sel = equipos[estado['edit_equipo_idx']]
-            
-        jugadores = equipo_sel.get('jugadores', []) if equipo_sel else []
-        jugador_idx = estado['edit_jugador_idx']
-        
-        # Ajustar límites del jugador
-        if jugador_idx >= len(jugadores):
-            estado['edit_jugador_idx'] = -1
-            jugador_idx = -1
-            
-        jugador_sel = jugadores[jugador_idx] if (jugador_idx >= 0 and jugador_idx < len(jugadores)) else None
+
+        seccion = estado['edit_seccion'] if estado['edit_seccion'] in dict(SECCIONES) else 'entrenadores'
+        if seccion == 'ligas' and estado['edit_liga_sel'] not in dict(ligas_editor()):
+            estado['edit_liga_sel'] = 'premier'
+        libres = estado['edit_liga_sel'] == LIBRES and seccion in ('entrenadores', 'jugadores')
+        if estado['edit_liga_sel'] == LIBRES and not libres:
+            estado['edit_liga_sel'] = 'premier'
+        k_nom, k_est, k_cal = campos_dt(libres)
+
+        def resolver() -> dict:
+            """Lo elegido ahora: lista de clubes, club, jugadores, jugador y DT según la sección."""
+            s = {'equipos': [], 'equipo': None, 'jugadores': [], 'jugador': None, 'dt': None}
+            if libres and seccion == 'entrenadores':
+                lst = db.setdefault('_dts_libres', [])
+                estado['edit_equipo_idx'] = max(0, min(estado['edit_equipo_idx'], len(lst) - 1))
+                s['dt'] = lst[estado['edit_equipo_idx']] if lst else None
+                return s
+            if libres:
+                s['jugadores'] = db.setdefault('_libres', [])
+            else:
+                s['equipos'] = db.get(estado['edit_liga_sel'], []) or []
+                if s['equipos']:
+                    estado['edit_equipo_idx'] = max(0, min(estado['edit_equipo_idx'], len(s['equipos']) - 1))
+                    s['equipo'] = s['equipos'][estado['edit_equipo_idx']]
+                    s['jugadores'] = s['equipo'].get('jugadores', [])
+                if seccion == 'entrenadores':
+                    s['dt'] = s['equipo']
+            if estado['edit_jugador_idx'] >= len(s['jugadores']):
+                estado['edit_jugador_idx'] = len(s['jugadores']) - 1 if libres else -1
+            ji = estado['edit_jugador_idx']
+            if seccion == 'jugadores' and 0 <= ji < len(s['jugadores']):
+                s['jugador'] = s['jugadores'][ji]
+            return s
+
+        sel = resolver()
+        equipos, equipo_sel, jugadores, jugador_sel, dt_sel = (sel['equipos'], sel['equipo'], sel['jugadores'],
+                                                               sel['jugador'], sel['dt'])
 
         # Capturar clics y entrada de teclado
         mouse_pos = pygame.mouse.get_pos()
@@ -366,94 +519,99 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 click_pos = event.pos
             elif event.type == pygame.KEYDOWN:
-                # Procesar entrada de teclado si hay un campo activo
                 campo_activo = estado.get('edit_input_activo')
-                if campo_activo:
-                    # Si el campo es numérico o de texto
-                    if event.key == pygame.K_RETURN or event.key == pygame.K_KP_ENTER:
-                        estado['edit_input_activo'] = None
-                    elif event.key == pygame.K_BACKSPACE:
-                        if campo_activo == 'league_name':   # v3.7.0
-                            set_nombre_liga_editor(estado, nombre_liga_editor(estado)[:-1])
-                        elif campo_activo == 'file_path':
-                            estado['edit_filepath'] = estado['edit_filepath'][:-1]
-                        elif campo_activo == 'team_name':
-                            equipo_sel['nombre'] = equipo_sel['nombre'][:-1]
-                        elif equipo_sel and campo_activo == 'team_budget':
-                            val_str = str(equipo_sel.get('balance', 0))[:-1]
-                            equipo_sel['balance'] = int(val_str) if val_str else 0
-                        elif equipo_sel and campo_activo == 'team_dt':   # v3.4.0
-                            equipo_sel['dt_nombre'] = str(equipo_sel.get('dt_nombre', '') or '')[:-1]
-                        elif jugador_sel and campo_activo == 'player_name':
-                            jugador_sel['nombre'] = jugador_sel['nombre'][:-1]
-                        elif jugador_sel and campo_activo == 'player_apellido':
-                            jugador_sel['apellido'] = jugador_sel['apellido'][:-1]
-                        elif jugador_sel and campo_activo == 'player_ovr':
-                            val_str = str(jugador_sel.get('overall', 70))[:-1]
-                            ovr_val = int(val_str) if val_str else 0
-                            jugador_sel['overall'] = ovr_val
-                            # Sincronizar atributos base
-                            jugador_sel['ataque'] = jugador_sel['defensa'] = jugador_sel['fisico'] = jugador_sel['tecnica'] = jugador_sel['mental'] = ovr_val
-                        elif jugador_sel and campo_activo == 'player_age':
-                            val_str = str(jugador_sel.get('edad', 25))[:-1]
-                            jugador_sel['edad'] = int(val_str) if val_str else 0
-                        elif jugador_sel and campo_activo == 'player_potencial':
-                            # v0.8.x: techo de OVR editable. Al borrar dígitos vamos
-                            # dejando el valor sin el último carácter; el clamp de coherencia
-                            # (>= OVR) se aplica al TECLEAR (rama de dígitos) y al guardar.
-                            val_str = str(jugador_sel.get('potencial', 0) or 0)[:-1]
-                            jugador_sel['potencial'] = int(val_str) if val_str else 0
-                    else:
-                        char = event.unicode
-                        # Filtros de caracteres
-                        if campo_activo == 'league_name':   # v3.7.0: nombre de la liga (máx. 40)
-                            actual = nombre_liga_editor(estado)
-                            if char and char.isprintable() and len(actual) < MAX_NOMBRE_LIGA:
-                                set_nombre_liga_editor(estado, actual + char)
-                        elif campo_activo == 'file_path':
-                            if char in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/:\\':
-                                estado['edit_filepath'] += char
-                        elif campo_activo == 'team_name':
-                            if len(equipo_sel['nombre']) < 30:
-                                equipo_sel['nombre'] += char
-                        elif campo_activo == 'team_budget':
-                            if char.isdigit() and len(str(equipo_sel['balance'])) < 12:
-                                equipo_sel['balance'] = int(str(equipo_sel['balance']) + char)
-                        elif equipo_sel and campo_activo == 'team_dt':   # v3.4.0: DT puesto a mano
-                            actual = str(equipo_sel.get('dt_nombre', '') or '')
-                            if char and char.isprintable() and len(actual) < 26:
-                                equipo_sel['dt_nombre'] = actual + char
-                        elif jugador_sel and campo_activo == 'player_name':
-                            if len(jugador_sel['nombre']) < 25:
-                                jugador_sel['nombre'] += char
-                        elif jugador_sel and campo_activo == 'player_apellido':
-                            if len(jugador_sel['apellido']) < 25:
-                                jugador_sel['apellido'] += char
-                        elif jugador_sel and campo_activo == 'player_ovr':
-                            if char.isdigit():
-                                val_str = str(jugador_sel.get('overall', 70))
-                                if len(val_str) < 3:
-                                    ovr_val = min(99, int(val_str + char))
-                                    jugador_sel['overall'] = ovr_val
-                                    jugador_sel['ataque'] = jugador_sel['defensa'] = jugador_sel['fisico'] = jugador_sel['tecnica'] = jugador_sel['mental'] = ovr_val
-                        elif jugador_sel and campo_activo == 'player_age':
-                            if char.isdigit():
-                                val_str = str(jugador_sel.get('edad', 25))
-                                if len(val_str) < 2:
-                                    jugador_sel['edad'] = int(val_str + char)
-                        elif jugador_sel and campo_activo == 'player_potencial':
-                            # v0.8.x: techo de OVR (1-3 dígitos, clamp [0, 99], nunca por
-                            # debajo del OVR actual — un techo menor al OVR no tiene sentido).
-                            if char.isdigit():
-                                val_str = str(jugador_sel.get('potencial', 0) or 0)
-                                if len(val_str) < 3:
-                                    raw = int(val_str + char) if val_str != '0' else int(char)
-                                    ovr_actual = int(jugador_sel.get('overall', 70) or 70)
-                                    # Clamp: [ovr_actual, 99] para que el techo SIEMPRE sea > OVR
-                                    jugador_sel['potencial'] = max(ovr_actual, min(99, raw))
+                if not campo_activo:
+                    continue
+                if event.key == pygame.K_RETURN or event.key == pygame.K_KP_ENTER:
+                    estado['edit_input_activo'] = None
+                elif event.key == pygame.K_BACKSPACE:
+                    if campo_activo == 'league_name':   # v3.7.0
+                        set_nombre_liga_editor(estado, nombre_liga_editor(estado)[:-1])
+                    elif campo_activo == 'file_path':
+                        estado['edit_filepath'] = estado['edit_filepath'][:-1]
+                    elif equipo_sel and campo_activo == 'team_name':
+                        equipo_sel['nombre'] = equipo_sel['nombre'][:-1]
+                    elif equipo_sel and campo_activo == 'team_budget':
+                        val_str = str(equipo_sel.get('balance', 0))[:-1]
+                        equipo_sel['balance'] = int(val_str) if val_str else 0
+                    elif dt_sel is not None and campo_activo == 'dt_nombre':   # v4.6.0
+                        dt_sel[k_nom] = str(dt_sel.get(k_nom, '') or '')[:-1]
+                    elif dt_sel is not None and campo_activo == 'dt_calif':
+                        val_str = str(dt_sel.get(k_cal, 0) or 0)[:-1]
+                        dt_sel[k_cal] = int(val_str) if val_str else 0
+                    elif jugador_sel and campo_activo == 'player_name':
+                        jugador_sel['nombre'] = jugador_sel['nombre'][:-1]
+                    elif jugador_sel and campo_activo == 'player_apellido':
+                        jugador_sel['apellido'] = jugador_sel['apellido'][:-1]
+                    elif jugador_sel and campo_activo == 'player_ovr':
+                        val_str = str(jugador_sel.get('overall', 70))[:-1]
+                        ovr_val = int(val_str) if val_str else 0
+                        jugador_sel['overall'] = ovr_val
+                        # Sincronizar atributos base
+                        jugador_sel['ataque'] = jugador_sel['defensa'] = jugador_sel['fisico'] = jugador_sel['tecnica'] = jugador_sel['mental'] = ovr_val
+                    elif jugador_sel and campo_activo == 'player_age':
+                        val_str = str(jugador_sel.get('edad', 25))[:-1]
+                        jugador_sel['edad'] = int(val_str) if val_str else 0
+                    elif jugador_sel and campo_activo == 'player_potencial':
+                        # v0.8.x: techo de OVR editable; el clamp (>= OVR) se aplica al teclear.
+                        val_str = str(jugador_sel.get('potencial', 0) or 0)[:-1]
+                        jugador_sel['potencial'] = int(val_str) if val_str else 0
+                else:
+                    char = event.unicode
+                    if campo_activo == 'league_name':   # v3.7.0: nombre de la liga (máx. 40)
+                        actual = nombre_liga_editor(estado)
+                        if char and char.isprintable() and len(actual) < MAX_NOMBRE_LIGA:
+                            set_nombre_liga_editor(estado, actual + char)
+                    elif campo_activo == 'file_path':
+                        if char and char in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/:\\':
+                            estado['edit_filepath'] += char
+                    elif equipo_sel and campo_activo == 'team_name':
+                        if char and char.isprintable() and len(equipo_sel['nombre']) < 30:
+                            equipo_sel['nombre'] += char
+                    elif equipo_sel and campo_activo == 'team_budget':
+                        if char.isdigit() and len(str(equipo_sel['balance'])) < 12:
+                            equipo_sel['balance'] = int(str(equipo_sel['balance']) + char)
+                    elif dt_sel is not None and campo_activo == 'dt_nombre':   # v4.6.0
+                        actual = str(dt_sel.get(k_nom, '') or '')
+                        if char and char.isprintable() and len(actual) < 26:
+                            dt_sel[k_nom] = actual + char
+                    elif dt_sel is not None and campo_activo == 'dt_calif':
+                        if char.isdigit():
+                            val_str = str(dt_sel.get(k_cal, 0) or 0)
+                            raw = int(char) if val_str == '0' else int(val_str + char)
+                            if len(str(raw)) <= 2:
+                                dt_sel[k_cal] = max(0, min(99, raw))
+                    elif jugador_sel and campo_activo == 'player_name':
+                        if char and char.isprintable() and len(jugador_sel['nombre']) < 25:
+                            jugador_sel['nombre'] += char
+                    elif jugador_sel and campo_activo == 'player_apellido':
+                        if char and char.isprintable() and len(jugador_sel['apellido']) < 25:
+                            jugador_sel['apellido'] += char
+                    elif jugador_sel and campo_activo == 'player_ovr':
+                        if char.isdigit():
+                            val_str = str(jugador_sel.get('overall', 70))
+                            if len(val_str) < 3:
+                                ovr_val = min(99, int(val_str + char))
+                                jugador_sel['overall'] = ovr_val
+                                jugador_sel['ataque'] = jugador_sel['defensa'] = jugador_sel['fisico'] = jugador_sel['tecnica'] = jugador_sel['mental'] = ovr_val
+                    elif jugador_sel and campo_activo == 'player_age':
+                        if char.isdigit():
+                            val_str = str(jugador_sel.get('edad', 25))
+                            if len(val_str) < 2:
+                                jugador_sel['edad'] = int(val_str + char)
+                    elif jugador_sel and campo_activo == 'player_potencial':
+                        # v0.8.x: techo de OVR (clamp [OVR, 99]: un techo menor al OVR no tiene sentido).
+                        if char.isdigit():
+                            val_str = str(jugador_sel.get('potencial', 0) or 0)
+                            if len(val_str) < 3:
+                                raw = int(val_str + char) if val_str != '0' else int(char)
+                                ovr_actual = int(jugador_sel.get('overall', 70) or 70)
+                                jugador_sel['potencial'] = max(ovr_actual, min(99, raw))
 
         # v3.6.0: con un dropdown abierto el clic es SOLO del dropdown: elige una opción o, si cae
         # fuera, lo cierra. Nunca llega a los campos/botones de abajo (p. ej. RESTAURAR BASE).
+        aplica_drop = {'estilo_dt': seccion == 'entrenadores' and dt_sel is not None,
+                       'posicion': jugador_sel is not None, 'rasgo': jugador_sel is not None}
         drop = estado.get('edit_dropdown_activo')
         # v4.2.0: teclado en el dropdown: ↑ ↓ opción, Enter la elige, Esc lo cierra
         if drop and campo_inicial is None:
@@ -476,12 +634,14 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         if drop and click_pos:
             try:
                 for valor, _txt, r in _opciones_dropdown(drop):
-                    if r.collidepoint(click_pos):
-                        if drop == 'estilo_dt' and equipo_sel is not None and jugador_sel is None:
-                            equipo_sel['estilo_dt'] = valor
-                        elif drop == 'posicion' and jugador_sel is not None:
+                    if r.collidepoint(click_pos) and aplica_drop.get(drop):
+                        if drop == 'estilo_dt':
+                            dt_sel[k_est] = valor
+                            if not libres:
+                                dt_sel['estilo_dt'] = valor   # el estilo del club es el de su DT
+                        elif drop == 'posicion':
                             jugador_sel['posicion'] = valor
-                        elif drop == 'rasgo' and jugador_sel is not None:
+                        elif drop == 'rasgo':
                             jugador_sel['rasgo'] = None if valor == "ninguno" else valor
                         break
             except Exception as e_drop:
@@ -489,71 +649,9 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             estado['edit_dropdown_activo'] = None
             click_pos = None
 
-        # Dibujar fondo base
-        draw_gradient_bg(screen)
-
-        # Título
-        draw_text(screen, "MODO EDICIÓN DE BASE DE DATOS", (40, 20), size='xl', color='dorado')
-        draw_text(screen, "Modifica atributos de equipos y jugadores. Guarda los cambios para que apliquen a nuevas partidas.", (40, 65), size='sm', color='azul')
-        
-        # --- COLUMNA 1: LIGA Y SELECCION DE EQUIPOS/JUGADORES (Ancho: 450) ---
-        col1_rect = R_COL_LISTAS
-        draw_panel(screen, col1_rect)
-        
-        # Selectores de Liga (v0.8.8: +LIB y UCL; v3.7.0: 8 países + selector 1ª/2ª)
-        tipo_sel, div_sel = _tipo_div(liga_sel)
-        tab_x = 50
-        tab_w = 41
-        for l_id, tab_txt in pestanas_editor():
-            tab_rect = pygame.Rect(tab_x, 110, tab_w, 30)
-            is_active = (l_id == tipo_sel)
-            is_hover = tab_rect.collidepoint(mouse_pos)
-
-            c_bg = (0, 191, 255) if is_active else ((20, 26, 46) if is_hover else (10, 14, 26))
-            c_border = (255, 215, 0) if is_active else (0, 191, 255)
-
-            pygame.draw.rect(screen, c_bg, tab_rect, border_radius=4)
-            pygame.draw.rect(screen, c_border, tab_rect, width=1, border_radius=4)
-            draw_text(screen, tab_txt, (tab_rect.x + 5, tab_rect.y + 6), size='sm', color='bg' if is_active else 'blanco')
-
-            if click_pos and tab_rect.collidepoint(click_pos):
-                # v3.7.0: al cambiar de país se conserva la división elegida
-                estado['edit_liga_sel'] = (_paises.clave_db(l_id, div_sel) if div_sel and l_id in _paises.TIPOS_LIGA
-                                           else l_id)
-                estado['edit_equipo_idx'] = 0
-                estado['edit_jugador_idx'] = -1
-                estado['edit_squad_offset'] = 0
-                estado['edit_teams_offset'] = 0
-                estado['edit_input_activo'] = None
-
-            tab_x += tab_w + 3
-
-        # v3.7.0: 1ª / 2ª del país + "Nombre de la liga" (tecleable, se guarda en "_ligas")
-        if div_sel is not None:
-            for k in (1, 2):
-                r_div = rect_division(k)
-                activo_div = (k == div_sel)
-                fondo_div = (0, 191, 255) if activo_div else ((20, 26, 46) if r_div.collidepoint(mouse_pos) else (10, 14, 26))
-                pygame.draw.rect(screen, fondo_div, r_div, border_radius=4)
-                pygame.draw.rect(screen, (255, 215, 0) if activo_div else (0, 191, 255), r_div, width=1, border_radius=4)
-                draw_text(screen, f"{k}ª", (r_div.x + 10, r_div.y + 5), size='sm', color='bg' if activo_div else 'blanco')
-                if click_pos and r_div.collidepoint(click_pos) and not activo_div:
-                    cambiar_division_editor(estado)
-            inp_liga = R_NOMBRE_LIGA
-            activo_nl = estado.get('edit_input_activo') == 'league_name'
-            pygame.draw.rect(screen, (20, 26, 46), inp_liga, border_radius=4)
-            pygame.draw.rect(screen, (255, 215, 0) if activo_nl else (0, 191, 255), inp_liga, width=1, border_radius=4)
-            txt_nl = nombre_liga_editor(estado)
-            txt_nl = txt_nl[-30:] if activo_nl else (txt_nl if len(txt_nl) <= 30 else txt_nl[:29] + "…")
-            draw_text(screen, txt_nl + ("|" if activo_nl else ""), (inp_liga.x + 8, inp_liga.y + 5), size='sm',
-                      color='dorado' if activo_nl else 'blanco')
-            if click_pos and inp_liga.collidepoint(click_pos):
-                estado['edit_input_activo'] = 'league_name'
-        else:
-            draw_text(screen, "Copa internacional (sin divisiones)", (55, 150), size='sm', color='azul')
-
-        # v4.2.0: teclado sin campo activo: ↑ ↓ equipo (o jugador), → entra a la plantilla,
-        # ← vuelve al equipo, Ctrl+S guarda, Esc vuelve al menú
+        # v4.2.0: teclado sin campo activo: Tab sección, ↑ ↓ lista, → entra a la plantilla,
+        # ← vuelve al club, Ctrl+S guarda, Esc vuelve al menú
+        ligas = ligas_editor()
         if campo_inicial is None and not estado.get('edit_input_activo') and not estado.get('edit_dropdown_activo'):
             for ev in eventos:
                 if ev.type != pygame.KEYDOWN:
@@ -562,311 +660,330 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     estado.pop('edit_mensaje', None)
                     estado['menu_step'] = 'main'
                     return 'menu'
+                if ev.key == pygame.K_TAB:
+                    i = [c for c, _t in SECCIONES].index(seccion)
+                    cambiar_seccion(estado, SECCIONES[(i + (-1 if ev.mod & pygame.KMOD_SHIFT else 1)) % 4][0])
+                    return None
                 if ev.key in (pygame.K_UP, pygame.K_DOWN):
                     d = -1 if ev.key == pygame.K_UP else 1
-                    if estado['edit_jugador_idx'] >= 0 and jugadores:
-                        estado['edit_jugador_idx'] = max(0, min(len(jugadores) - 1, estado['edit_jugador_idx'] + d))
-                    elif equipos:
-                        estado['edit_equipo_idx'] = max(0, min(len(equipos) - 1, estado['edit_equipo_idx'] + d))
-                        estado['edit_squad_offset'] = 0
-                elif ev.key == pygame.K_RIGHT and jugadores and estado['edit_jugador_idx'] < 0:
+                    if seccion == 'jugadores' and (libres or estado['edit_jugador_idx'] >= 0):
+                        if jugadores:
+                            estado['edit_jugador_idx'] = max(0, min(len(jugadores) - 1, estado['edit_jugador_idx'] + d))
+                    elif seccion == 'ligas':
+                        claves = [c for c, _t in ligas]
+                        i = claves.index(estado['edit_liga_sel']) if estado['edit_liga_sel'] in claves else 0
+                        estado['edit_liga_sel'] = claves[max(0, min(len(claves) - 1, i + d))]
+                    else:
+                        n = len(db.get('_dts_libres') or []) if (libres and seccion == 'entrenadores') else len(equipos)
+                        if n:
+                            estado['edit_equipo_idx'] = max(0, min(n - 1, estado['edit_equipo_idx'] + d))
+                            estado['edit_squad_offset'] = 0 if seccion == 'jugadores' else estado['edit_squad_offset']
+                elif ev.key == pygame.K_RIGHT and seccion == 'jugadores' and not libres and jugadores \
+                        and estado['edit_jugador_idx'] < 0:
                     estado['edit_jugador_idx'] = 0
-                elif ev.key == pygame.K_LEFT:
+                elif ev.key == pygame.K_LEFT and seccion == 'jugadores' and not libres:
                     estado['edit_jugador_idx'] = -1
                 elif ev.key == pygame.K_s and (ev.mod & pygame.KMOD_CTRL):
                     ok = guardar_base_datos(estado)
-                    estado['edit_mensaje'] = "¡Base de datos guardada con éxito!" if ok else "Error al escribir en disco."
-                    estado['edit_mensaje_ticks'] = pygame.time.get_ticks()
-            if equipos:   # la selección queda a la vista
-                equipo_sel = equipos[estado['edit_equipo_idx']]
-                jugadores = equipo_sel.get('jugadores', [])
-                off = estado.get('edit_teams_offset', 0)
-                if not off <= estado['edit_equipo_idx'] < off + 5:
-                    estado['edit_teams_offset'] = max(0, min(estado['edit_equipo_idx'], len(equipos) - 5))
-                off = estado.get('edit_squad_offset', 0)
-                if estado['edit_jugador_idx'] >= 0 and not off <= estado['edit_jugador_idx'] < off + 5:
-                    estado['edit_squad_offset'] = max(0, min(estado['edit_jugador_idx'], len(jugadores) - 5))
-                jugador_sel = jugadores[estado['edit_jugador_idx']] if 0 <= estado['edit_jugador_idx'] < len(jugadores) else None
+                    _mensaje(estado, "¡Base de datos guardada con éxito!" if ok else "Error al escribir en disco.")
+            sel = resolver()   # la selección queda a la vista
+            equipos, equipo_sel, jugadores, jugador_sel, dt_sel = (sel['equipos'], sel['equipo'], sel['jugadores'],
+                                                                   sel['jugador'], sel['dt'])
+            if seccion == 'ligas':
+                claves = [c for c, _t in ligas]
+                if estado['edit_liga_sel'] in claves:
+                    _a_la_vista(estado, 'edit_teams_offset', claves.index(estado['edit_liga_sel']), 10, len(claves))
+            elif seccion == 'jugadores' and not libres:
+                _a_la_vista(estado, 'edit_teams_offset', estado['edit_equipo_idx'], 5, len(equipos))
+                _a_la_vista(estado, 'edit_squad_offset', estado['edit_jugador_idx'], 5, len(jugadores))
+            elif seccion == 'jugadores':
+                _a_la_vista(estado, 'edit_squad_offset', estado['edit_jugador_idx'], 10, len(jugadores))
+            else:
+                n = len(db.get('_dts_libres') or []) if libres else len(equipos)
+                _a_la_vista(estado, 'edit_teams_offset', estado['edit_equipo_idx'], 10, n)
 
-        # Lista de Equipos (Scrollable, 5 visibles)
-        teams_offset = estado.get('edit_teams_offset', 0)
-        teams_visible = 5
-        
-        teams_y = 180
-        for idx in range(teams_offset, min(len(equipos), teams_offset + teams_visible)):
-            eq = equipos[idx]
-            eq_rect = pygame.Rect(55, teams_y, 380, 32)
-            is_sel = (idx == estado['edit_equipo_idx'] and estado['edit_jugador_idx'] == -1)
-            hov = eq_rect.collidepoint(mouse_pos)
-            
-            c_bg = (20, 50, 80) if is_sel else ((20, 26, 46) if hov else (10, 14, 26))
-            pygame.draw.rect(screen, c_bg, eq_rect, border_radius=4)
-            pygame.draw.rect(screen, (0, 191, 255), eq_rect, width=1, border_radius=4)
-            
-            draw_text(screen, eq.get('nombre', 'Equipo')[:26], (65, teams_y + 6), size='sm', color='verde' if is_sel else 'blanco')
-            
-            if click_pos and eq_rect.collidepoint(click_pos):
-                estado['edit_equipo_idx'] = idx
+        # Dibujar fondo base y título
+        draw_gradient_bg(screen)
+        draw_text(screen, "MODO EDICIÓN DE BASE DE DATOS", (40, 16), size='lg', color='dorado')
+
+        # v4.6.0: pestañas de sección
+        for i, (clave, texto) in enumerate(SECCIONES):
+            r = rect_seccion(i)
+            activa = clave == seccion
+            pygame.draw.rect(screen, (0, 191, 255) if activa else ((20, 26, 46) if r.collidepoint(mouse_pos) else (10, 14, 26)),
+                             r, border_radius=6)
+            pygame.draw.rect(screen, (255, 215, 0) if activa else (0, 191, 255), r, width=1, border_radius=6)
+            t = get_font('sm').render(texto, True, COLORS['bg'] if activa else COLORS['blanco'])
+            screen.blit(t, t.get_rect(center=r.center))
+            if click_pos and r.collidepoint(click_pos):
+                cambiar_seccion(estado, clave)
+                return None
+
+        # --- COLUMNA 1: LISTA ---
+        draw_panel(screen, R_COL_LISTAS)
+        tipo_sel, div_sel = _tipo_div(estado['edit_liga_sel'])
+        if seccion != 'ligas':
+            # Selectores de liga (v0.8.8: +LIB y UCL; v3.7.0: 8 países + selector 1ª/2ª)
+            pestanas = [p for p in pestanas_editor() if not (seccion == 'entrenadores' and p[0] in COPAS)]
+            for i, (l_id, tab_txt) in enumerate(pestanas):
+                tab_rect = rect_tab_liga(i)
+                is_active = (l_id == tipo_sel) and not libres
+                c_bg = (0, 191, 255) if is_active else ((20, 26, 46) if tab_rect.collidepoint(mouse_pos) else (10, 14, 26))
+                pygame.draw.rect(screen, c_bg, tab_rect, border_radius=4)
+                pygame.draw.rect(screen, (255, 215, 0) if is_active else (0, 191, 255), tab_rect, width=1, border_radius=4)
+                draw_text(screen, tab_txt, (tab_rect.x + 5, tab_rect.y + 6), size='sm', color='bg' if is_active else 'blanco')
+                if click_pos and tab_rect.collidepoint(click_pos):
+                    # v3.7.0: al cambiar de país se conserva la división elegida
+                    estado['edit_liga_sel'] = (_paises.clave_db(l_id, div_sel) if div_sel and l_id in _paises.TIPOS_LIGA
+                                               else l_id)
+                    for k, v in (('edit_equipo_idx', 0), ('edit_jugador_idx', -1), ('edit_squad_offset', 0),
+                                 ('edit_teams_offset', 0), ('edit_input_activo', None)):
+                        estado[k] = v
+            if libres:
+                pass
+            elif div_sel is not None:
+                for k in (1, 2):
+                    r_div = rect_division(k)
+                    activo_div = (k == div_sel)
+                    fondo_div = (0, 191, 255) if activo_div else ((20, 26, 46) if r_div.collidepoint(mouse_pos) else (10, 14, 26))
+                    pygame.draw.rect(screen, fondo_div, r_div, border_radius=4)
+                    pygame.draw.rect(screen, (255, 215, 0) if activo_div else (0, 191, 255), r_div, width=1, border_radius=4)
+                    draw_text(screen, f"{k}ª", (r_div.x + 10, r_div.y + 5), size='sm', color='bg' if activo_div else 'blanco')
+                    if click_pos and r_div.collidepoint(click_pos) and not activo_div:
+                        cambiar_division_editor(estado)
+            else:
+                draw_text(screen, "Copa int.", (55, 150), size='sm', color='azul')
+            if seccion in ('entrenadores', 'jugadores'):
+                pygame.draw.rect(screen, (0, 191, 255) if libres else ((20, 26, 46) if R_LIBRES.collidepoint(mouse_pos) else (10, 14, 26)),
+                                 R_LIBRES, border_radius=4)
+                pygame.draw.rect(screen, (255, 215, 0) if libres else (0, 191, 255), R_LIBRES, width=1, border_radius=4)
+                t = get_font('sm').render("LIBRES", True, COLORS['bg'] if libres else COLORS['blanco'])
+                screen.blit(t, t.get_rect(center=R_LIBRES.center))
+                if click_pos and R_LIBRES.collidepoint(click_pos) and not libres:
+                    estado['edit_liga_sel'] = LIBRES
+                    for k, v in (('edit_equipo_idx', 0), ('edit_jugador_idx', 0 if seccion == 'jugadores' else -1),
+                                 ('edit_squad_offset', 0), ('edit_teams_offset', 0), ('edit_input_activo', None)):
+                        estado[k] = v
+                if libres:
+                    _boton(screen, R_NUEVO, "+ NUEVO DT" if seccion == 'entrenadores' else "+ NUEVO JUGADOR",
+                           R_NUEVO.collidepoint(mouse_pos), color='verde')
+                    if click_pos and R_NUEVO.collidepoint(click_pos):
+                        if seccion == 'entrenadores':
+                            estado['edit_equipo_idx'] = nuevo_dt_libre(db)
+                            _a_la_vista(estado, 'edit_teams_offset', estado['edit_equipo_idx'], 10, len(db['_dts_libres']))
+                        else:
+                            estado['edit_jugador_idx'] = nuevo_jugador_libre(db)
+                            _a_la_vista(estado, 'edit_squad_offset', estado['edit_jugador_idx'], 10, len(db['_libres']))
+                        estado['edit_input_activo'] = None
+        else:
+            draw_text(screen, "Elige la liga que quieres renombrar", (55, 130), size='sm', color='azul')
+
+        if seccion == 'entrenadores':
+            if libres:
+                lst = db.get('_dts_libres') or []
+                filas = [(_truncar(x.get('nombre', ''), 24), f"{NOMBRE_ESTILO.get(normalizar_estilo(x.get('estilo')), '')} · {x.get('calif', 0)}")
+                         for x in lst]
+                if not lst:
+                    draw_text(screen, "Sin DTs libres: crea uno con + NUEVO DT", (55, 190), size='sm', color='azul')
+            else:
+                filas = []
+                for eq in equipos:
+                    nom = dt_efectivo(eq)[0] or "(al azar)"
+                    filas.append((_truncar(nom, 20), _truncar(eq.get('nombre', ''), 16)))
+            elegido = _lista(screen, estado, filas, estado['edit_equipo_idx'], 'edit_teams_offset', click_pos, mouse_pos)
+            if elegido is not None:
+                estado['edit_equipo_idx'] = elegido
+                estado['edit_input_activo'] = None
+        elif seccion == 'clubes':
+            filas = [(_truncar(eq.get('nombre', 'Equipo'), 26), f"${int(eq.get('balance', 0) or 0) / 1_000_000:.1f}M")
+                     for eq in equipos]
+            elegido = _lista(screen, estado, filas, estado['edit_equipo_idx'], 'edit_teams_offset', click_pos, mouse_pos)
+            if elegido is not None:
+                estado['edit_equipo_idx'] = elegido
+                estado['edit_input_activo'] = None
+        elif seccion == 'ligas':
+            claves = [c for c, _t in ligas]
+            filas = []
+            for clave, texto in ligas:
+                t, d = _tipo_div(clave)
+                propio = ((db.get('_ligas') or {}).get(t) or {}).get('nombre_2a' if d == 2 else 'nombre')
+                filas.append((texto, _truncar(propio if propio is not None else _paises.nombre_liga_defecto(t, d), 30)))
+            actual = claves.index(estado['edit_liga_sel']) if estado['edit_liga_sel'] in claves else -1
+            elegido = _lista(screen, estado, filas, actual, 'edit_teams_offset', click_pos, mouse_pos)
+            if elegido is not None:
+                estado['edit_liga_sel'] = claves[elegido]
+                estado['edit_input_activo'] = None
+        elif libres:   # jugadores libres
+            filas = [(f"[{j.get('posicion', 'MED')}] {_truncar((j.get('nombre', '') + ' ' + j.get('apellido', '')).strip(), 22)}",
+                      f"OVR: {j.get('overall', 70)}") for j in jugadores]
+            if not jugadores:
+                draw_text(screen, "Sin jugadores libres: crea uno con + NUEVO JUGADOR", (55, 190), size='sm', color='azul')
+            elegido = _lista(screen, estado, filas, estado['edit_jugador_idx'], 'edit_squad_offset', click_pos, mouse_pos)
+            if elegido is not None:
+                estado['edit_jugador_idx'] = elegido
+                estado['edit_input_activo'] = None
+        else:   # jugadores de un club: clubes arriba (5) y plantilla abajo (5)
+            filas = [(_truncar(eq.get('nombre', 'Equipo'), 26), '') for eq in equipos]
+            sel_eq = estado['edit_equipo_idx'] if estado['edit_jugador_idx'] == -1 else -1
+            elegido = _lista(screen, estado, filas, sel_eq, 'edit_teams_offset', click_pos, mouse_pos, visibles=5,
+                             fila=lambda k: rect_fila('equipos', k), up=R_EQ_UP, down=R_EQ_DOWN)
+            if elegido is not None:
+                estado['edit_equipo_idx'] = elegido
                 estado['edit_jugador_idx'] = -1
                 estado['edit_squad_offset'] = 0
                 estado['edit_input_activo'] = None
-                
-            teams_y += 36
-            
-        # Botones de scroll de equipos
-        btn_te_up, btn_te_down = R_EQ_UP, R_EQ_DOWN
-        pygame.draw.rect(screen, (20, 26, 46) if btn_te_up.collidepoint(mouse_pos) else (10, 14, 26), btn_te_up, border_radius=4)
-        pygame.draw.rect(screen, (20, 26, 46) if btn_te_down.collidepoint(mouse_pos) else (10, 14, 26), btn_te_down, border_radius=4)
-        draw_text(screen, "▲", (448, 185), size='sm', color='blanco')
-        draw_text(screen, "▼", (448, 320), size='sm', color='blanco')
-        
-        if click_pos:
-            if btn_te_up.collidepoint(click_pos):
-                estado['edit_teams_offset'] = max(0, teams_offset - 1)
-            elif btn_te_down.collidepoint(click_pos):
-                estado['edit_teams_offset'] = min(max(0, len(equipos) - teams_visible), teams_offset + 1)
-                
-        pygame.draw.line(screen, (0, 191, 255), (55, 365), (435, 365), 1)
-        
-        # Lista de Jugadores (Scrollable, 5 visibles)
-        draw_text(screen, f"JUGADORES — {equipo_sel.get('nombre', 'Equipo')[:18] if equipo_sel else 'Ninguno'}", (55, 375), size='sm', color='dorado')
-        squad_offset = estado.get('edit_squad_offset', 0)
-        squad_visible = 5
-        
-        squad_y = 405
-        for idx in range(squad_offset, min(len(jugadores), squad_offset + squad_visible)):
-            j = jugadores[idx]
-            j_rect = pygame.Rect(55, squad_y, 380, 32)
-            is_sel = (idx == estado['edit_jugador_idx'])
-            hov = j_rect.collidepoint(mouse_pos)
-            
-            c_bg = (20, 50, 80) if is_sel else ((20, 26, 46) if hov else (10, 14, 26))
-            pygame.draw.rect(screen, c_bg, j_rect, border_radius=4)
-            pygame.draw.rect(screen, (0, 191, 255), j_rect, width=1, border_radius=4)
-            
-            nombre_comp = f"{j.get('nombre', 'Jugador')} {j.get('apellido', '')}".strip()
-            pos_label = f"[{j.get('posicion', 'DEF')}] "
-            draw_text(screen, f"{pos_label}{nombre_comp[:24]}", (65, squad_y + 6), size='sm', color='verde' if is_sel else 'blanco')
-            # v0.8.1: mostrar OVR real. Si el dict viene sin 'overall' (edited_db viejo),
-            # calcularlo desde los 5 atributos. Si tampoco están, caer al default 70.
-            ovr_val = j.get('overall')
-            if ovr_val is None:
+            pygame.draw.line(screen, (0, 191, 255), (55, 365), (435, 365), 1)
+            draw_text(screen, f"JUGADORES — {_truncar(equipo_sel.get('nombre', 'Equipo'), 18) if equipo_sel else 'Ninguno'}",
+                      (55, 375), size='sm', color='dorado')
+            # v0.8.1: OVR real (si el dict viene sin 'overall', el promedio de los 5 atributos)
+            filas = []
+            for j in jugadores:
+                ovr_val = j.get('overall')
+                if ovr_val is None:
+                    try:
+                        ovr_val = sum(int(j.get(a, 0)) for a in ('ataque', 'defensa', 'fisico', 'tecnica', 'mental')) // 5
+                    except Exception:
+                        ovr_val = 70
+                nombre_comp = f"{j.get('nombre', 'Jugador')} {j.get('apellido', '')}".strip()
+                filas.append((f"[{j.get('posicion', 'DEF')}] {nombre_comp[:24]}", f"OVR: {ovr_val}"))
+            elegido = _lista(screen, estado, filas, estado['edit_jugador_idx'], 'edit_squad_offset', click_pos, mouse_pos,
+                             visibles=5, fila=lambda k: rect_fila('jugadores', k), up=R_JUG_UP, down=R_JUG_DOWN)
+            if elegido is not None:
+                estado['edit_jugador_idx'] = elegido
+                estado['edit_input_activo'] = None
+
+        # --- COLUMNA 2: FORMULARIO ---
+        draw_panel(screen, R_FORMULARIO)
+        activo = estado.get('edit_input_activo')
+
+        def activar(rect, campo) -> bool:
+            if click_pos and rect.collidepoint(click_pos):
+                estado['edit_input_activo'] = campo
+                estado['edit_dropdown_activo'] = None
+                return True
+            return False
+
+        def boton_borrar(clave: str, idx: int) -> None:
+            _boton(screen, R_BORRAR, "BORRAR", R_BORRAR.collidepoint(mouse_pos), color='rojo')
+            if click_pos and R_BORRAR.collidepoint(click_pos):
+                borrar_libre(db, clave, idx)
+                estado['edit_input_activo'] = None
+                _mensaje(estado, "Borrado de los libres.")
+
+        if seccion == 'entrenadores':
+            if dt_sel is None:
+                draw_text(screen, "Elige un DT de la lista de la izquierda." if not libres else
+                          "Crea un DT sin club con + NUEVO DT.", (530, 130), size='md', color='blanco')
+            else:
+                if libres:
+                    nombre, estilo, calif = (dt_sel.get('nombre', ''), normalizar_estilo(dt_sel.get('estilo')),
+                                             int(dt_sel.get('calif', 0) or 0))
+                    draw_text(screen, "DT LIBRE (sin club)", (530, 120), size='md', color='dorado')
+                    boton_borrar('_dts_libres', estado['edit_equipo_idx'])
+                else:
+                    nombre, estilo, calif = dt_efectivo(dt_sel)
+                    draw_text(screen, f"DT DE {_truncar(dt_sel.get('nombre', 'Equipo').upper(), 34)}", (530, 120),
+                              size='md', color='dorado')
+                draw_text(screen, "Nombre del DT:" if libres else "Nombre del DT (vacío = el real):", (530, 180),
+                          size='sm', color='blanco')
+                propio = str(dt_sel.get(k_nom, '') or '')
+                if propio or activo == 'dt_nombre':
+                    _campo(screen, R_DT_NOMBRE, propio + ("|" if activo == 'dt_nombre' else ''), activo == 'dt_nombre')
+                else:
+                    _campo(screen, R_DT_NOMBRE, f"({nombre or 'uno al azar'})", False, color='azul')
+                activar(R_DT_NOMBRE, 'dt_nombre')
+                draw_text(screen, "Estilo táctico:", (530, 265), size='sm', color='blanco')
+                _campo(screen, R_DT_ESTILO, NOMBRE_ESTILO.get(estilo, 'Ancelotismo').upper(),
+                       estado.get('edit_dropdown_activo') == 'estilo_dt', size='sm', color='dorado')
+                draw_text(screen, "▼", (R_DT_ESTILO.right - 30, R_DT_ESTILO.y + 10), size='sm', color='blanco')
+                if click_pos and R_DT_ESTILO.collidepoint(click_pos):
+                    estado['edit_dropdown_activo'] = None if estado.get('edit_dropdown_activo') == 'estilo_dt' else 'estilo_dt'
+                    estado['edit_input_activo'] = None
+                draw_text(screen, "Calificación (1-99):", (900, 265), size='sm', color='blanco')
+                _campo(screen, R_DT_CALIF, str(dt_sel.get(k_cal) or calif), activo == 'dt_calif')
+                if activar(R_DT_CALIF, 'dt_calif') and not dt_sel.get(k_cal):
+                    dt_sel[k_cal] = calif          # se edita a partir de la actual
                 try:
-                    ovr_val = (
-                        int(j.get('ataque', 0))
-                        + int(j.get('defensa', 0))
-                        + int(j.get('fisico', 0))
-                        + int(j.get('tecnica', 0))
-                        + int(j.get('mental', 0))
-                    ) // 5
-                except Exception:
-                    ovr_val = 70
-            draw_text(screen, f"OVR: {ovr_val}", (360, squad_y + 6), size='sm', color='dorado')
-            
-            if click_pos and j_rect.collidepoint(click_pos):
-                estado['edit_jugador_idx'] = idx
-                estado['edit_input_activo'] = None
-                
-            squad_y += 36
-            
-        # Botones de scroll de plantilla
-        btn_sq_up, btn_sq_down = R_JUG_UP, R_JUG_DOWN
-        pygame.draw.rect(screen, (20, 26, 46) if btn_sq_up.collidepoint(mouse_pos) else (10, 14, 26), btn_sq_up, border_radius=4)
-        pygame.draw.rect(screen, (20, 26, 46) if btn_sq_down.collidepoint(mouse_pos) else (10, 14, 26), btn_sq_down, border_radius=4)
-        draw_text(screen, "▲", (448, 410), size='sm', color='blanco')
-        draw_text(screen, "▼", (448, 545), size='sm', color='blanco')
-        
-        if click_pos:
-            if btn_sq_up.collidepoint(click_pos):
-                estado['edit_squad_offset'] = max(0, squad_offset - 1)
-            elif btn_sq_down.collidepoint(click_pos):
-                estado['edit_squad_offset'] = min(max(0, len(jugadores) - squad_visible), squad_offset + 1)
-                
-        # --- COLUMNA 2: FORMULARIO DE EDICION (Ancho: 730) ---
-        col2_rect = R_FORMULARIO
-        draw_panel(screen, col2_rect)
-        
-        if not equipo_sel:
-            draw_text(screen, "Selecciona un equipo o jugador en la izquierda para editar.", (530, 130), size='md', color='blanco')
+                    from types import SimpleNamespace
+                    from alpha_football import entrenadores as _EN
+                    c = int(dt_sel.get(k_cal) or calif)
+                    s = (_EN.sueldo_pedido(c) if libres else
+                         _EN.sueldo_inicial(SimpleNamespace(balance=int(dt_sel.get('balance', 0) or 0)), c))
+                    draw_text(screen, f"Sueldo anual: ${s / 1_000_000:.2f}M  ·  un club lo contrata si le cuesta "
+                              f"≤ {int(_EN.FRAC_SUELDO_DT * 100)}% de su saldo", (530, 345), size='sm', color='azul')
+                except Exception as e_s:
+                    logger.debug(f"Sueldo del DT en el editor: {e_s}")
+        elif seccion == 'clubes':
+            if not equipo_sel:
+                draw_text(screen, "Elige un club de la lista de la izquierda.", (530, 130), size='md', color='blanco')
+            else:
+                draw_text(screen, f"EDITAR CLUB: {_truncar(equipo_sel.get('nombre', 'Equipo').upper(), 34)}", (530, 120),
+                          size='md', color='dorado')
+                draw_text(screen, "Nombre del club:", (530, 180), size='sm', color='blanco')
+                _campo(screen, R_EQ_NOMBRE, equipo_sel.get('nombre', ''), activo == 'team_name')
+                activar(R_EQ_NOMBRE, 'team_name')
+                draw_text(screen, "Presupuesto (en enteros $, ej. 15000000 para $15M):", (530, 265), size='sm', color='blanco')
+                _campo(screen, R_EQ_PRESUPUESTO, f"{equipo_sel.get('balance', 0):,}", activo == 'team_budget')
+                activar(R_EQ_PRESUPUESTO, 'team_budget')
+        elif seccion == 'ligas':
+            texto = dict(ligas).get(estado['edit_liga_sel'], '')
+            draw_text(screen, f"LIGA {texto}", (530, 120), size='md', color='dorado')
+            draw_text(screen, f"Nombre de la liga (máx. {MAX_NOMBRE_LIGA}):", (530, 180), size='sm', color='blanco')
+            txt_nl = nombre_liga_editor(estado)
+            _campo(screen, R_NOMBRE_LIGA, (txt_nl[-34:] + "|") if activo == 'league_name' else _truncar(txt_nl, 36),
+                   activo == 'league_name', color='dorado' if activo == 'league_name' else 'blanco')
+            activar(R_NOMBRE_LIGA, 'league_name')
         elif jugador_sel is None:
-            # --- EDITAR EQUIPO ---
-            draw_text(screen, f"EDITAR EQUIPO: {equipo_sel.get('nombre', 'Equipo').upper()}", (530, 120), size='md', color='dorado')
-            
-            # Nombre del equipo
-            draw_text(screen, "Nombre del Equipo:", (530, 180), size='sm', color='blanco')
-            inp_team_name = R_EQ_NOMBRE
-            is_team_name_active = (estado.get('edit_input_activo') == 'team_name')
-            pygame.draw.rect(screen, (10, 14, 26) if is_team_name_active else (20, 26, 46), inp_team_name, border_radius=6)
-            pygame.draw.rect(screen, (0, 255, 136) if is_team_name_active else (0, 191, 255), inp_team_name, width=1, border_radius=6)
-            draw_text(screen, equipo_sel.get('nombre', ''), (542, 213), size='md', color='blanco')
-            
-            if click_pos and inp_team_name.collidepoint(click_pos):
-                estado['edit_input_activo'] = 'team_name'
-                estado['edit_dropdown_activo'] = None
-                
-            # Presupuesto (en millones)
-            draw_text(screen, "Presupuesto (en enteros $, ej. 15000000 para $15M):", (530, 265), size='sm', color='blanco')
-            inp_team_budget = R_EQ_PRESUPUESTO
-            is_team_budget_active = (estado.get('edit_input_activo') == 'team_budget')
-            pygame.draw.rect(screen, (10, 14, 26) if is_team_budget_active else (20, 26, 46), inp_team_budget, border_radius=6)
-            pygame.draw.rect(screen, (0, 255, 136) if is_team_budget_active else (0, 191, 255), inp_team_budget, width=1, border_radius=6)
-            draw_text(screen, f"{equipo_sel.get('balance', 0):,}", (542, 298), size='md', color='blanco')
-            
-            if click_pos and inp_team_budget.collidepoint(click_pos):
-                estado['edit_input_activo'] = 'team_budget'
-                estado['edit_dropdown_activo'] = None
-                
-            # Estilo Táctico (Dropdown)
-            draw_text(screen, "Estilo Táctico (DT):", (530, 350), size='sm', color='blanco')
-            btn_estilo = R_EQ_ESTILO
-            is_drop_estilo = (estado.get('edit_dropdown_activo') == 'estilo_dt')
-            pygame.draw.rect(screen, (20, 26, 46), btn_estilo, border_radius=6)
-            pygame.draw.rect(screen, (0, 255, 136) if is_drop_estilo else (0, 191, 255), btn_estilo, width=1, border_radius=6)
-            draw_text(screen, NOMBRE_ESTILO.get(normalizar_estilo(equipo_sel.get('estilo_dt')), 'Ancelotismo').upper(),
-                      (542, 383), size='sm', color='dorado')   # v3.3.0
-            draw_text(screen, "▼", (850, 385), size='sm', color='blanco')
-            
-            if click_pos and btn_estilo.collidepoint(click_pos):
-                estado['edit_dropdown_activo'] = 'estilo_dt' if not is_drop_estilo else None
-                estado['edit_input_activo'] = None
-                
-            # v3.4.0: DT (nombre) a la derecha del estilo (fuera de la lista del dropdown y
-            # lejos de RESTAURAR BASE / VOLVER). Vacío = DT real parodia de la tabla.
-            draw_text(screen, "DT (nombre, vacío = el real):", (900, 350), size='sm', color='blanco')
-            inp_team_dt = R_EQ_DT
-            is_team_dt_active = (estado.get('edit_input_activo') == 'team_dt')
-            pygame.draw.rect(screen, (10, 14, 26) if is_team_dt_active else (20, 26, 46), inp_team_dt, border_radius=6)
-            pygame.draw.rect(screen, (0, 255, 136) if is_team_dt_active else (0, 191, 255), inp_team_dt, width=1, border_radius=6)
-            draw_text(screen, str(equipo_sel.get('dt_nombre', '') or ''), (912, 383), size='sm', color='blanco')
-            if click_pos and inp_team_dt.collidepoint(click_pos):
-                estado['edit_input_activo'] = 'team_dt'
-                estado['edit_dropdown_activo'] = None
-
-            # v3.6.0: la lista del dropdown de estilos se dibuja al final (_dibujar_dropdown)
-
+            draw_text(screen, "Elige un jugador de la lista." if not libres else "Crea un jugador libre con + NUEVO JUGADOR.",
+                      (530, 130), size='md', color='blanco')
         else:
-            # --- EDITAR JUGADOR ---
-            draw_text(screen, f"EDITAR JUGADOR: {jugador_sel.get('nombre', '').upper()} {jugador_sel.get('apellido', '').upper()}", (530, 120), size='md', color='dorado')
-            
-            # Nombre
+            titulo = "JUGADOR LIBRE" if libres else "EDITAR JUGADOR"
+            draw_text(screen, _truncar(f"{titulo}: {jugador_sel.get('nombre', '').upper()} {jugador_sel.get('apellido', '').upper()}", 44),
+                      (530, 120), size='md', color='dorado')
+            if libres:
+                boton_borrar('_libres', estado['edit_jugador_idx'])
             draw_text(screen, "Nombre:", (530, 170), size='sm', color='blanco')
-            inp_play_name = R_J_NOMBRE
-            is_play_name_act = (estado.get('edit_input_activo') == 'player_name')
-            pygame.draw.rect(screen, (10, 14, 26) if is_play_name_act else (20, 26, 46), inp_play_name, border_radius=6)
-            pygame.draw.rect(screen, (0, 255, 136) if is_play_name_act else (0, 191, 255), inp_play_name, width=1, border_radius=6)
-            draw_text(screen, jugador_sel.get('nombre', ''), (542, 203), size='md', color='blanco')
-            
-            if click_pos and inp_play_name.collidepoint(click_pos):
-                estado['edit_input_activo'] = 'player_name'
-                estado['edit_dropdown_activo'] = None
-                
-            # Apellido
+            _campo(screen, R_J_NOMBRE, jugador_sel.get('nombre', ''), activo == 'player_name')
+            activar(R_J_NOMBRE, 'player_name')
             draw_text(screen, "Apellido:", (860, 170), size='sm', color='blanco')
-            inp_play_ape = R_J_APELLIDO
-            is_play_ape_act = (estado.get('edit_input_activo') == 'player_apellido')
-            pygame.draw.rect(screen, (10, 14, 26) if is_play_ape_act else (20, 26, 46), inp_play_ape, border_radius=6)
-            pygame.draw.rect(screen, (0, 255, 136) if is_play_ape_act else (0, 191, 255), inp_play_ape, width=1, border_radius=6)
-            draw_text(screen, jugador_sel.get('apellido', ''), (872, 203), size='md', color='blanco')
-            
-            if click_pos and inp_play_ape.collidepoint(click_pos):
-                estado['edit_input_activo'] = 'player_apellido'
-                estado['edit_dropdown_activo'] = None
-                
-            # Valoración (Overall)
-            draw_text(screen, "OVR (máx. 99):", (530, 250), size='sm', color='blanco')   # v3.9.0: el texto largo pisaba "Edad:"
-            inp_play_ovr = R_J_OVR
-            is_play_ovr_act = (estado.get('edit_input_activo') == 'player_ovr')
-            pygame.draw.rect(screen, (10, 14, 26) if is_play_ovr_act else (20, 26, 46), inp_play_ovr, border_radius=6)
-            pygame.draw.rect(screen, (0, 255, 136) if is_play_ovr_act else (0, 191, 255), inp_play_ovr, width=1, border_radius=6)
-            draw_text(screen, str(jugador_sel.get('overall', 70)), (542, 283), size='md', color='blanco')
-            
-            if click_pos and inp_play_ovr.collidepoint(click_pos):
-                estado['edit_input_activo'] = 'player_ovr'
-                estado['edit_dropdown_activo'] = None
-                
-            # Edad
+            _campo(screen, R_J_APELLIDO, jugador_sel.get('apellido', ''), activo == 'player_apellido')
+            activar(R_J_APELLIDO, 'player_apellido')
+            draw_text(screen, "OVR (máx. 99):", (530, 250), size='sm', color='blanco')   # v3.9.0
+            _campo(screen, R_J_OVR, str(jugador_sel.get('overall', 70)), activo == 'player_ovr')
+            activar(R_J_OVR, 'player_ovr')
             draw_text(screen, "Edad:", (700, 250), size='sm', color='blanco')
-            inp_play_age = R_J_EDAD
-            is_play_age_act = (estado.get('edit_input_activo') == 'player_age')
-            pygame.draw.rect(screen, (10, 14, 26) if is_play_age_act else (20, 26, 46), inp_play_age, border_radius=6)
-            pygame.draw.rect(screen, (0, 255, 136) if is_play_age_act else (0, 191, 255), inp_play_age, width=1, border_radius=6)
-            draw_text(screen, str(jugador_sel.get('edad', 25)), (712, 283), size='md', color='blanco')
-            
-            if click_pos and inp_play_age.collidepoint(click_pos):
-                estado['edit_input_activo'] = 'player_age'
-                estado['edit_dropdown_activo'] = None
-                
-            # Posición (Dropdown)
+            _campo(screen, R_J_EDAD, str(jugador_sel.get('edad', 25)), activo == 'player_age')
+            activar(R_J_EDAD, 'player_age')
             draw_text(screen, "Posición:", (860, 250), size='sm', color='blanco')
-            btn_pos = R_J_POSICION
-            is_drop_pos = (estado.get('edit_dropdown_activo') == 'posicion')
-            pygame.draw.rect(screen, (20, 26, 46), btn_pos, border_radius=6)
-            pygame.draw.rect(screen, (0, 255, 136) if is_drop_pos else (0, 191, 255), btn_pos, width=1, border_radius=6)
-            draw_text(screen, jugador_sel.get('posicion', 'DEF').upper(), (872, 283), size='sm', color='dorado')
+            _campo(screen, R_J_POSICION, jugador_sel.get('posicion', 'DEF').upper(),
+                   estado.get('edit_dropdown_activo') == 'posicion', size='sm', color='dorado')
             draw_text(screen, "▼", (1130, 285), size='sm', color='blanco')
-            
-            if click_pos and btn_pos.collidepoint(click_pos):
-                estado['edit_dropdown_activo'] = 'posicion' if not is_drop_pos else None
+            if click_pos and R_J_POSICION.collidepoint(click_pos):
+                estado['edit_dropdown_activo'] = None if estado.get('edit_dropdown_activo') == 'posicion' else 'posicion'
                 estado['edit_input_activo'] = None
-                
-            # v3.6.0: la lista del dropdown de posición se dibuja al final (_dibujar_dropdown)
-
-            # Rasgo / Característica (Dropdown)
             draw_text(screen, "Rasgo Especial:", (530, 335), size='sm', color='blanco')
-            btn_rasgo = R_J_RASGO
-            is_drop_rasgo = (estado.get('edit_dropdown_activo') == 'rasgo')
-            pygame.draw.rect(screen, (20, 26, 46), btn_rasgo, border_radius=6)
-            pygame.draw.rect(screen, (0, 255, 136) if is_drop_rasgo else (0, 191, 255), btn_rasgo, width=1, border_radius=6)
-            
             rg = jugador_sel.get('rasgo')
-            rg_label = "NINGUNO" if (not rg or rg == "ninguno") else str(rg).upper()
-            draw_text(screen, rg_label, (542, 368), size='sm', color='dorado')
+            _campo(screen, R_J_RASGO, "NINGUNO" if (not rg or rg == "ninguno") else str(rg).upper(),
+                   estado.get('edit_dropdown_activo') == 'rasgo', size='sm', color='dorado')
             draw_text(screen, "▼", (800, 368), size='sm', color='blanco')
-            
-            if click_pos and btn_rasgo.collidepoint(click_pos):
-                estado['edit_dropdown_activo'] = 'rasgo' if not is_drop_rasgo else None
+            if click_pos and R_J_RASGO.collidepoint(click_pos):
+                estado['edit_dropdown_activo'] = None if estado.get('edit_dropdown_activo') == 'rasgo' else 'rasgo'
                 estado['edit_input_activo'] = None
-                
-            # v3.6.0: la lista del dropdown de rasgo se dibuja al final (_dibujar_dropdown)
-
-            # v0.8.x: Potencial (techo de OVR). Input numérico editable a mano, junto al Rasgo.
-            # Si el dict viene sin la clave (0) mostramos el OVR como base sensata en vez de "0".
+            # v0.8.x: Potencial (techo de OVR); sin la clave (0) se muestra el OVR.
             draw_text(screen, "Potencial (máx. 99):", (860, 335), size='sm', color='blanco')
-            _pot_display = jugador_sel.get('potencial') or jugador_sel.get('overall', 70) or 70
-            inp_play_pot = R_J_POTENCIAL
-            is_play_pot_act = (estado.get('edit_input_activo') == 'player_potencial')
-            pygame.draw.rect(screen, (10, 14, 26) if is_play_pot_act else (20, 26, 46), inp_play_pot, border_radius=6)
-            pygame.draw.rect(screen, (0, 255, 136) if is_play_pot_act else (0, 191, 255), inp_play_pot, width=1, border_radius=6)
-            draw_text(screen, str(_pot_display), (872, 368), size='md', color='blanco')
+            _campo(screen, R_J_POTENCIAL, str(jugador_sel.get('potencial') or jugador_sel.get('overall', 70) or 70),
+                   activo == 'player_potencial')
+            activar(R_J_POTENCIAL, 'player_potencial')
 
-            if click_pos and inp_play_pot.collidepoint(click_pos):
-                estado['edit_input_activo'] = 'player_potencial'
-                estado['edit_dropdown_activo'] = None
-
-        # --- PANEL DE ACCIONES INFERIORES: EXPORTAR, IMPORTAR, GUARDAR (X=510, Y=430) ---
+        # --- ACCIONES: EXPORTAR, IMPORTAR, RESTAURAR ---
         actions_y = 430
         draw_text(screen, "IMPORTAR / EXPORTAR BASE DE DATOS", (530, actions_y), size='sm', color='dorado')
-        
-        # Input ruta de archivo
-        inp_file_rect = R_ARCHIVO
-        is_file_act = (estado.get('edit_input_activo') == 'file_path')
-        pygame.draw.rect(screen, (10, 14, 26) if is_file_act else (20, 26, 46), inp_file_rect, border_radius=6)
-        pygame.draw.rect(screen, (0, 255, 136) if is_file_act else (0, 191, 255), inp_file_rect, width=1, border_radius=6)
-        draw_text(screen, estado['edit_filepath'], (542, actions_y + 33), size='sm', color='blanco')
-        
-        if click_pos and inp_file_rect.collidepoint(click_pos):
-            estado['edit_input_activo'] = 'file_path'
-            estado['edit_dropdown_activo'] = None
-            
-        # Botones de Importación / Exportación
-        btn_export, btn_import = R_EXPORTAR, R_IMPORTAR
+        _campo(screen, R_ARCHIVO, estado['edit_filepath'], activo == 'file_path', size='sm')
+        activar(R_ARCHIVO, 'file_path')
         # v3.9.0: un solo texto por botón (antes draw_button + draw_text lo escribían dos veces)
-        _boton(screen, btn_export, "EXPORTAR", btn_export.collidepoint(mouse_pos))
-        _boton(screen, btn_import, "IMPORTAR", btn_import.collidepoint(mouse_pos))
-
-        # Botón RESTAURAR BASE
-        btn_reset = R_RESTAURAR                                   # v3.6.0
-        _boton(screen, btn_reset, "RESTAURAR BASE", btn_reset.collidepoint(mouse_pos), color='rojo')
+        _boton(screen, R_EXPORTAR, "EXPORTAR", R_EXPORTAR.collidepoint(mouse_pos))
+        _boton(screen, R_IMPORTAR, "IMPORTAR", R_IMPORTAR.collidepoint(mouse_pos))
+        _boton(screen, R_RESTAURAR, "RESTAURAR BASE", R_RESTAURAR.collidepoint(mouse_pos), color='rojo')   # v3.6.0
 
         # Mensajes de éxito / error temporales
         msg = estado.get('edit_mensaje', '')
@@ -874,67 +991,50 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             if pygame.time.get_ticks() - estado.get('edit_mensaje_ticks', 0) > 4000:
                 estado['edit_mensaje'] = ''
             else:
-                draw_text(screen, msg, (750, actions_y + 83), size='sm', color='verde' if "éxito" in msg or "cargado" in msg else 'rojo')
-                
-        # Clics de importación / exportación
+                draw_text(screen, msg, (750, actions_y + 83), size='sm',
+                          color='verde' if "éxito" in msg or "cargado" in msg else 'rojo')
+
         if click_pos:
-            if btn_export.collidepoint(click_pos):
+            if R_EXPORTAR.collidepoint(click_pos):
                 try:
                     fpath = estado['edit_filepath']
                     with open(fpath, "w", encoding="utf-8") as f:
                         json.dump(db, f, ensure_ascii=False, indent=2)
-                    estado['edit_mensaje'] = f"Datos exportados con éxito a {fpath}"
-                    estado['edit_mensaje_ticks'] = pygame.time.get_ticks()
+                    _mensaje(estado, f"Datos exportados con éxito a {fpath}")
                 except Exception as e_exp:
-                    estado['edit_mensaje'] = f"Error al exportar: {str(e_exp)[:25]}"
-                    estado['edit_mensaje_ticks'] = pygame.time.get_ticks()
-                    
-            elif btn_import.collidepoint(click_pos):
+                    _mensaje(estado, f"Error al exportar: {str(e_exp)[:25]}")
+            elif R_IMPORTAR.collidepoint(click_pos):
                 try:
                     fpath = estado['edit_filepath']
                     if os.path.exists(fpath):
                         with open(fpath, "r", encoding="utf-8") as f:
                             imported_db = json.load(f)
-                            # Validar que tenga las ligas clave
-                            if any(lid in imported_db for lid in _paises.TIPOS_LIGA):   # v3.7.0
-                                estado['edited_db'] = imported_db
-                                db = imported_db
-                                # Forzar recargar standings y vistas
-                                estado['edit_equipo_idx'] = 0
-                                estado['edit_jugador_idx'] = -1
-                                estado['edit_mensaje'] = "¡JSON cargado con éxito en memoria!"
-                            else:
-                                estado['edit_mensaje'] = "Archivo JSON inválido."
-                        estado['edit_mensaje_ticks'] = pygame.time.get_ticks()
+                        if any(lid in imported_db for lid in _paises.TIPOS_LIGA):   # v3.7.0
+                            estado['edited_db'] = db = imported_db
+                            estado['edit_equipo_idx'] = 0
+                            estado['edit_jugador_idx'] = -1
+                            _mensaje(estado, "¡JSON cargado con éxito en memoria!")
+                        else:
+                            _mensaje(estado, "Archivo JSON inválido.")
                     else:
-                        estado['edit_mensaje'] = "El archivo no existe."
-                        estado['edit_mensaje_ticks'] = pygame.time.get_ticks()
+                        _mensaje(estado, "El archivo no existe.")
                 except Exception as e_imp:
-                    estado['edit_mensaje'] = f"Error de importación: {str(e_imp)[:25]}"
-                    estado['edit_mensaje_ticks'] = pygame.time.get_ticks()
-                    
-            elif btn_reset.collidepoint(click_pos):
+                    _mensaje(estado, f"Error de importación: {str(e_imp)[:25]}")
+            elif R_RESTAURAR.collidepoint(click_pos):
                 db = restaurar_base(estado)                       # v3.6.0
 
-        # --- BOTONES PRINCIPALES INFERIORES: APLICAR Y VOLVER (X=40, Y=610) ---
-        btn_aplicar, btn_volver = R_APLICAR, R_VOLVER
-        _boton(screen, btn_aplicar, "APLICAR Y GUARDAR", btn_aplicar.collidepoint(mouse_pos), 'md', 'verde')
-        _boton(screen, btn_volver, "VOLVER AL MENÚ", btn_volver.collidepoint(mouse_pos), 'md')
+        # --- BOTONES PRINCIPALES: APLICAR Y VOLVER ---
+        _boton(screen, R_APLICAR, "APLICAR Y GUARDAR", R_APLICAR.collidepoint(mouse_pos), 'md', 'verde')
+        _boton(screen, R_VOLVER, "VOLVER AL MENÚ", R_VOLVER.collidepoint(mouse_pos), 'md')
 
         # v3.6.0: lista del dropdown abierto, encima de todo lo demás
-        _dibujar_dropdown(screen, estado, mouse_pos, jugador_sel is not None)
+        _dibujar_dropdown(screen, estado, mouse_pos, aplica_drop)
 
         if click_pos:
-            if btn_aplicar.collidepoint(click_pos):
-                if guardar_base_datos(estado):
-                    estado['edit_mensaje'] = "¡Base de datos guardada con éxito!"
-                    estado['edit_mensaje_ticks'] = pygame.time.get_ticks()
-                else:
-                    estado['edit_mensaje'] = "Error al escribir en disco."
-                    estado['edit_mensaje_ticks'] = pygame.time.get_ticks()
-                    
-            elif btn_volver.collidepoint(click_pos):
-                # Limpiar referencias temporales del editor
+            if R_APLICAR.collidepoint(click_pos):
+                ok = guardar_base_datos(estado)
+                _mensaje(estado, "¡Base de datos guardada con éxito!" if ok else "Error al escribir en disco.")
+            elif R_VOLVER.collidepoint(click_pos):
                 estado.pop('edit_mensaje', None)
                 estado.pop('edit_input_activo', None)
                 estado.pop('edit_dropdown_activo', None)
@@ -944,5 +1044,5 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
     except Exception as e_err:
         logger.error(f"Error crítico en pantalla del editor: {e_err}", exc_info=True)
         return 'menu'
-        
+
     return None

@@ -349,8 +349,8 @@ def _salir_direccion(estado, es_amistoso, modo_prepartido):
 def _rects_cabecera() -> dict:
     """v2.5.0: controles de la cabecera de dirección (formación, estilo, mentalidad y botones)."""
     return {
-        'form_prev': pygame.Rect(300, 22, 30, 40), 'form_box': pygame.Rect(334, 22, 80, 40),
-        'form_next': pygame.Rect(418, 22, 30, 40),
+        # v4.7.0: la formación es un dropdown con un "?" de tácticas afines al lado
+        'form_box': pygame.Rect(300, 22, 114, 40), 'form_ayuda': pygame.Rect(418, 22, 30, 40),
         'tact_prev': pygame.Rect(456, 22, 30, 40), 'tact_box': pygame.Rect(490, 22, 127, 40),
         'tact_next': pygame.Rect(621, 22, 30, 40),
         'ment_prev': pygame.Rect(659, 22, 30, 40), 'ment_box': pygame.Rect(693, 22, 127, 40),
@@ -358,6 +358,18 @@ def _rects_cabecera() -> dict:
         'auto': pygame.Rect(862, 18, 80, 48), 'ok': pygame.Rect(948, 18, 160, 48),
         'cancel': pygame.Rect(1114, 18, 150, 48),
     }
+
+
+def _rects_lista_form(n: int) -> list:
+    """v4.7.0: opciones del dropdown de formación, debajo de la caja."""
+    box = _rects_cabecera()['form_box']
+    return [pygame.Rect(box.x, box.bottom + 4 + i * 24, box.width + 34, 24) for i in range(n)]
+
+
+def _rect_afines(n: int) -> pygame.Rect:
+    """v4.7.0: recuadro del "?" con las tácticas afines de la formación."""
+    box = _rects_cabecera()['form_box']
+    return pygame.Rect(box.x, box.bottom + 4, 470, 70 + n * 26)
 
 
 def _flash(estado, msg, seg=2.0):
@@ -566,14 +578,27 @@ def _render_direccion(screen, estado, mi_equipo, alin, es_amistoso, modo_prepart
         draw_text(screen, _truncar(mi_equipo.nombre.upper(), 30), (16, 50), size='sm', color='verde')
 
     rc = _rects_cabecera()
-    r_f_prev, r_f_box, r_f_next = rc['form_prev'], rc['form_box'], rc['form_next']
+    r_f_box, r_f_ayuda = rc['form_box'], rc['form_ayuda']
+    # v4.7.0: con el dropdown o el "?" abiertos, teclas y clics van solo a ellos
+    form_abierto, afines_abierto = bool(estado.get('team_form_abierto')), bool(estado.get('team_afines_abierto'))
+    popup_keys, popup_click = [], None
+    if form_abierto or afines_abierto:
+        popup_keys, key_events = key_events, []
+        popup_click, click_pos = click_pos, None
     r_t_prev, r_t_box, r_t_next = rc['tact_prev'], rc['tact_box'], rc['tact_next']
     r_m_prev, r_m_box, r_m_next = rc['ment_prev'], rc['ment_box'], rc['ment_next']
     b_auto, b_ok, b_cancel = rc['auto'], rc['ok'], rc['cancel']
     ment = getattr(mi_equipo, 'mentalidad', 'normal')
     ment = ment if ment in MENTALIDADES else 'normal'
+    pygame.draw.rect(screen, (15, 22, 40), r_f_box, border_radius=6)        # v4.7.0: dropdown
+    pygame.draw.rect(screen, COLORS['verde'], r_f_box, width=2, border_radius=6)
+    draw_text(screen, "FORMACIÓN", (r_f_box.x + 4, r_f_box.y - 16), size='sm', color='azul', shadow=False)
+    s_f = get_font('md').render(alin.formacion, True, COLORS['verde'])
+    screen.blit(s_f, s_f.get_rect(midleft=(r_f_box.x + 10, r_f_box.centery)))
+    fx, fy = r_f_box.right - 16, r_f_box.centery
+    pygame.draw.polygon(screen, COLORS['verde'], [(fx - 6, fy - 3), (fx + 6, fy - 3), (fx, fy + 5)])
+    draw_styled_button(screen, r_f_ayuda, "?", r_f_ayuda.collidepoint(mouse_pos), COLORS['verde'])
     for prev, box, nxt, valor, etiqueta, color in (
-            (r_f_prev, r_f_box, r_f_next, alin.formacion, "FORMACIÓN", COLORS['verde']),
             (r_t_prev, r_t_box, r_t_next, NOMBRE_ESTILO.get(mi_equipo.estilo_dt or TACTICAS[0],
                                                              (mi_equipo.estilo_dt or TACTICAS[0]).capitalize()),
              "ESTILO", COLORS['dorado']),
@@ -592,10 +617,10 @@ def _render_direccion(screen, estado, mi_equipo, alin, es_amistoso, modo_prepart
     draw_styled_button(screen, b_cancel, "DESHACER" if en_partido else "CANCELAR", b_cancel.collidepoint(mouse_pos), COLORS['rojo'])
 
     fam = int(float((mi_equipo.tactica_familiaridad or {}).get(mi_equipo.estilo_dt, 0.0)) * 100)
-    ayuda = ("Titular↔banco = cambio (máx. 5, el que sale no vuelve)  ·  titular↔titular = cambio de puesto"
-             if en_partido else "Clic en un jugador para seleccionarlo y clic en otro para intercambiarlos")
-    pref_f = F.pref(alin.formacion)
-    draw_text(screen, f"{ayuda}  ·  Estilo preferido de {alin.formacion}: {NOMBRE_ESTILO.get(pref_f, pref_f)}  ·  Familiaridad {fam}%",
+    ayuda = ("Titular↔banco = cambio (máx. 5, el que sale no vuelve)  ·  titular↔titular = cambio de puesto  ·  "
+             if en_partido else "")
+    afines_txt = ", ".join(NOMBRE_ESTILO.get(t, t) for t in F.afines(alin.formacion))
+    draw_text(screen, f"{ayuda}Estilos afines a {alin.formacion}: {afines_txt}  ·  Familiaridad {fam}%",
               (16, 76), size='sm', color='azul', shadow=False)
 
     # --- Campo con los 11 (slot k = titulares[k]) ---
@@ -771,8 +796,56 @@ def _render_direccion(screen, estado, mi_equipo, alin, es_amistoso, modo_prepart
         estado['team_cursor'] = cur
         pygame.draw.rect(screen, (255, 255, 255), hits[cur][0].inflate(6, 6), width=2, border_radius=8)
 
-    # --- Teclado ---
+    # --- v4.7.0: dropdown de formación y "?" de afines (encima de todo) ---
     accion = None
+    if form_abierto:
+        rs = _rects_lista_form(len(form_lista))
+        cur_f = int(estado.get('team_form_cursor', form_lista.index(alin.formacion)
+                                if alin.formacion in form_lista else 0)) % len(form_lista)
+        for ev in popup_keys:
+            if ev.key in (pygame.K_DOWN, pygame.K_UP):
+                cur_f = (cur_f + (1 if ev.key == pygame.K_DOWN else -1)) % len(form_lista)
+            elif ev.key in (pygame.K_RETURN, pygame.K_SPACE):
+                accion = ('form_set', form_lista[cur_f])
+            elif ev.key == pygame.K_ESCAPE:
+                estado['team_form_abierto'] = False
+        if popup_click:
+            hit = next((i for i, r in enumerate(rs) if r.collidepoint(popup_click)), None)
+            if hit is not None:
+                accion = ('form_set', form_lista[hit])
+            else:
+                estado['team_form_abierto'] = False
+        estado['team_form_cursor'] = cur_f
+        if accion or not estado.get('team_form_abierto'):
+            estado['team_form_abierto'] = False
+            estado.pop('team_form_cursor', None)
+        else:
+            pygame.draw.rect(screen, (10, 14, 26), rs[0].union(rs[-1]).inflate(6, 6), border_radius=6)
+            pygame.draw.rect(screen, COLORS['verde'], rs[0].union(rs[-1]).inflate(6, 6), width=2, border_radius=6)
+            for i, (nombre_f, r) in enumerate(zip(form_lista, rs)):
+                if i == cur_f or r.collidepoint(mouse_pos):
+                    pygame.draw.rect(screen, (30, 50, 80), r, border_radius=4)
+                # dorado = la actual; verde = tu estilo es afín a esa formación
+                draw_text(screen, nombre_f, (r.x + 8, r.y + 3), size='sm', shadow=False,
+                          color='dorado' if nombre_f == alin.formacion else
+                          'verde' if mi_equipo.estilo_dt in F.afines(nombre_f) else 'blanco')
+    elif afines_abierto:
+        if popup_click or any(ev.key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_SPACE) for ev in popup_keys):
+            estado['team_afines_abierto'] = False
+        else:
+            af = F.afines(alin.formacion)
+            r = _rect_afines(len(af))
+            pygame.draw.rect(screen, (10, 14, 26), r, border_radius=8)
+            pygame.draw.rect(screen, COLORS['dorado'], r, width=2, border_radius=8)
+            draw_text(screen, f"TÁCTICAS AFINES A {alin.formacion}", (r.x + 14, r.y + 10), size='sm', color='dorado')
+            for i, t in enumerate(af):
+                tuya = t == mi_equipo.estilo_dt
+                draw_text(screen, f"{NOMBRE_ESTILO.get(t, t)}{'  ← la tuya' if tuya else ''}",
+                          (r.x + 14, r.y + 38 + i * 26), size='sm', color='verde' if tuya else 'blanco')
+            draw_text(screen, "Con una afín rindes un poco más · Clic o ESC cierra",
+                      (r.x + 14, r.bottom - 26), size='sm', color='azul', shadow=False)
+
+    # --- Teclado ---
     for ev in key_events:
         if ev.key == pygame.K_ESCAPE:
             accion = 'soltar' if sel is not None else 'cancelar'
@@ -791,8 +864,10 @@ def _render_direccion(screen, estado, mi_equipo, alin, es_amistoso, modo_prepart
 
     # --- Clics ---
     if click_pos and accion is None:
-        if r_f_prev.collidepoint(click_pos) or r_f_next.collidepoint(click_pos):
-            accion = ('form', -1 if r_f_prev.collidepoint(click_pos) else 1)
+        if r_f_box.collidepoint(click_pos):          # v4.7.0: abre el dropdown
+            estado['team_form_abierto'] = True
+        elif r_f_ayuda.collidepoint(click_pos):
+            estado['team_afines_abierto'] = True
         elif r_t_prev.collidepoint(click_pos) or r_t_next.collidepoint(click_pos):
             accion = ('tact', -1 if r_t_prev.collidepoint(click_pos) else 1)
         elif r_m_prev.collidepoint(click_pos) or r_m_next.collidepoint(click_pos):
@@ -847,9 +922,12 @@ def _render_direccion(screen, estado, mi_equipo, alin, es_amistoso, modo_prepart
         F.normalizar_convocados(alin, jugadores)
         estado['team_sel'] = None
         _flash(estado, f"Mejor once y banco para {alin.formacion}")
-    elif isinstance(accion, tuple) and accion[0] == 'form':
-        i = form_lista.index(alin.formacion) if alin.formacion in form_lista else 0
-        alin.formacion = form_lista[(i + accion[1]) % len(form_lista)]
+    elif isinstance(accion, tuple) and accion[0] in ('form', 'form_set'):
+        if accion[0] == 'form_set':
+            alin.formacion = accion[1]
+        else:
+            i = form_lista.index(alin.formacion) if alin.formacion in form_lista else 0
+            alin.formacion = form_lista[(i + accion[1]) % len(form_lista)]
         alin.titulares = F.acomodar_en_puestos(alin.titulares, jugadores, alin.formacion)
         estado['team_sel'] = None
         _flash(estado, f"Formación {alin.formacion}", 1.2)

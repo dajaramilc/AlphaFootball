@@ -38,8 +38,9 @@ def acreditar_venta(estado: dict, jugador, comprador, monto: int, asunto: Option
         from alpha_football.negociacion import dinero_exacto
         nombre = getattr(jugador, 'nombre_completo', None) or f"{jugador.nombre} {jugador.apellido}"
         C.enviar(estado, remitente, asunto or f"Venta cerrada: {nombre}",
-                 f"Se vendió a {nombre} a {getattr(comprador, 'nombre', 'otro club')} por {dinero_exacto(monto)}. "
-                 f"El club retiene el {int(RETENCION_CLUB * 100)}%: designamos {dinero_exacto(neto)} a presupuesto."
+                 f"Le confirmamos la venta de {nombre} a {getattr(comprador, 'nombre', 'otro club')} por "
+                 f"{dinero_exacto(monto)}. El club retiene el {int(RETENCION_CLUB * 100)}% y designamos "
+                 f"{dinero_exacto(neto)} a su presupuesto de fichajes."
                  + (f" {extra}" if extra else ""),
                  C.accion('historial_pases_screen', "VER HISTORIAL"))
     except Exception as e:
@@ -84,6 +85,10 @@ def vender(estado: dict, of: dict, asunto: Optional[str] = None, remitente: str 
     from alpha_football import traspasos_pendientes as TP
     if TP.pendiente_de(estado, jug) is not None:
         logger.warning(f"{jug.nombre_completo} ya está vendido: se va cuando abra el mercado.")
+        return False
+    from alpha_football.market import traspasado_en_ventana
+    if traspasado_en_ventana(estado, jug):
+        logger.warning(f"Oferta descartada: {jug.nombre_completo} ya fue traspasado en esta ventana.")
         return False
     estado['ofertas_recibidas'] = [o for o in (estado.get('ofertas_recibidas') or [])
                                    if o.get('jugador') is not jug]
@@ -174,7 +179,8 @@ def _resolver_ventas(estado: dict, azar: random.Random) -> None:
         else:
             retirar(estado, of)
             C.enviar(estado, 'club', f"{comp.nombre} se retira",
-                     f"No pagará {dinero_exacto(c['pedido'])} por {nombre}. La oferta quedó sin efecto.")
+                     f"Tras estudiar su contraoferta, le comunicamos que no pagaremos {dinero_exacto(c['pedido'])} "
+                     f"por {nombre}. Damos por retirada nuestra oferta.", firma=f"La Directiva de {comp.nombre}")
 
 
 def _resolver_compras(estado: dict, azar: random.Random) -> None:
@@ -192,13 +198,15 @@ def _resolver_compras(estado: dict, azar: random.Random) -> None:
         if azar.random() < PROB_ACEPTA_ANALISIS:
             compra = {k: a[k] for k in ('jugador_id', 'club_id', 'monto', 'temporada')}
             C.enviar(estado, 'club', f"{club.nombre} acepta tu oferta",
-                     f"Aceptan {dinero_exacto(a['monto'])} por {j.nombre_completo}. "
-                     "Negocia el contrato con el jugador mientras la ventana siga abierta.",
-                     {'pantalla': 'negociacion_screen', 'texto': "NEGOCIAR CONTRATO", 'compra': compra})
+                     f"Aceptamos su oferta de {dinero_exacto(a['monto'])} por {j.nombre_completo}. Puede negociar "
+                     "el contrato con el jugador mientras la ventana de pases siga abierta.",
+                     {'pantalla': 'negociacion_screen', 'texto': "NEGOCIAR CONTRATO", 'compra': compra},
+                     firma=f"La Directiva de {club.nombre}")
         else:
             C.enviar(estado, 'club', f"{club.nombre} rechaza tu oferta",
-                     f"No vende a {j.nombre_completo} por {dinero_exacto(a['monto'])}. "
-                     f"Pide {dinero_exacto(minimo_club(j, club))}.")
+                     f"Lamentamos comunicarle que no venderemos a {j.nombre_completo} por "
+                     f"{dinero_exacto(a['monto'])}. Estudiaríamos una oferta de {dinero_exacto(minimo_club(j, club))}.",
+                     firma=f"La Directiva de {club.nombre}")
 
 
 def _ubicar_contrato(estado: dict, a: dict) -> tuple:
@@ -241,13 +249,15 @@ def _resolver_contratos(estado: dict, azar: random.Random) -> None:
         if azar.random() >= PROB_ACEPTA_ANALISIS:
             pedido = N.salario_pedido(j, a['modo'], a['clausula_mult'])
             C.enviar(estado, 'jugador', f"{nombre} no acepta tu propuesta",
-                     f"No firma por {N.dinero_exacto(a['salario'])} al año. Pide {N.dinero_exacto(pedido)}.",
+                     f"Míster, lo pensé bien y por {N.dinero_exacto(a['salario'])} al año no firmo. Creo que "
+                     f"lo justo son {N.dinero_exacto(pedido)}. Si lo mejoran, hablamos.",
                      C.accion('plantilla_screen', "VER PLANTILLA") if renueva else None)
             continue
         if renueva:
             N.renovar(estado, j, a['salario'], a['anios'], a['clausula_mult'])
             C.enviar(estado, 'jugador', f"{nombre} acepta renovar",
-                     f"Firma hasta {a['anios']} años por {N.dinero_exacto(a['salario'])} al año.",
+                     f"Míster, acepto: firmo por {a['anios']} años y {N.dinero_exacto(a['salario'])} al año. "
+                     "Gracias por la confianza, voy a devolverla en la cancha.",
                      C.accion('plantilla_screen', "VER PLANTILLA"))
             continue
         ok, msg = N.completar_fichaje(estado, j, club, a['monto'], a['salario'], a['anios'], a['clausula_mult'])

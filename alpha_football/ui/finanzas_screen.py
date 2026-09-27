@@ -2,8 +2,9 @@
 """
 ALPHA FOOTBALL — Finanzas (Pygame)
 v2.9.0: saldo, ingresos y gastos de la temporada (taquilla, patrocinio, salarios,
-fichajes, ventas, premios), proyección al cierre, masa salarial, contratos que vencen
-y aviso de quiebra.
+fichajes, ventas, premios), proyección al cierre, masa salarial y aviso de quiebra.
+v4.7.0: valor del club, barra de masa salarial y espaldarazo financiero (antes en OBJETIVOS);
+los contratos que vencen ya no se muestran aquí.
 """
 from __future__ import annotations
 
@@ -31,7 +32,13 @@ logger = logging.getLogger(__name__)
 
 R_SALDO = pygame.Rect(16, 76, 400, 300)
 R_LIBRO = pygame.Rect(432, 76, 832, 300)
-R_CONTR = pygame.Rect(16, 392, 1248, 304)      # v3.6.0: termina en y=696 (barra de atajos)
+R_ESP = pygame.Rect(16, 392, 1248, 304)        # v4.7.0: espaldarazo (antes contratos); termina en y=696
+R_ESPALDARAZO = pygame.Rect(R_ESP.x + 20, R_ESP.y + 150, 460, 44)
+R_OVERLAY = pygame.Rect(SCREEN_W // 2 - 360, 180, 720, 340)
+
+
+def _rects_espaldarazo() -> list:
+    return [pygame.Rect(R_OVERLAY.x + 20, R_OVERLAY.y + 70 + i * 64, R_OVERLAY.width - 40, 54) for i in range(3)]
 
 
 def _volver() -> pygame.Rect:
@@ -51,14 +58,39 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         mi, liga = estado.get('mi_equipo'), estado.get('liga')
         if mi is None or liga is None:
             return 'league_screen'
+        from alpha_football import directiva as D
+        from alpha_football.ui.objetivos_screen import barra, color_barra_tope, _velo
+        obj = D.definir_objetivo(estado) or {}
         mouse_pos = pygame.mouse.get_pos()
+        abierto = bool(estado.get('espaldarazo_abierto'))
+        nivel = None
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
                 return 'menu'
-            if ev.type == pygame.KEYDOWN and ev.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
+            clic = ev.pos if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1 else None
+            esc = ev.type == pygame.KEYDOWN and ev.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE)
+            if abierto:       # overlay del espaldarazo (1/2/3 o clic; ESC cierra)
+                if ev.type == pygame.KEYDOWN and ev.key in (pygame.K_1, pygame.K_2, pygame.K_3):
+                    nivel = {pygame.K_1: 0, pygame.K_2: 1, pygame.K_3: 2}[ev.key]
+                elif esc:
+                    estado.pop('espaldarazo_abierto', None)
+                    abierto = False
+                elif clic:
+                    nivel = next((i for i, r in enumerate(_rects_espaldarazo()) if r.collidepoint(clic)), None)
+                continue
+            if esc or (clic and _volver().collidepoint(clic)):
+                estado.pop('espaldarazo_msg', None)
                 return 'league_screen'
-            if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1 and _volver().collidepoint(ev.pos):
-                return 'league_screen'
+            if clic and R_ESPALDARAZO.collidepoint(clic) and not obj.get('espaldarazo'):
+                estado['espaldarazo_abierto'] = abierto = True
+        if abierto and nivel is not None:
+            try:
+                _ok, estado['espaldarazo_msg'] = D.pedir_espaldarazo(estado, nivel)
+            except Exception as e_esp:
+                logger.error(f"Error al pedir el espaldarazo: {e_esp}")
+            estado.pop('espaldarazo_abierto', None)
+            abierto = False
+            obj = D.definir_objetivo(estado) or {}
 
         lib = F.libro(estado)
         n = max(1, int(liga.num_jornadas or 10))
@@ -80,20 +112,22 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         x, y = R_SALDO.x + 20, R_SALDO.y + 14
         draw_text(screen, "SALDO", (x, y), size='sm', color='azul')
         draw_text(screen, _m(mi.balance), (x, y + 26), size='xl', color='verde' if mi.balance >= 0 else 'rojo')
-        draw_text(screen, f"Masa salarial {_m(masa)} / año", (x, y + 96), size='sm', color='blanco')
-        draw_text(screen, f"Por jornada (promedio): {'+' if por_jornada >= 0 else ''}{_m(por_jornada)}",
-                  (x, y + 124), size='sm', color='verde' if por_jornada >= 0 else 'rojo')
         draw_text(screen, f"Proyección al cierre ({restantes} jornadas): {_m(proyeccion)}",
-                  (x, y + 152), size='sm', color='verde' if proyeccion >= 0 else 'rojo')
-        rojo = int(dc.get('jornadas_en_rojo', 0) or 0)
-        if mi.balance < 0:
-            draw_text(screen, f"¡EN ROJO! {rojo}/{F.JORNADAS_ROJO_VENTA} jornadas.", (x, y + 196), size='sm', color='rojo')
-            draw_text(screen, "Al llegar a 3 venden a tu mejor jugador.", (x, y + 220), size='sm', color='rojo')
-            draw_text(screen, "Cerrar la temporada así = despido.", (x, y + 244), size='sm', color='rojo')
-        else:
-            draw_text(screen, "Saldo negativo: no puedes fichar.", (x, y + 196), size='sm', color='azul')
-            draw_text(screen, "3 jornadas en rojo = venta forzada.", (x, y + 220), size='sm', color='azul')
-            draw_text(screen, "Cerrar la temporada en rojo = despido.", (x, y + 244), size='sm', color='azul')
+                  (x, y + 90), size='sm', color='verde' if proyeccion >= 0 else 'rojo')
+        # v4.7.0: valor del club = valor de mercado de la plantilla + saldo
+        valor = F.valor_club(mi)
+        draw_text(screen, "VALOR DEL CLUB", (x, y + 124), size='sm', color='azul')
+        draw_text(screen, _m(valor), (x, y + 146), size='lg', color='verde' if valor >= 0 else 'rojo')
+        proy_valor = valor - mi.balance + proyeccion
+        draw_text(screen, f"Proyección al cierre: {_m(proy_valor)}", (x, y + 184), size='sm',
+                  color='verde' if proy_valor >= 0 else 'rojo')
+        try:   # v4.7.0: barra de masa salarial contra el tope de la directiva
+            tope = int(obj.get('tope_salarial', 0) or 0)
+            frac_m = masa / tope if tope else 0.0
+            draw_text(screen, f"MASA SALARIAL  {_m(masa)} / tope {_m(tope)}", (x, y + 218), size='sm', color='blanco')
+            barra(screen, pygame.Rect(x, y + 244, R_SALDO.width - 40, 18), frac_m, color_barra_tope(frac_m))
+        except Exception as e_masa:
+            logger.error(f"No se pudo mostrar la barra de masa salarial: {e_masa}")
 
         # --- Libro de la temporada ---
         draw_panel(screen, R_LIBRO)
@@ -112,28 +146,50 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         neto = sum(v for _t, v in ingresos) - sum(v for _t, v in gastos)
         draw_text(screen, f"NETO DE LA TEMPORADA: {'+' if neto >= 0 else ''}{_m(neto)}", (lx, ly + 170),
                   size='lg', color='verde' if neto >= 0 else 'rojo')
-        ant = dc.get('finanzas_anterior')
-        if ant:
-            neto_ant = sum(ant.get(k, 0) for k in ('taquilla', 'patrocinio', 'ventas', 'premios', 'directiva')) \
-                       - sum(ant.get(k, 0) for k in ('salarios', 'fichajes'))
-            draw_text(screen, f"Temporada {ant.get('temporada')}: neto {'+' if neto_ant >= 0 else ''}{_m(neto_ant)}",
-                      (lx, ly + 222), size='sm', color='azul')
-        draw_text(screen, "Taquilla solo de local (más si ganas) · patrocinio fijo por jornada · premios al cierre",
-                  (lx, ly + 250), size='sm', color='azul')
+        deuda = D.deuda_espaldarazo(estado)      # v4.6.0: deuda del espaldarazo financiero
+        if deuda:
+            draw_text(screen, f"Deuda con la directiva: {_m(deuda)} (se descuenta al cierre)",
+                      (lx + 420, ly + 110), size='sm', color='rojo')
+        if mi.balance < 0:
+            rojo = int(dc.get('jornadas_en_rojo', 0) or 0)
+            draw_text(screen, f"¡EN ROJO! {rojo}/{F.JORNADAS_ROJO_VENTA} jornadas: al llegar a {F.JORNADAS_ROJO_VENTA} "
+                              f"venden a tu mejor jugador. Cerrar así: −{F.PUNTOS_QUIEBRA} pts.",
+                      (lx, ly + 236), size='sm', color='rojo')
 
-        # --- Contratos ---
-        draw_panel(screen, R_CONTR)
-        draw_text(screen, "CONTRATOS QUE VENCEN (1 año o menos) — se van libres al cerrar la temporada si no renuevas",
-                  (R_CONTR.x + 20, R_CONTR.y + 12), size='sm', color='dorado')
-        vencen = sorted([j for j in mi.jugadores if int(getattr(j, 'contrato_anios', 2) or 2) <= 1],
-                        key=lambda j: -j.overall)
-        if not vencen:
-            draw_text(screen, "Ninguno. (Renovaciones: FINANZAS > CONTRATOS o la ficha en PLANTILLA)",
-                      (R_CONTR.x + 20, R_CONTR.y + 46), size='sm', color='blanco')
-        for i, j in enumerate(vencen[:9]):
-            draw_text(screen, f"{j.posicion}  {j.nombre_completo[:28]}  ·  {j.edad} años  ·  media {j.overall}  ·  "
-                              f"salario {_m(j.salario)}/año  ·  cláusula {_m(j.clausula)}",
-                      (R_CONTR.x + 20, R_CONTR.y + 44 + i * 28), size='sm', color='blanco')
+        # --- v4.7.0: espaldarazo financiero (antes en OBJETIVOS) ---
+        draw_panel(screen, R_ESP)
+        ex, ey = R_ESP.x + 20, R_ESP.y + 14
+        draw_text(screen, "ESPALDARAZO FINANCIERO", (ex, ey), size='sm', color='dorado')
+        draw_text(screen, "Dinero de la directiva ahora a cambio de una meta de liga más alta. "
+                          "La mitad se descuenta de las ganancias al cierre.", (ex, ey + 34), size='sm', color='blanco')
+        draw_text(screen, f"Una vez por temporada, hasta la mitad de la liga, con calificación de DT de "
+                          f"{D.CALIF_ESPALDARAZO} o más.", (ex, ey + 62), size='sm', color='azul')
+        draw_text(screen, f"Meta de liga actual: {obj.get('texto', '—')}", (ex, ey + 96), size='sm', color='dorado')
+        pedido_esp = bool(obj.get('espaldarazo'))
+        draw_button(screen, R_ESPALDARAZO, "ESPALDARAZO YA PEDIDO" if pedido_esp else "PEDIR ESPALDARAZO FINANCIERO",
+                    (not pedido_esp) and R_ESPALDARAZO.collidepoint(mouse_pos))
+        msg_esp = estado.get('espaldarazo_msg')
+        if msg_esp:
+            draw_text(screen, msg_esp[:110], (ex, R_ESPALDARAZO.bottom + 16), size='sm',
+                      color='verde' if msg_esp.startswith(("Aprobado", "Ahora")) else 'rojo')
+
+        if abierto:     # overlay con las 3 opciones del espaldarazo
+            _velo(screen)
+            draw_panel(screen, R_OVERLAY)
+            pygame.draw.rect(screen, COLORS['dorado'], R_OVERLAY, width=2, border_radius=8)
+            draw_text(screen, "PEDIR ESPALDARAZO FINANCIERO", (R_OVERLAY.x + 20, R_OVERLAY.y + 18),
+                      size='md', color='dorado')
+            for op, r in zip(D.opciones_espaldarazo(estado), _rects_espaldarazo()):
+                disp = op['disponible']
+                if disp and r.collidepoint(mouse_pos):
+                    pygame.draw.rect(screen, COLORS['dorado'], r, width=2, border_radius=6)
+                t = (f"{op['nivel'] + 1}) +{int(op['pct'] * 100)}% (${op['monto'] / 1_000_000:.1f}M) → meta "
+                     f"{op['puestos']} puesto{'s' if op['puestos'] > 1 else ''} más alta"
+                     + ("" if disp else " (no disponible)"))
+                # el theme no tiene gris: las opciones no disponibles van en rojo
+                draw_text(screen, t, (r.x + 16, r.y + 14), size='md', color='verde' if disp else 'rojo')
+            draw_text(screen, "La mitad se descuenta de las ganancias al cerrar la temporada.  ·  ESC para cerrar",
+                      (R_OVERLAY.x + 20, R_OVERLAY.bottom - 40), size='sm', color='azul')
         return None
     except Exception as e:
         logger.error(f"Error en finanzas_screen: {e}", exc_info=True)

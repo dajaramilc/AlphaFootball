@@ -298,7 +298,7 @@ def actualizar_estadisticas_liga(liga: Any) -> None:
     """Recuenta los puntos y estadísticas de la tabla a partir del calendario."""
     try:
         for eq in liga.equipos:
-            eq.puntos = 0
+            eq.puntos = -int(getattr(eq, 'sancion_puntos', 0) or 0)   # v4.6.0: quiebra
             eq.pj = 0
             eq.pg = 0
             eq.pe = 0
@@ -345,7 +345,9 @@ def _correo_oferta(estado: dict, oferta: dict, prefijo: str) -> None:
         from alpha_football import correo as C
         jo, comp = oferta.get('jugador'), oferta.get('comprador')
         C.enviar(estado, 'club', f"{prefijo} {jo.nombre} {jo.apellido}",
-                 f"{getattr(comp, 'nombre', 'Un club')} ofrece ${int(oferta.get('monto', 0)):,}.",
+                 f"{getattr(comp, 'nombre', 'Un club')} ofrece ${int(oferta.get('monto', 0)):,} por el jugador"
+                 + (" (está en transferibles)" if getattr(jo, 'transferible', False) else "") + ". "
+                 "Puede aceptarla, rechazarla o contraofertar desde OFERTAS.",
                  C.accion('ofertas_screen', "VER OFERTAS"))
     except Exception as e:
         logger.error(f"No se pudo enviar el correo de la oferta: {e}")
@@ -453,12 +455,16 @@ def finalizar_jornada_liga(estado: dict, liga: Any, mi_equipo: Any, partido: Any
             if mi_equipo:
                 rivales = [e for e in liga.equipos if e.id != mi_equipo.id]
                 oferta_ia = market.crear_oferta_ui(mi_equipo, rivales, liga.jornada_actual, liga.num_jornadas)
+                if oferta_ia and market.traspasado_en_ventana(estado, oferta_ia.get('jugador')):
+                    oferta_ia = None   # recién llegado: no se lo puede traspasar en esta ventana
                 if oferta_ia:
                     estado.setdefault('ofertas_recibidas', []).append(oferta_ia)
                     _correo_oferta(estado, oferta_ia, "Oferta por")
                 _crear_ext = getattr(market, 'crear_oferta_exterior', None)
                 if _crear_ext:
                     oferta_ext = _crear_ext(mi_equipo, estado)
+                    if oferta_ext and market.traspasado_en_ventana(estado, oferta_ext.get('jugador')):
+                        oferta_ext = None
                     if oferta_ext:
                         estado.setdefault('ofertas_recibidas', []).append(oferta_ext)
                         _correo_oferta(estado, oferta_ext, "Oferta del exterior por")
@@ -474,6 +480,10 @@ def finalizar_jornada_liga(estado: dict, liga: Any, mi_equipo: Any, partido: Any
             recuperar_todos(estado)
             from alpha_football.directiva import revisar_pedido
             revisar_pedido(estado)
+            from alpha_football.directiva import avisar_tope_salarial   # v4.6.0
+            avisar_tope_salarial(estado)
+            from alpha_football.ofertas_dt import revisar_jornada as _ofertas_dt   # v4.6.0
+            _ofertas_dt(estado)
             from alpha_football import market as _mk2
             if _mk2.ventana_mercado_abierta(liga.jornada_actual, liga.num_jornadas):
                 from alpha_football.mercado_ia import pago_clausulas
@@ -509,6 +519,11 @@ def finalizar_jornada_liga(estado: dict, liga: Any, mi_equipo: Any, partido: Any
             revisar_objetivo_liga_asegurado(estado)
         except Exception as e_obj:
             logger.error(f"Error al revisar el objetivo de liga: {e_obj}")
+        try:  # v4.7.0: Marca y Juveniles (avisa una vez al cumplirse)
+            from alpha_football.directiva import revisar_objetivos_secundarios
+            revisar_objetivos_secundarios(estado)
+        except Exception as e_sec:
+            logger.error(f"Error al revisar Marca/Juveniles: {e_sec}")
     except Exception as e:
         logger.error(f"Error en finalizar_jornada_liga: {e}")
 
@@ -551,6 +566,59 @@ def _menu_tactico(screen: pygame.Surface, estado: dict, equipo: Any, alin: Any,
     return res
 
 
+def _render_rival_en_vivo(screen, estado: dict, rival: Any, lado: str, mouse_pos, click_pos) -> bool:
+    """Visor del rival durante el partido (reloj en pausa): los que están en cancha por línea,
+    con su nota en vivo, goles y amarillas, y los que ya salieron. True = cerrar."""
+    from alpha_football.partido_ctx import clave, nota_en_vivo
+    from alpha_football.estilos import NOMBRE_ESTILO
+    ctx = estado.get('sim_ctx')
+    velo = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
+    velo.fill((0, 0, 0, 170))
+    screen.blit(velo, (0, 0))
+    panel = R_RIVAL_PANEL
+    pygame.draw.rect(screen, (12, 18, 36), panel, border_radius=10)
+    pygame.draw.rect(screen, COLORS['rojo'], panel, width=3, border_radius=10)
+    cancha = list(ctx.en_cancha.get(lado, [])) if ctx is not None else []
+    filas = {p: [j for j in cancha if getattr(j, 'posicion', 'MED') == p] for p in ('DEL', 'MED', 'DEF', 'POR')}
+    otros = [j for j in cancha if getattr(j, 'posicion', 'MED') not in filas]
+    filas['MED'] += otros
+    formacion = "-".join(str(len(filas[p])) for p in ('DEF', 'MED', 'DEL'))
+    estilo = getattr(rival, 'estilo_dt', '') or 'anchelottismo'
+    titulo = f"RIVAL EN VIVO — {(getattr(rival, 'corto', None) or rival.nombre).upper()[:22]}"
+    draw_text(screen, titulo, (panel.centerx - get_font('lg').size(titulo)[0] // 2, panel.y + 12), size='lg', color='dorado')
+    sub = f"Formación {formacion} · Estilo {NOMBRE_ESTILO.get(estilo, estilo)} · Cambios {ctx.cambios.get(lado, 0) if ctx else 0}/5"
+    draw_text(screen, sub, (panel.centerx - get_font('sm').size(sub)[0] // 2, panel.y + 52), size='sm', color='azul')
+    campo = pygame.Rect(panel.x + 30, panel.y + 80, panel.width - 60, 440)
+    pygame.draw.rect(screen, (30, 110, 60), campo, border_radius=8)
+    pygame.draw.rect(screen, (220, 220, 220), campo, width=2, border_radius=8)
+    for fila, (p, js) in enumerate(filas.items()):
+        cy = campo.y + 55 + fila * 110
+        for n, j in enumerate(js):
+            cx = campo.x + int(campo.width * (n + 1) / (len(js) + 1))
+            k = clave(j)
+            nota = nota_en_vivo(ctx, k) if ctx else 6.0
+            color = COLORS['verde'] if nota >= 7.5 else ((235, 235, 235) if nota >= 6 else COLORS['rojo'])
+            pygame.draw.circle(screen, color, (cx, cy), 24)
+            pygame.draw.circle(screen, (10, 14, 26), (cx, cy), 24, width=2)
+            s = get_font('sm').render(f"{nota:.1f}", True, (10, 14, 26))
+            screen.blit(s, s.get_rect(center=(cx, cy)))
+            extra = ""
+            if ctx is not None and ctx.goles.get(k):
+                extra += f" {ctx.goles[k]}G"
+            nombre = f"{getattr(j, 'posicion', '')} {getattr(j, 'apellido', '')[:11]}{extra}"
+            draw_text(screen, nombre, (cx - get_font('sm').size(nombre)[0] // 2, cy + 27), size='sm', color='blanco')
+            if ctx is not None and ctx.amarillas.get(k):
+                pygame.draw.rect(screen, (255, 215, 0), pygame.Rect(cx + 18, cy - 26, 9, 13))
+    if ctx is not None:
+        salieron = [ctx.jugadores[k] for k in ctx.salida if ctx.lado_jugador.get(k) == lado and k in ctx.jugadores]
+        if salieron:
+            txt = "Salieron: " + ", ".join(f"{getattr(j, 'apellido', '')} ({nota_en_vivo(ctx, clave(j)):.1f})"
+                                           for j in salieron)
+            draw_text(screen, txt[:110], (panel.x + 30, campo.bottom + 10), size='sm', color='blanco')
+    draw_button(screen, R_RIVAL_VOLVER, "VOLVER (R)", R_RIVAL_VOLVER.collidepoint(mouse_pos))
+    return bool(click_pos and R_RIVAL_VOLVER.collidepoint(click_pos))
+
+
 def _ments(local: Any, visitante: Any, user_eq: Any) -> dict:
     """v2.5.0: mentalidad para el motor: la del user fija, la del rival la decide la IA."""
     ml = mv = 'ia'
@@ -568,6 +636,9 @@ def _ments(local: Any, visitante: Any, user_eq: Any) -> dict:
 R_MARCADOR = pygame.Rect(40, 20, 1200, 150)
 R_VELOCIDAD = pygame.Rect(1085, 112, 115, 42)
 R_TACTICA = pygame.Rect(948, 112, 128, 42)
+R_RIVAL = pygame.Rect(811, 112, 128, 42)
+R_RIVAL_PANEL = pygame.Rect(190, 40, 900, 640)
+R_RIVAL_VOLVER = pygame.Rect(R_RIVAL_PANEL.centerx - 110, R_RIVAL_PANEL.bottom - 58, 220, 44)
 R_TRANSMISION = pygame.Rect(40, 190, 1200, 360)
 R_FIN_PANEL = pygame.Rect(40, 570, 1200, 80)
 R_FIN_SALIR = pygame.Rect(1000, 585, 220, 50)
@@ -872,7 +943,7 @@ _CLAVES_SIM = ('sim_resultado', 'sim_eventos', 'sim_desarrollo', 'sim_desarrollo
                'sim_cambio_forzado', 'sim_cambio_sel', 'postpartido', 'postpartido_tab', 'postpartido_scroll',
                'sim_penales_resuelto', 'sim_penales_marcador', 'sim_penales_gana_user', 'sim_penales_sel',
                'sim_penales_secuencia', 'sim_penales_cobradores_l', 'sim_penales_cobradores_v',
-               'sim_ment')   # la mentalidad de la IA no pasa al marcador del próximo partido
+               'sim_ment', 'sim_rival_abierto')   # la mentalidad de la IA no pasa al marcador del próximo partido
 
 
 def _cerrar_partido_vivo(estado: dict, match_mode: str, liga: Any, mi_equipo: Any, partido: Any,
@@ -1132,6 +1203,7 @@ def _render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 and now >= estado.get('sim_pausa_hasta', 0)                # v4.1.0
                 and estado.get('sim_cambio_forzado') is None
                 and not estado.get('sim_tactico_abierto')
+                and not estado.get('sim_rival_abierto')                    # visor del rival: pausa
                 and not estado.get('ayuda_abierta')):          # v3.9.0: con la ayuda H abierta el reloj se pausa
             if now - estado['sim_last_tick'] >= estado['sim_speed']:
                 estado['sim_minuto'] += 1
@@ -1318,9 +1390,11 @@ def _render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         rect_tactica = R_TACTICA
         mostrar_tactica = (user_eq is not None and sim_state in ('jugando', 'segundo_tiempo')
                            and not estado.get('sim_tactico_abierto')
+                           and not estado.get('sim_rival_abierto')
                            and estado.get('sim_cambio_forzado') is None)   # selector de lesión abierto
         if mostrar_tactica:
             draw_button(screen, rect_tactica, "TÁCTICA", rect_tactica.collidepoint(pygame.mouse.get_pos()))
+            draw_button(screen, R_RIVAL, "RIVAL", R_RIVAL.collidepoint(pygame.mouse.get_pos()))
         
         # Barra de progreso del partido interactiva con pelotita corriendo
         try:
@@ -1432,6 +1506,9 @@ def _render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                     estado['sim_speed'] = max(40, MS_POR_MINUTO // nuevo_factor)
                 elif k == pygame.K_t and mostrar_tactica:
                     estado['sim_tactico_abierto'] = True
+                elif k == pygame.K_r and mostrar_tactica:
+                    estado['sim_rival_abierto'] = True
+                    teclas = []
                 elif pygame.K_1 <= k <= pygame.K_5 and mostrar_tactica:
                     try:
                         from alpha_football.engine import MENTALIDADES
@@ -1441,7 +1518,7 @@ def _render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                     except Exception as e_tm:
                         logger.error(f"Error al cambiar la mentalidad con el teclado: {e_tm}")
         if mostrar_tactica:
-            draw_text(screen, "V Velocidad · T Táctica · 1-5 Mentalidad · Enter Saltar aviso · H Ayuda",
+            draw_text(screen, "V Velocidad · T Táctica · R Rival · 1-5 Mentalidad · Enter Saltar aviso · H Ayuda",
                       (60, 612), size='sm', color='blanco')
 
         # v2.5.0: tira de MENTALIDAD (sin pausar; re-simula el resto de la mitad).
@@ -1464,6 +1541,9 @@ def _render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         # Clic en TÁCTICA: abre el overlay de ajuste táctico en vivo (pausa el reloj).
         if mostrar_tactica and click_pos and rect_tactica.collidepoint(click_pos):
             estado['sim_tactico_abierto'] = True
+            click_pos = None
+        if mostrar_tactica and click_pos and R_RIVAL.collidepoint(click_pos):
+            estado['sim_rival_abierto'] = True
             click_pos = None
 
         # A. Animación de Flash de Gol con Confeti y Balón Rebotando
@@ -1525,6 +1605,19 @@ def _render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             t2_w = get_font('lg').size(t2)[0]
             draw_text(screen, t2, (SCREEN_W // 2 - t2_w // 2, SCREEN_H // 2 + 15), size='lg', color='bg', shadow=False)
             
+        # Visor del rival (botón RIVAL / tecla R) — pausa el reloj.
+        elif estado.get('sim_rival_abierto'):
+            try:
+                lado_rival = 'v' if _lado_user(local, user_eq) == 'l' else 'l'
+                rival = visitante if lado_rival == 'v' else local
+                cerrar = _render_rival_en_vivo(screen, estado, rival, lado_rival, mouse_pos, click_pos)
+            except Exception as e_riv:
+                logger.error(f"Error en el visor del rival: {e_riv}")
+                cerrar = True
+            if cerrar or any(k in (pygame.K_r, pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_KP_ENTER) for k in teclas):
+                estado['sim_rival_abierto'] = False
+                estado['sim_last_tick'] = pygame.time.get_ticks()
+
         # B. Ajuste táctico EN VIVO (botón TÁCTICA durante el juego) — pausa el reloj.
         elif (estado.get('sim_tactico_abierto') and user_eq is not None
               and estado.get('sim_cambio_forzado') is None):   # v4.1.0: primero el cambio por lesión

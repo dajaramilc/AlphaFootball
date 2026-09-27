@@ -117,8 +117,8 @@ def texto_premio(tipo: str, fase: str, acumulado: int) -> str:
     """v4.3.0: cuerpo del correo de premio: monto de la fase, su % del total y el % acumulado."""
     total = max(1, premio_total(tipo))
     monto = premio_fase(tipo, fase)
-    return (f"Premio por alcanzar {fase}: ${monto:,} ({round(monto * 100 / total)}% del premio total; "
-            f"acumulado {round(acumulado * 100 / total)}%).")
+    return (f"Le informamos que el club ha cobrado ${monto:,} por alcanzar {fase} "
+            f"({round(monto * 100 / total)}% del premio total; acumulado {round(acumulado * 100 / total)}%).")
 
 
 def premio_fase(tipo: str, fase: str) -> int:

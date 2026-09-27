@@ -75,19 +75,19 @@ def test_jornada_cobra_y_paga():
     print("  test_jornada_cobra_y_paga: OK")
 
 
-def test_quiebra_vende_al_mejor_tras_3_jornadas():
+def test_quiebra_vende_al_mejor_tras_4_jornadas():
     e = estado_carrera()
     mi = e['mi_equipo']
     mi.balance = -50_000_000
     estrella = max(mi.jugadores, key=calcular_valor)
-    for _ in range(2):
+    for _ in range(3):   # v4.6.0: la venta forzada llega en la 4ª
         F.procesar_jornada(e, es_local=False, gf=0, gc=0)
     assert estrella in mi.jugadores
     F.procesar_jornada(e, es_local=False, gf=0, gc=0)
     assert estrella not in mi.jugadores
     assert e['datos_carrera']['jornadas_en_rojo'] == 0 and e.get('aviso_finanzas')
     assert N.historial(e, propio=True)[0]['jugador'] == f"{estrella.nombre} {estrella.apellido}"
-    print("  test_quiebra_vende_al_mejor_tras_3_jornadas: OK")
+    print("  test_quiebra_vende_al_mejor_tras_4_jornadas: OK")
 
 
 def test_fin_de_temporada_contratos_y_quiebra():
@@ -105,6 +105,9 @@ def test_fin_de_temporada_contratos_y_quiebra():
     assert sigue.contrato_anios == 2 and ia.contrato_anios >= 1
     assert [s['jugador'] for s in salidas] == [f"{se_va.nombre} {se_va.apellido}"]
     assert not e.get('despido_pendiente')
+    mi.balance = -1
+    F.cierre_temporada(e)
+    assert not e.get('despido_pendiente')          # v4.6.0: la 1ª temporada en rojo resta puntos
     mi.balance = -1
     F.cierre_temporada(e)
     assert e['despido_pendiente'] and 'quiebra' in e['despido_pendiente']['motivo'].lower()
@@ -204,7 +207,7 @@ def test_pantallas_finanzas_y_negociacion():
     print("  test_pantallas_finanzas_y_negociacion: OK")
 
 
-TESTS = [test_contrato_inicial, test_jornada_cobra_y_paga, test_quiebra_vende_al_mejor_tras_3_jornadas,
+TESTS = [test_contrato_inicial, test_jornada_cobra_y_paga, test_quiebra_vende_al_mejor_tras_4_jornadas,
          test_fin_de_temporada_contratos_y_quiebra, test_negociacion_con_el_club, test_negociacion_con_el_jugador,
          test_completar_fichaje_y_renovar, test_temporada_sin_movimientos_no_quiebra,
          test_pantallas_finanzas_y_negociacion]

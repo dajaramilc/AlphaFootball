@@ -34,11 +34,11 @@ def test_objetivo_por_ranking():
     assert D.objetivo_por_ranking(1, 20, 1, 4, ventaja=10)[:2] == ('campeon', 1)
     assert D.objetivo_por_ranking(1, 20, 1, 4, ventaja=3)[:2] == ('copa', 4)
     assert D.objetivo_por_ranking(3, 20, 1, 4)[:2] == ('copa', 4)
-    assert D.objetivo_por_ranking(4, 20, 1, 4)[:2] == ('mitad', 5)       # ranking + 1 de margen
-    assert D.objetivo_por_ranking(8, 20, 1, 4)[:2] == ('mitad', 9)
+    assert D.objetivo_por_ranking(4, 20, 1, 4)[:2] == ('copa', 4)        # v4.6.0: sin margen
+    assert D.objetivo_por_ranking(8, 20, 1, 4)[:2] == ('mitad', 8)
     assert D.objetivo_por_ranking(15, 20, 1, 4)[:2] == ('salvarse', 18)
     assert D.objetivo_por_ranking(1, 8, 2, 0)[:2] == ('ascenso', 2)
-    assert D.objetivo_por_ranking(5, 8, 2, 0)[:2] == ('mitad', 6)
+    assert D.objetivo_por_ranking(5, 8, 2, 0)[:2] == ('mitad', 5)
     print("  test_objetivo_por_ranking: OK")
 
 

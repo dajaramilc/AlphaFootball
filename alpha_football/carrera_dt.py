@@ -108,12 +108,14 @@ def revisar_renovacion(estado: dict) -> None:
     if calif_dt(estado) >= CALIF_RENOVAR or hito_temporada(estado):   # con un título asegurado no se niega
         _dc(estado)['renovacion_dt'] = {'temporada': t, 'estado': 'ofrecida'}
         C.enviar(estado, 'directiva', "Oferta de renovación de contrato",
-                 "Estamos contentos con tu trabajo y queremos que sigas. Mira nuestra propuesta.",
+                 "La directiva está satisfecha con su trabajo y desea que continúe al frente del equipo. "
+                 "Le adjuntamos nuestra propuesta de renovación para que la estudie.",
                  C.accion('contrato_dt_screen', "VER OFERTA"))
     else:
         _dc(estado)['renovacion_dt'] = {'temporada': t, 'estado': 'negada'}
         C.enviar(estado, 'directiva', "No renovaremos tu contrato",
-                 "Tu contrato vence al final de la temporada y la directiva no lo renovará.")
+                 "Le informamos que su contrato vence al final de la temporada y que la directiva ha "
+                 "decidido no renovarlo. Le agradecemos el trabajo realizado hasta la fecha.")
 
 
 CUPOS_ASCENSO = 2      # los 2 primeros de 2ª suben (resumen_temporada_screen)
@@ -162,8 +164,9 @@ def revisar_renovacion_por_hito(estado: dict) -> bool:
         return False
     _dc(estado)['renovacion_dt'] = {'temporada': t, 'estado': 'ofrecida', 'disculpa': hito}
     C.enviar(estado, 'directiva', "Te pedimos disculpas: queremos renovarte",
-             f"Nos equivocamos al no renovarte. Con el {hito} demostraste que eres el indicado. "
-             "Te ofrecemos un contrato nuevo: míralo en MI CONTRATO antes de que termine la temporada.",
+             f"Reconocemos que nos equivocamos al no renovarle. Con el {hito} ha demostrado que es la persona "
+             "indicada para este proyecto. Le ofrecemos un contrato nuevo, que puede revisar en MI CONTRATO "
+             "antes de que termine la temporada.",
              C.accion('contrato_dt_screen', "VER OFERTA"))
     return True
 

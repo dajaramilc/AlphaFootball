@@ -235,7 +235,7 @@ def test_contrato_renovacion_r():
 
 def test_editor_teclado():
     from alpha_football.ui import edit_screen as ED
-    e = {}
+    e = {'edit_seccion': 'jugadores'}   # v4.6.0: el editor arranca en ENTRENADORES
     pygame.event.clear(); ED.render(screen, e)
     i0 = e['edit_equipo_idx']
     key(pygame.K_DOWN); ED.render(screen, e); assert e['edit_equipo_idx'] == i0 + 1
@@ -248,7 +248,7 @@ def test_editor_teclado():
 
 def test_editor_dropdown_teclado():
     from alpha_football.ui import edit_screen as ED
-    e = {}
+    e = {'edit_seccion': 'jugadores'}   # v4.6.0: el editor arranca en ENTRENADORES
     pygame.event.clear(); ED.render(screen, e)
     e['edit_jugador_idx'] = 0; e['edit_dropdown_activo'] = 'posicion'
     pygame.event.clear(); ED.render(screen, e)

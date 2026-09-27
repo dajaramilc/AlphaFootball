@@ -16,6 +16,12 @@ from alpha_football.estilos import ESTILOS_DT, normalizar_estilo
 logger = logging.getLogger(__name__)
 
 N_LIBRES = 20
+# v4.6.0: sueldo anual de los DTs de la IA. Un club solo contrata a un DT cuyo sueldo sea a lo
+# sumo FRAC_SUELDO_DT de su saldo, y se lo descuenta al contratarlo y en cada temporada
+# (mercado_ia.ingresos_fin_temporada): así el Emelec no ficha a Arteta.
+SUELDO_DT_MIN = 50_000
+FRAC_SUELDO_DT = 0.10
+PCT_SUELDO_CLUB = 0.04          # los DTs de arranque cobran ~4% del saldo de su club (como el user)
 
 
 def dts(estado: dict) -> dict:
@@ -48,10 +54,34 @@ def nombre_generado(rng: random.Random) -> str:
     return f"{rng.choice(NOMBRES)} {rng.choice(APELLIDOS)}"
 
 
-def _nuevo(estado: dict, nombre: str, estilo: str, calif: int, interino: bool = False) -> dict:
+def sueldo_pedido(calif) -> int:
+    """Sueldo anual que pide un DT libre según su calificación (exponencial: los top cuestan)."""
+    return max(SUELDO_DT_MIN, int(round(40_000 * 1.08 ** (int(calif) - 20), -3)))
+
+
+def sueldo_inicial(equipo, calif) -> int:
+    """El DT de arranque de un club cobra según el saldo del club (o su pedido, si es mayor)."""
+    del_club = int(max(0, int(getattr(equipo, 'balance', 0) or 0)) * PCT_SUELDO_CLUB * (0.8 + int(calif) / 250))
+    return max(sueldo_pedido(calif), int(round(del_club, -3)))
+
+
+def sueldo(dt: Optional[dict]) -> int:
+    """Sueldo anual del DT (saves viejos sin 'sueldo': el pedido por su calif; interino: 0)."""
+    if not dt or dt.get('interino'):
+        return 0
+    return int(dt.get('sueldo') or sueldo_pedido(dt.get('calif', 45)))
+
+
+def puede_pagar(equipo, dt: dict) -> bool:
+    return sueldo(dt) <= FRAC_SUELDO_DT * max(0, int(getattr(equipo, 'balance', 0) or 0))
+
+
+def _nuevo(estado: dict, nombre: str, estilo: str, calif: int, interino: bool = False,
+           sueldo_anual: Optional[int] = None) -> dict:
     d = dts(estado)
     dt = {'id': int(d['sig_id']), 'nombre': nombre, 'estilo': normalizar_estilo(estilo),
-          'calif': int(calif), 'interino': bool(interino)}
+          'calif': int(calif), 'interino': bool(interino),
+          'sueldo': 0 if interino else int(sueldo_anual if sueldo_anual is not None else sueldo_pedido(calif))}
     d['sig_id'] = int(d['sig_id']) + 1
     return dt
 
@@ -81,21 +111,62 @@ def asegurar_dts(estado: dict) -> None:
             continue
         real = DT_REALES.get(eq.nombre)
         nombre = (getattr(eq, 'dt_nombre', '') or '').strip() or (real[0] if real else nombre_generado(rng))
-        estilo = real[1] if real else getattr(eq, 'estilo_dt', 'anchelottismo')
-        asignar(estado, eq, _nuevo(estado, nombre, estilo, calif_inicial(eq)))
+        # v4.6.0: estilo y calificación puestos en el editor pisan a la tabla y a las estrellas
+        estilo = (getattr(eq, 'dt_estilo', '') or (real[1] if real else getattr(eq, 'estilo_dt', 'anchelottismo')))
+        calif = int(getattr(eq, 'dt_calif', 0) or 0) or calif_inicial(eq)
+        asignar(estado, eq, _nuevo(estado, nombre, estilo, calif, sueldo_anual=sueldo_inicial(eq, calif)))
+    if not d.get('libres_editor_ok'):          # v4.6.0: los DTs libres creados en el editor
+        d['libres_editor_ok'] = True
+        for x in _dts_libres_editor():
+            try:
+                d['libres'].append(_nuevo(estado, str(x['nombre']), x.get('estilo', 'anchelottismo'),
+                                          max(1, min(99, int(x.get('calif', 50) or 50)))))
+            except Exception as e_dl:
+                logger.error(f"DT libre del editor inválido {x}: {e_dl}")
     while len(d['libres']) < N_LIBRES:
         d['libres'].append(_nuevo(estado, nombre_generado(rng), rng.choice(ESTILOS_DT), rng.randint(35, 70)))
 
 
-def mejor_libre(estado: dict) -> dict:
-    """Saca de la bolsa al libre con mejor calif (genera uno si no hay)."""
+def _dts_libres_editor() -> list:
+    """v4.6.0: DTs sin club creados en el editor (clave '_dts_libres' de la base editada)."""
+    try:
+        import json
+        import os
+        from alpha_football.paises import RUTA_DB_EDITADA
+        if not os.path.exists(RUTA_DB_EDITADA):
+            return []
+        with open(RUTA_DB_EDITADA, 'r', encoding='utf-8') as f:
+            db = json.load(f)
+        return [x for x in (db.get('_dts_libres') or []) if isinstance(x, dict) and x.get('nombre')]
+    except Exception as e:
+        logger.error(f"No se pudieron leer los DTs libres del editor: {e}")
+        return []
+
+
+def mejor_libre(estado: dict, equipo) -> dict:
+    """
+    Saca de la bolsa al libre con mejor calif que `equipo` puede pagar. Si no le alcanza para
+    ninguno, contrata a uno nuevo y barato (el sueldo que el club puede pagar).
+    """
     d = dts(estado)
-    candidatos = [x for x in d['libres'] if not x.get('interino')]
+    candidatos = [x for x in d['libres'] if not x.get('interino') and puede_pagar(equipo, x)]
     if not candidatos:
-        return _nuevo(estado, nombre_generado(random.Random(d['sig_id'])), 'anchelottismo', 45)
+        rng = random.Random(d['sig_id'])
+        tope = max(SUELDO_DT_MIN, int(FRAC_SUELDO_DT * max(0, int(getattr(equipo, 'balance', 0) or 0))))
+        calif = rng.randint(30, 50)
+        return _nuevo(estado, nombre_generado(rng), rng.choice(ESTILOS_DT), calif,
+                      sueldo_anual=min(sueldo_pedido(calif), tope))
     mejor = max(candidatos, key=lambda x: x['calif'])
     d['libres'].remove(mejor)
     return mejor
+
+
+def contratar(estado: dict, equipo) -> dict:
+    """El club contrata al mejor DT que puede pagar y le paga la temporada."""
+    dt = mejor_libre(estado, equipo)
+    equipo.balance = int(getattr(equipo, 'balance', 0) or 0) - sueldo(dt)
+    asignar(estado, equipo, dt)
+    return dt
 
 
 def al_cambiar_club(estado: dict, viejo, nuevo) -> None:
@@ -103,7 +174,7 @@ def al_cambiar_club(estado: dict, viejo, nuevo) -> None:
     d = dts(estado)
     saliente = d['por_club'].pop(str(getattr(nuevo, 'id', '')), None)
     if viejo is not None and viejo is not nuevo:
-        asignar(estado, viejo, mejor_libre(estado))
+        contratar(estado, viejo)
     if saliente and not saliente.get('interino'):
         d['libres'].append(saliente)
     d['ofertas'] = [o for o in d['ofertas'] if o.get('club_id') != str(getattr(nuevo, 'id', ''))]
@@ -163,25 +234,40 @@ def despedir(estado: dict, equipo, liga, motivo: str) -> dict:
     if liga is estado.get('liga'):
         from alpha_football import correo as C
         C.enviar(estado, 'club', f"Cambio de DT en {equipo.nombre}",
-                 f"{equipo.nombre} despidió a {viejo.get('nombre', 'su DT')}: {motivo}")
+                 f"Le informamos que {equipo.nombre} ha despedido a {viejo.get('nombre', 'su entrenador')} ({motivo}).")
     return viejo
 
 
 def _reemplazar(estado: dict, equipo) -> None:
-    asignar(estado, equipo, mejor_libre(estado))
+    contratar(estado, equipo)
 
 
-def _ofrecer_al_user(estado: dict, equipo, liga) -> None:
+def _ofrecer_al_user(estado: dict, equipo, liga, motivo: str = "") -> None:
     """El club juega con un interino y te escribe: la oferta dura JORNADAS_OFERTA jornadas."""
     from alpha_football import correo as C
+    from alpha_football.directiva import calif_dt
     d = dts(estado)
     rng = random.Random(f"interino-{equipo.id}-{estado.get('temporada', 1)}")
     asignar(estado, equipo, _nuevo(estado, nombre_generado(rng) + " (interino)", 'anchelottismo', 40, interino=True))
     d['ofertas'].append({'club_id': str(equipo.id), 'club': equipo.nombre, 'liga': getattr(liga, 'nombre', ''),
-                         'jornadas': JORNADAS_OFERTA, 'temporada': int(estado.get('temporada', 1) or 1)})
+                         'jornadas': JORNADAS_OFERTA, 'temporada': int(estado.get('temporada', 1) or 1),
+                         'motivo': motivo})
+    # v4.7.0: el correo dice por qué te quieren (despido + tu calificación)
     C.enviar(estado, 'club', f"{equipo.nombre} te quiere como DT",
-             f"{equipo.nombre} ({getattr(liga, 'nombre', '')}) despidió a su DT y te ofrece el banquillo. "
-             f"La oferta vale {JORNADAS_OFERTA} jornadas.", C.accion('ofertas_dt_screen', "VER OFERTA"))
+             f"Tras despedir a nuestro entrenador{f' ({motivo})' if motivo else ''} y en vista de su "
+             f"calificación como DT ({calif_dt(estado)}/100), nos complace ofrecerle el banquillo de "
+             f"{equipo.nombre} ({getattr(liga, 'nombre', '')}). La oferta tiene una validez de "
+             f"{JORNADAS_OFERTA} jornadas; puede responder desde OFERTAS DT.",
+             C.accion('ofertas_dt_screen', "VER OFERTA"), firma=f"La Directiva de {equipo.nombre}")
+
+
+def puede_ofrecer_al_user(estado: dict) -> bool:
+    """v4.7.0: no hay otra oferta de club vigente (ofertas_dt)."""
+    try:
+        from alpha_football.ofertas_dt import oferta_vigente
+        return oferta_vigente(estado) is None
+    except Exception:
+        return True
 
 
 def ofertas_activas(estado: dict) -> list:
@@ -214,10 +300,11 @@ def revisar_jornada(estado: dict, rng: Optional[random.Random] = None) -> None:
             continue
         if azar.random() >= PROB_DESPIDO_JORNADA:
             continue
-        despedir(estado, eq, liga, f"va {posicion(liga, eq)}º y se esperaba {esperado(liga, eq)}º")
+        motivo = f"iba {posicion(liga, eq)}º y se esperaba {esperado(liga, eq)}º"
+        despedir(estado, eq, liga, motivo)
         d['despidos_temp'][_clave_liga(liga)] = d['despidos_temp'].get(_clave_liga(liga), 0) + 1
-        if en_banda(estado, eq) and azar.random() < PROB_OFERTA_USER:
-            _ofrecer_al_user(estado, eq, liga)
+        if en_banda(estado, eq) and puede_ofrecer_al_user(estado) and azar.random() < PROB_OFERTA_USER:
+            _ofrecer_al_user(estado, eq, liga, motivo)
         else:
             _reemplazar(estado, eq)
 

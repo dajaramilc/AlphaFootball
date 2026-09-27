@@ -224,7 +224,7 @@ def _correo_prestamo(estado: dict, jugador_o_nombre, p: dict, evento: str, motiv
                 cuerpo = (f"{inicio} y volvió a {p.get('dueno', 'su club')}. {_periodo(p)} "
                           + ("Ya no pagas su sueldo." if llega else "Vuelves a pagar el 100% de su sueldo."))
             if llega and salida != 'vuelve':
-                cuerpo += " Ya no pagas su sueldo."
+                cuerpo += " El club ya no paga su sueldo."
             _correo(estado, asunto, cuerpo)
             return
         _correo(estado, asunto, f"{cuerpo} {_periodo(p)} {_sueldo(estado, p)}")

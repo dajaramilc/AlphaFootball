@@ -23,7 +23,7 @@ def test_matriz_sin_contradicciones():
         for b in gana:
             assert a not in ES.ESTILO_VENTAJA.get(b, ()), f"{a} y {b} se ganan mutuamente"
             total += 1
-    assert total == 20
+    assert total == 23   # Kloppismo: +4 victorias, Cholo +1, Haramball y DeZerbi -1
     assert 'anchelottismo' not in ES.ESTILO_VENTAJA
     assert all('anchelottismo' not in g for g in ES.ESTILO_VENTAJA.values())
 
@@ -33,35 +33,36 @@ def test_matriz_de_diego():
     # v3.9.0: Cruyffismo y Fullbackismo equilibrados (+1 victoria y −1 derrota cada uno)
     assert V['cruyffismo'] == {'flickismo', 'artetismo'}
     assert V['flickismo'] == {'haramball', 'artetismo'}
-    assert V['haramball'] == {'cruyffismo', 'dezerbismo', 'kloppismo'}
-    assert V['kloppismo'] == {'choloismo', 'fullbackismo'}
+    assert V['haramball'] == {'cruyffismo', 'dezerbismo'}
+    # Kloppismo le gana a todos menos al Choloismo (Ancelotismo sigue neutro)
+    assert V['kloppismo'] == set(ES.ESTILOS_DT) - {'kloppismo', 'choloismo', 'anchelottismo'}
+    assert 'kloppismo' in V['choloismo']
     assert V['artetismo'] == {'haramball', 'choloismo', 'dezerbismo'}
-    assert V['choloismo'] == {'cruyffismo', 'dezerbismo', 'fullbackismo'}
-    assert V['dezerbismo'] == {'flickismo', 'kloppismo', 'fullbackismo'}
+    assert V['choloismo'] == {'cruyffismo', 'dezerbismo', 'fullbackismo', 'kloppismo'}
+    assert V['dezerbismo'] == {'flickismo', 'fullbackismo'}
     assert V['fullbackismo'] == {'cruyffismo', 'haramball'}
-    # nadie queda con más de 1 de diferencia entre victorias y derrotas
-    for a in V:
-        g = len(V[a]); p = sum(1 for b in V if a in V[b])
-        assert abs(g - p) <= 1, (a, g, p)
+    # Kloppismo es el estilo con más victorias (el más fuerte del juego)
+    assert max(V, key=lambda a: len(V[a]) - sum(1 for b in V if a in V[b])) == 'kloppismo'
 
 
 def test_bono_estilo():
     assert engine.bono_estilo('artetismo', 'haramball') == 1.10      # v3.9.0: ventaja bajada a 10%
     assert engine.bono_estilo('haramball', 'artetismo') == 0.91
-    assert engine.bono_estilo('artetismo', 'kloppismo') == 1.0           # par neutro
+    assert engine.bono_estilo('artetismo', 'kloppismo') == 0.91          # Klopp le gana a Arteta
+    assert engine.bono_estilo('choloismo', 'kloppismo') == 1.10          # ... pero no al Cholo
     assert engine.bono_estilo('artetismo', 'cruyffismo') == 0.91         # v3.9.0: Cruyff le gana a Arteta
     assert engine.bono_estilo('anchelottismo', 'kloppismo') == 1.0
     assert engine.bono_estilo('desconocido', 'haramball') == 1.0
 
 
 def test_kloppismo_gasta_mas():
-    assert ES.factor_gasto_estilo('kloppismo') == 1.3 and ES.factor_gasto_estilo('haramball') == 1.0
+    assert ES.factor_gasto_estilo('kloppismo') == 1.2 and ES.factor_gasto_estilo('haramball') == 1.0
     from alpha_football.ui.menu import load_league_teams
     liga = load_league_teams('premier')
     j = liga.equipos[0].jugadores[0]; j.energia = 100.0
     normal = E.energia_en_minuto(j, 90)
-    klopp = E.energia_en_minuto(j, 90, mult=1.3)
-    assert round(100 - klopp, 6) == round((100 - normal) * 1.3, 6) or klopp == 0.0
+    klopp = E.energia_en_minuto(j, 90, mult=1.2)
+    assert round(100 - klopp, 6) == round((100 - normal) * 1.2, 6) or klopp == 0.0
 
 
 def test_normalizar_estilo():

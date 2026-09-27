@@ -200,7 +200,8 @@ def _norm_str(s) -> str:
 
 def _resumen_historial(historial: list) -> dict:
     """Totales de la carrera a partir del historial por temporada."""
-    tot = {'temporadas': len(historial), 'ligas': 0, 'copas': 0, 'pts': 0, 'gf': 0, 'gc': 0,
+    # v4.7.0: temporadas únicas (cambiar de club a mitad no suma otra)
+    tot = {'temporadas': len({h.get('temporada') for h in historial}), 'ligas': 0, 'copas': 0, 'pts': 0, 'gf': 0, 'gc': 0,
            'mejor_pts': 0, 'mejor_temp': '-'}
     for h in historial:
         try:

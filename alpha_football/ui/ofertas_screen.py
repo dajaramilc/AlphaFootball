@@ -155,6 +155,8 @@ def _dibujar_tarjeta(screen, r: pygame.Rect, of: dict, seleccionada: bool, mouse
     _valor_mostrar = getattr(jug, 'valor', 0) or calcular_valor(jug)
     draw_text(screen, f"{jug.nombre_completo[:24]}  ·  {jug.posicion}  ·  MED {jug.overall}  ·  Valor {_dinero(_valor_mostrar)}",
               (r.x + 14, r.y + 32), size='sm', color='blanco')
+    if getattr(jug, 'transferible', False):     # v4.7.0: la oferta es por un jugador que pusiste en venta
+        draw_text(screen, "TRANSFERIBLE", (r.right - 150, r.y + 58), size='sm', color='dorado')
     c = of.get('contra') or {}
     if c.get('estado') == 'analizando':
         pedido = f"{c.get('pedido', 0)}%" if pr else _dinero(c.get('pedido', 0))
