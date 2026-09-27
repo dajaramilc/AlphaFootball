@@ -1,273 +1,119 @@
-# 🎮 Alpha Football (v4.5.0)
+<div align="center">
 
-¡Bienvenido a **Alpha Football**, el simulador definitivo de gestión futbolística (manager) de escritorio con estética neón retro y dosis de humor y parodia!
+# ⚽ Alpha Football
 
-Este proyecto está desarrollado sobre **Pygame** y simula la experiencia completa de un director técnico de fútbol. Dirige charlas de vestuario, gestiona el mercado de fichajes con parodias hilarantes y compite en copas continentales e internacionales en paralelo con tu liga local.
+**Manager de fútbol de escritorio con estética neón retro y clubes de parodia.**
+Dirige un club de 8 países, arma el once, negocia fichajes y préstamos, cuida las finanzas
+y cumple (o no) lo que te pide la directiva.
 
----
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
+![Pygame](https://img.shields.io/badge/Pygame-2.6-2EA44F)
+![Versión](https://img.shields.io/badge/versión-4.7.0-FFD700)
+![Plataforma](https://img.shields.io/badge/plataforma-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 
-## 🚀 Características Clave
+<img src="docs/img/hub.png" alt="Hub de la carrera" width="820">
 
-### 1. Sistema Multiliga y Base de Datos Parodiada
-- **5 ligas competitivas**:
-  - 🇨🇴 **Liga BetPlay Colombia** (8 equipos, OVR máx. 76)
-  - 🇪🇸 **LaLiga EA Sports Parodia** (6 equipos, OVR máx. 85)
-  - 🏴 Premier League Parodia (6 equipos, OVR máx. 85)
-  - 🇧🇷 Brasileirão (6 equipos, OVR máx. 80)
-  - 🇦🇷 Liga Profesional Argentina (6 equipos, OVR máx. 80)
-- **Base de datos parodiada** con clubes como *Narconal*, *Real Madriz*, *FC Farcelona*, *Manchester Billete*, *Pool de Higado*, *Palmeras de Sao Paulo*, *Boca Grande*, *River Au*.
-- **Plantillas de 20 jugadores** por club (v0.6): 11 titulares + 9 suplentes generados por línea.
-
-### 2. Motor de Simulación y Táctica
-- **Simulación minuto a minuto** con marcadores realistas (2-4 goles promedio).
-- **Tácticas en el Medio Tiempo**: a los 45' podés elegir entre 4 charlas motivacionales (Motivación, Agresividad, Autobús, Mantener Esquema).
-- **Cambios y táctica en vivo** (v0.6): pausa el partido para cambiar formación, táctica o hacer sustituciones (se anuncian en la transmisión).
-- **Velocidad x1 / x2 / x5**: botón en el marcador para ajustar la rapidez al instante.
-- **Sinergia formación + táctica + familiaridad** (v0.7): bonus de hasta +31% de goles cuando todo encaja.
-- **Efectos visuales**: flash + banner neón "¡¡¡GOOOOL!!!" con el goleador estrella.
-- **Solo titulares marcan goles** (v0.8.1): los defensas pueden cabecear en córner (8% de probabilidad); los porteros jamás atacan.
-
-### 3. Copa Internacional Intercalada
-- **Champions League** (ligas europeas) o **Copa Libertadores** (ligas sudamericanas) según el país.
-- **Scheduling gates** que desbloquean las fechas internacionales según el progreso de la liga local.
-- **Clasificación**: T1 = top 3 por OVR; T2+ = top 3 por puntos.
-- **Copa en background** (v0.8.7.2): si no clasificás, la copa se simula sola a medida que avanzás en tu liga (mismos gates que la copa del user). Sin necesidad de tocar la pantalla de Copa.
-- **Modo espectador "NO CLASIFICADO"** (v0.8.7.2): panel simple con botón "VER" para ojear el progreso en modo lectura.
-- **Toast de campeón** (6s) cuando la copa termina en background.
-- **Estadísticas de copa** (v0.8.6): goleadores, asistentes, vallas invictas y rendimiento del torneo.
-- **Avance automático de jornada de copa** (v0.8.6): la copa salta de jornada al entrar a la pantalla, sin clics manuales.
-
-### 4. Penales con Secuencia Ronda a Ronda (v0.8.7)
-- En eliminatorias de copa del usuario que terminan 0-0:
-  - Selector de 5 cobradores preseleccionados por atributo `penales`.
-  - **Panel de resultado** con secuencia ronda a ronda (⚽/❌), nombres de cobradores, marcador acumulado.
-  - Aviso de muerte súbita si hubo más de 5 rondas.
-
-### 5. Mercado de Pases, Ofertas y Estadísticas
-- **Ventanas de transferencia** (v4.5.0): inicio (J1-3), invierno (mitad de temporada) y cierre (3 últimas). Lo que se acuerda con el mercado cerrado se concreta al abrir la próxima ventana.
-- **Préstamos** (v4.5.0): pedir jugadores a préstamo (NEGOCIAR / FAVORITOS) o ceder los tuyos (PLANTILLA → tecla P), por 6 meses o 1 año con el sueldo repartido en %. Panel PRÉSTAMOS en PLANTILLA con CONCLUIR / CANCELAR y correos con el periodo y el % en cada ida y vuelta.
-- **Tope de fichajes por ventana** (v0.8.1): ahora sin límite rígido — solo tope por nivel del club + presupuesto + plantilla máxima (32).
-- **Reset del log de fichajes** entre ventanas (v0.8.1).
-- **Mercado internacional** (v0.7): pestaña para ojear talento de ligas más fuertes.
-- **Bandeja de ofertas** (v0.7): ofertas locales y del exterior por jugadores destacados.
-- **Filtros de precio / OVR** (v0.8.1): 12 pestañas (Todos, POR, DEF, MED, DEL, Colombia, España, Inglaterra, Brasil, Argentina, Libres, Internacional).
-- **Pantalla de estadísticas**: goleadores, asistencias, vallas invictas, mejores notas (alcance: toda la liga o solo tu equipo).
-
-### 6. Carrera del DT y Estadísticas Globales
-- **Identidad del DT** (v0.7): nombre + nacionalidad al alta de carrera.
-- **Historial por temporada** (v0.8.1): posición, puntos, GF/GC, liga campeona, fase de copa alcanzada.
-- **Bono de fin de temporada** (v0.8.1): variable por país + continente (€30M-€150M por liga, €5M-€75M por copa).
-- **"No clasificado" en historial** (v0.8.7.3): cuando el user no clasifica a la copa, el panel muestra "No clasificado" en vez de "Campeón" (bug del background sim).
-- **Contador de Copas Internacionales** con fix de acentos (v0.8.7.1): chequea `'Campeón'` con acento, no `'campeon'` ASCII.
-
-### 7. Plantillas, Amistosos y Velocidad (v0.6)
-- **Plantillas más profundas**: 20 jugadores por club (suplentes generados por línea).
-- **Amistosos entre ligas diferentes**: podés enfrentar un equipo local de LaLiga contra uno visitante de BetPlay, por ejemplo.
-- **Velocidad x1 → x2 → x5**: botón en el marcador.
-
-### 8. Táctica Profunda (v0.7)
-- **7 formaciones**: 4-3-3, 4-4-2, 4-3-2-1, 5-4-1, 3-5-2, 3-4-1-2, 4-2-4.
-- **4 estilos tácticos**: anchelottismo, cruyffismo, flickismo, haramball (con triángulo rock-paper-scissors + opción neutra).
-- **AUTO ONCE sin consumir cambios** (v0.8.7): el cycler de formación y AUTO ONCE son gratis; solo el swap titular↔banco manual cuenta (tope 5 cambios por partido).
-- **Cansancio y nota en menú táctico** (v0.8.1): cada titular muestra barra de cansancio y nota actual.
-- **Desarrollo post-partido** (v0.7): los jugadores suben OVR cuando acumulan suficiente progreso (goles, asist, porterías a cero, nota > 7.5).
-
-### 9. Persistencia Multislot con Cabecera Rica
-- **Pantallas de carga** (v4.5.0): al guardar, cargar, pasar de temporada e iniciar carrera (con barra de pasos reales en las dos últimas).
-- **5 slots de guardado** con cabecera que muestra: DT, equipo, temporada, jornada y **presupuesto**.
-- **Guardado atómico + checksum SHA-256** (v0.5): detecta corrupción/manipulación → carga al `.bak`.
-- **Carga tolerante con saves v4**.
-
-### 10. Banda Sonora, Opciones y Música de YouTube
-- **Sistema de sonido inteligente** con reproducción asíncrona (shuffle) y `_HISTORIAL_CICLO` (v0.8.6) para evitar patrones repetitivos.
-- **Idempotencia de `start_music`** (v0.8.5): el end-event del mixer es el único que avanza la pista.
-- **Control de volumen** en pantalla de Opciones (atajos `+`, `-`, `M` siguen activos).
-- **Importar música de YouTube**: pegá una URL (soporte Ctrl+V desde portapapeles) o escribí el nombre (búsqueda con `ytsearch1:`).
-- **Aviso "Sonando ahora"**: nombre de la pista actual en la parte inferior durante 6s al cambiar de canción.
-- **Resiliencia**: si no hay internet o falta FFmpeg, el juego corre en silencio sin colgarse.
-
-### 11. Dirección de Equipo + Visor Rival (v0.8.3/v0.8.7.4)
-- **Panel de campo** con formación, táctica, sustituciones y once inicial.
-- **Visor de alineación rival** (v0.8.3): desde el prepartido, botón "VER ALINEACIÓN RIVAL" muestra el mejor 11 del oponente en modo lectura.
-- **AUTO ONCE** genera la mejor alineación por posición respetando la formación.
-- **Persistencia entre modos**: amistoso no contamina los datos de la carrera (aislamiento total por `team_contexto`).
+</div>
 
 ---
 
-## 🛠️ Stack Tecnológico
+## Qué es
 
-| Componente | Detalle |
+Alpha Football es un simulador de gestión futbolística hecho en **Python + Pygame**. Eres el DT:
+eliges club en una de 16 ligas (1ª y 2ª división de 8 países), juegas los partidos en vivo
+minuto a minuto y manejas todo lo que pasa fuera de la cancha: mercado, contratos, vestuario,
+directiva y dinero. Los clubes y jugadores son parodias (*Manchester Billete*, *Pool de Higado*,
+*FC Farcelona*, *Narconal*…).
+
+## Capturas
+
+| Dirección de equipo | Objetivos de la directiva |
 |---|---|
-| Lenguaje | Python 3.10+ |
-| Biblioteca Gráfica | Pygame (1280×720) |
-| Gestión de Audio | `pygame.mixer` + `yt-dlp` (descarga asíncrona) |
-| Persistencia | JSON con esquema v5 (Dataclasses serializadas limpiamente; carga tolerante con v4) |
-| Resiliencia | Mecanismos de recuperación y fallbacks locales en todos los módulos críticos |
+| <img src="docs/img/direccion.png" alt="Dirección de equipo" width="400"> | <img src="docs/img/objetivos.png" alt="Objetivos" width="400"> |
+| **Finanzas** | **Hub de la carrera** |
+| <img src="docs/img/finanzas.png" alt="Finanzas" width="400"> | <img src="docs/img/hub.png" alt="Hub" width="400"> |
 
----
+## Características
 
-## 📁 Estructura del Proyecto
+**Ligas y competiciones**
+- 8 países (Inglaterra, España, Italia, Brasil, Argentina, Colombia, Uruguay, Ecuador), cada uno con 1ª y 2ª división de 12 equipos, con ascensos y descensos.
+- Copa internacional intercalada con la liga (Champions o Libertadores según el continente): fase de liga, playoff, eliminatorias y penales ronda a ronda.
+- Las otras ligas se juegan en paralelo: puedes seguirlas desde OTRAS LIGAS.
 
-```text
-AlphaFootball/
-│
-├── main.py                       # Punto de entrada y máquina de estados
-├── musica.txt                    # Lista de URLs de YouTube para la banda sonora
-├── context.md                    # Bitácora técnica y de desarrollo (v0.4 → v0.8.7.4)
-├── README.md                     # Esta guía
-├── .gitignore
-│
-├── music/                        # Pistas de audio locales (fallback)
-│
-└── alpha_football/
-    ├── __init__.py
-    ├── models.py                 # Dataclasses: Jugador, Equipo, Liga, Copa, EstadoJuego
-    ├── engine.py                 # Motor minuto a minuto, sinergia, penales por atributo
-    ├── formaciones.py            # 7 formaciones (cuotas, posiciones, táctica preferida)
-    ├── desarrollo.py             # Desarrollo post-partido (OVR/valor/notas/porterías)
-    ├── plantilla.py              # Expansión de plantillas hasta 20 jugadores
-    ├── events.py                 # Eventos caóticos de jornada
-    ├── market.py                 # Mercado + internacional + tope por nivel de club
-    ├── audio.py                  # Reproductor shuffle asíncrono + importador yt-dlp
-    ├── save.py                   # Multislot, cabecera rica, checksum SHA-256, .bak
-    │
-    ├── data/                     # DB parodiada de las 5 ligas + pools de copa
-    │   ├── argentina.py
-    │   ├── betplay.py
-    │   ├── brasil.py
-    │   ├── free_agents.py
-    │   ├── internacional.py
-    │   ├── laliga.py
-    │   └── premier.py
-    │
-    ├── assets/                   # ASCII art: ball, logo, stadium
-    │   ├── ball.txt
-    │   ├── logo.txt
-    │   └── stadium.txt
-    │
-    └── ui/                       # Pantallas Pygame
-        ├── theme.py              # Paleta neón, fuentes, gradiente cacheado
-        ├── menu.py               # Menú principal, alta de DT, selector de liga/club
-        ├── career_screen.py      # Historial de campañas, estadísticas globales del DT
-        ├── league_screen.py      # Tabla de posiciones (con badges de clasificados),
-        │                         # agenda, historial de partidos
-        ├── prepartido_screen.py  # Submenú: jugar / simular / dirección / opciones
-        ├── team_screen.py        # Dirección de equipo + visor de rival
-        ├── match_screen.py       # Simulador en vivo: velocidad, táctica/cambios, penales
-        ├── market_screen.py      # Transferencias (local + internacional)
-        ├── ofertas_screen.py     # Bandeja de ofertas recibidas
-        ├── stats_screen.py       # Estadísticas de liga (goleadores, asist, vallas)
-        ├── options_screen.py     # Volumen + importador de música
-        ├── save_slots_screen.py  # Selector de slots con cabecera rica
-        ├── edit_screen.py        # Editor de equipos y jugadores
-        ├── copa_screen.py        # Copa internacional (grupos + bracket + modo espectador)
-        └── resumen_temporada_screen.py  # Resumen de fin de temporada + avanzar a T2
+**Partido y táctica**
+- Simulación minuto a minuto con narración, velocidad x1/x2/x5, cambios y dirección en vivo.
+- 17 formaciones con selector desplegable y 9 estilos de DT (Cruyffismo, Kloppismo, Choloismo, DeZerbismo…). Cada formación tiene hasta 4 tácticas afines que dan un pequeño bonus.
+- Mentalidad, energía, lesiones, tarjetas y sanciones por competición.
+
+**Mercado**
+- Ventanas de fichajes (inicio, invierno y cierre), negociación con contraofertas, cláusulas y agentes libres.
+- Préstamos de ida y vuelta con el sueldo repartido en %.
+- Ofertas de la IA por tus jugadores (marcadas si están en transferibles), ojeador, favoritos e historial de pases.
+
+**Carrera del DT**
+- Objetivos por secciones: liga, internacional, finanzas, marca y juveniles, con premios, multas, advertencias y despido.
+- Calificación de DT que te sigue entre clubes: con ella llegan ofertas de otros banquillos.
+- Finanzas con taquilla, patrocinio, salarios, tope salarial, valor del club, espaldarazo de la directiva y quiebra.
+- Vestuario y moral, correo con acciones directas y resumen de fin de temporada.
+
+**Calidad de vida**
+- Todo se puede jugar con teclado; la tecla **H** abre la ayuda de cada pantalla.
+- 5 ranuras de guardado con guardado atómico y checksum.
+- Editor de base de datos (clubes, jugadores, DTs libres) y música importable desde YouTube.
+
+## Instalación
+
+Requisitos: **Python 3.10+** y **pygame** (en `requirements.txt`).
+
+```bash
+git clone https://github.com/dajaramilc/AlphaFootball.git
+cd AlphaFootball
+pip install -r requirements.txt
+python main.py
 ```
 
----
+Opcional, para importar música desde YouTube en OPCIONES: `pip install yt-dlp` y tener `ffmpeg`
+en el PATH (el juego intenta instalar `yt-dlp` solo si falta).
 
-## 📥 Instalación y Ejecución
+## Controles
 
-1. **Clonar el repositorio**:
-   ```bash
-   git clone https://github.com/dajaramilc/AlphaFootball.git
-   cd AlphaFootball
-   ```
-
-2. **Instalar dependencias**:
-   ```bash
-   pip install pygame
-   ```
-   *(Opcional pero recomendado para descarga de música):* `pip install yt-dlp` y `ffmpeg` en PATH.
-
-3. **Ejecutar el juego**:
-   ```bash
-   python main.py
-   ```
-
----
-
-## 🎮 Controles del Juego
-
-| Acción | Control |
+| Dónde | Tecla |
 |---|---|
-| Navegación | Click izquierdo en los botones |
-| Subir volumen | Tecla `+` (incrementos de 10%) |
-| Bajar volumen | Tecla `-` (decrementos de 10%) |
-| Silenciar / Restaurar | Tecla `M` |
-| Cambiar canción | `Shift+S` o `Ctrl+S` |
-| Importar música (Opciones) | Clic en campo de URL + `Ctrl+V` o escribir nombre + `Enter` |
-| Velocidad del partido | Botón `VEL x1 / x2 / x5` en el marcador |
-| Salir | Clic en la `X` de la ventana (guarda automático en slot activo) |
+| Cualquier pantalla | **H** ayuda contextual · **ESC** volver |
+| Hub | **J** jugar · **← →** pestañas · **M** correo · **O** opciones · **R** resultados |
+| Dirección de equipo | **flechas** mover · **Espacio** cambiar · **[ ]** formación · **- =** estilo · **, .** mentalidad · **A** auto |
 
----
+La barra al pie de cada pantalla muestra sus atajos.
 
-## 📝 Resumen de Versiones
+## Estructura
 
-### v0.4 — Base original (Diego/Opus)
-- Sistema multiliga, motor de simulación, copa intercalada, mercado, persistencia.
+```
+main.py                 punto de entrada y máquina de estados de pantallas
+alpha_football/
+  engine.py             motor del partido
+  directiva.py          objetivos, calificación de DT, despido
+  finanzas.py           ingresos, gastos, tope salarial, quiebra
+  market.py, negociacion.py, prestamos.py, mercado_ia.py   mercado
+  competiciones.py      copas internacionales
+  formaciones.py, estilos.py   táctica
+  data/                 ligas, clubes y jugadores de parodia
+  ui/                   una pantalla por archivo (hub, partido, dirección, finanzas…)
+tests/                  tests por versión (scripts ejecutables)
+docs/superpowers/       especificaciones y planes de cada cambio grande
+```
 
-### v0.5 — Optimización + features (Diego/Opus)
-- Multislot, desarrollo, ofertas, simulación calibrada, amistosos, opciones.
+## Tests
 
-### v0.6 — UX + gameplay (Diego/Opus)
-- Amistosos entre ligas, velocidad x2, +5 jugadores por equipo, Ctrl+V, "sonando ahora".
+Cada archivo de `tests/` es un script que se ejecuta solo (usa una ventana *dummy*, no abre nada):
 
-### v0.7 — Paquete grande (Diego/Opus)
-- Formaciones (7), táctica (4 estilos), DT (alta con nombre + nacionalidad), penales, mercado internacional, ofertas, estadísticas.
-
-### v0.8 — Estabilización y features de gameplay
-- **v0.8.1**: bugs críticos + features (cansaço + nota en menú táctico, +5 jugadores en todos los equipos, ofertas como popup en mercado, bono de fin de temporada, mercado sin límite rígido con reset por ventana, filtros precio/OVR, 12 pestañas).
-- **v0.8.3**: aislamiento de partidas nuevas, visor de rival desde prepartido.
-- **v0.8.3.4**: 3 fixes de log-spam post-segundo-test-en-vivo.
-- **v0.8.4**: fixes de raíz — match_mode de nueva carrera, filtro "Por país" entre ligas, hover de team_screen.
-- **v0.8.5**: paquete grande — partido en vivo (`// None`), copa reparada (plantillas + bracket defensivo + autosim sin botón), amistoso aislado, modal borrar slot, música idempotente, $0 en mercado con fallback `calcular_valor`.
-- **v0.8.6**: prepartido aislado (panel compacto sin HUB), subs con tope 5, jornada auto de copa, stats de copa, fases finales (`avanzar_fase_bracket`).
-- **v0.8.7**: penales con secuencia ronda a ronda, formación + AUTO ONCE NO consumen cambios (solo swap titular↔banco cuenta), clasificación a copa (T1 = top 3 OVR, T2+ = top 3 pts), modo espectador con `SIMULAR COPA ENTERA`, fix de bracket placeholder con backtrack + anti-bucle.
-- **v0.8.7.1**: fix contador "Copas Internacionales" en `career_screen` — chequeaba `'campeon'` ASCII contra `'Campeón'` con acento.
-- **v0.8.7.2**: copa en background (NO CLASIFICADO + VER), DT/presupuesto en slots de Cargar/Guardar.
-- **v0.8.7.3**: fix "Campeón" en historial cuando el user no clasificó (chequeo `copa_user_en_copa` antes de derivar `mejor_fase`).
-- **v0.8.7.4**: 3 fixes consolidados — VER ALINEACIÓN RIVAL en carrera ahora setea `team_contexto` + guard defensivo en `team_screen`; ventaja OVR invertida cuando user es visitante (diff desde la perspectiva del user); badge dorado "CHAMPIONS"/"LIBERTADORES" para top 3 en tabla de posiciones.
-
-### v2.x – v4.x — Carrera completa
-- **v2.3–v2.9**: 1ª/2ª división con ascenso y descenso, 10 ligas vivas, hub por columnas, mentalidad en partido, plantilla con transferibles, negociaciones (buscador, historial, ojeador), objetivos de directiva y despido, finanzas y contratos.
-- **v3.x**: vestuario (moral, personalidades, pedidos de salida), contraofertas, DTs de la IA, ayuda contextual (H), teclado completo.
-- **v4.0–v4.4**: motor del partido más realista, energía y adición, copas por motor, mercado de la IA, nombres únicos.
-- **v4.5.0** (actual): mercado de invierno, traspasos diferidos a la ventana, favoritos, sanciones y amarillas, préstamos (pedir/ceder, panel, correos con periodo y %), pantallas de carga.
-
----
-
-## 🧪 Verificación
-
-Los tests son headless (`SDL_VIDEODRIVER=dummy`) y viven en `tests/test_*.py` (47 archivos): motor, copas, mercado, finanzas, vestuario, préstamos, sanciones, pantallas de carga, etc.
-
-Se corren **archivo por archivo** (correr la carpeta entera de una vez con pytest se cuelga por los `smoke_*`/`diag_*`):
 ```bash
-export SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy PYTHONIOENCODING=utf-8
+python tests/test_objetivos_secciones.py
+# todos:
 for f in tests/test_*.py; do python "$f" || echo "FAIL $f"; done
 ```
-No correr dos tests a la vez ni con el juego abierto (`test_ligas_v370` toca la base editada). Los tests de tiempo (`test_motor_v400`, `test_ligas_v370`) pueden fallar con el PC cargado: re-correrlos solos.
 
----
+En Windows con consola cp1252, usa `PYTHONIOENCODING=utf-8` para evitar errores al imprimir.
 
-## 📂 Cómo está firmado cada cambio (autor)
-
-| Autor | Versiones |
-|---|---|
-| **Diego / Opus** | v0.4, v0.5, v0.6, v0.7, v0.7.1, v0.8, v0.8.1 |
-| **antigravity + claude** | v0.8.6 (antigravity implementó 2, 4, 5 + esqueleto de 1; claude terminó 1, 3) |
-| **claude** | v0.8.3, v0.8.3.4, v0.8.4, v0.8.5, v0.8.7, v0.8.7.1, v0.8.7.2, v0.8.7.3, v0.8.7.4 |
-
----
-
-## 📋 Pendientes Actuales
-
-1. **Validación en vivo de v4.5.0** por Diego (`python main.py`): préstamos, mercado de invierno, sanciones y pantallas de carga.
-2. **Decisiones abiertas**: cobrar el playoff aunque se vaya directo a octavos, adición en el primer tiempo, bono ×2 de 2ª división, salarios de la IA.
-3. **Migración a UI HTML/CSS** (decisión futura, no implementada).
-
----
-
-## 📄 Licencia
+## Licencia
 
 Uso personal / privado. No redistribuir sin autorización del autor.

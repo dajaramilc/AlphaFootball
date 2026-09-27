@@ -56,3 +56,7 @@ planes implementacion/
 
 # Contexto de continuidad entre sesiones (local, no se commitea)
 context.md
+
+# Configuración local de otras herramientas y bases de prueba
+.commandcode/
+alpha_football_db_custom.json
