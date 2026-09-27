@@ -26,13 +26,13 @@ except Exception:
 logger = logging.getLogger(__name__)
 
 # v3.6.0: elementos navegables con ↑/↓ (orden visual). ←/→ ajustan el volumen, Enter activa.
-ITEMS_OPCIONES = ['volumen', 'importar', 'volver', 'playlist']
+ITEMS_OPCIONES = ['volumen', 'pantalla', 'importar', 'volver', 'playlist']   # v4.7.0: + pantalla completa
 
 
 def items_opciones(estado: dict) -> list:
     """v4.2.0: en carrera (no en amistoso) se suma GUARDAR PARTIDA (antes estaba en la barra del hub)."""
     if estado.get('mi_equipo') is not None and estado.get('match_mode') != 'amistoso':
-        return ITEMS_OPCIONES[:3] + ['guardar'] + ITEMS_OPCIONES[3:]
+        return ITEMS_OPCIONES[:4] + ['guardar'] + ITEMS_OPCIONES[4:]
     return list(ITEMS_OPCIONES)
 
 
@@ -46,6 +46,7 @@ def rects_opciones() -> dict:
         'mute': pygame.Rect(panel.left + 130, 210, 70, 50),
         'mas': pygame.Rect(panel.left + 210, 210, 60, 50),
         'barra': pygame.Rect(panel.left + 290, 225, 360, 16),
+        'pantalla': pygame.Rect(panel.right - 392, 274, 344, 38),     # v4.7.0
         'input': pygame.Rect(panel.left + 60, 360, 470, 50),      # v3.9.0: "BUSCAR" no cabía en 90 px
         'descargar': pygame.Rect(panel.left + 545, 360, 120, 50),
         'resultados': pygame.Rect(panel.left + 60, 438, 605, 5 * 24),
@@ -238,6 +239,8 @@ def render(screen, estado: dict):
             elif rect_playlist.collidepoint(cp):
                 estado['opt_view'] = 'playlist'
                 estado['playlist_page'] = 0
+            elif _r['pantalla'].collidepoint(cp):      # v4.7.0
+                alternar_pantalla_completa(estado)
             elif rect_volver.collidepoint(cp):
                 _persistir(audio, estado)
                 return estado.get('options_return', 'menu')
@@ -268,6 +271,8 @@ def render(screen, estado: dict):
                     _persistir(audio, estado)
                 elif item == 'importar':
                     estado['opt_input_activo'] = True
+                elif item == 'pantalla':                              # v4.7.0
+                    alternar_pantalla_completa(estado)
                 elif item == 'playlist':
                     estado['opt_view'] = 'playlist'
                     estado['playlist_page'] = 0
@@ -321,6 +326,9 @@ def render(screen, estado: dict):
     relleno = pygame.Rect(barra.left, barra.top, int(barra.width * volumen), barra.height)
     pygame.draw.rect(screen, COLORS.get('verde', (0, 255, 136)), relleno, border_radius=4)
     draw_text(screen, "Atajos globales en el juego: + / -", (panel.left + 60, 280), size='sm', color='azul')
+    completa = bool(estado.get('pantalla_completa'))                  # v4.7.0
+    draw_button(screen, _r['pantalla'], "PANTALLA COMPLETA: " + ("SÍ" if completa else "NO"),
+                _r['pantalla'].collidepoint(mouse_pos))
 
     # Importador de música
     draw_text(screen, "IMPORTAR MÚSICA (URL o nombre de canción)", (panel.left + 60, 320), size='md', color='blanco')
@@ -374,6 +382,7 @@ def render(screen, estado: dict):
     # v3.6.0: resaltado dorado del elemento con foco de teclado
     try:
         zonas = {'volumen': pygame.Rect(panel.left + 48, 168, 624, 102), 'importar': rect_input.inflate(10, 10),
+                 'pantalla': _r['pantalla'].inflate(10, 10),
                  'volver': rect_volver.inflate(10, 10), 'playlist': rect_playlist.inflate(10, 10),
                  'guardar': rects_opciones()['guardar'].inflate(10, 10)}
         pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), zonas[items[estado['opt_foco']]],
@@ -383,6 +392,23 @@ def render(screen, estado: dict):
     except Exception as e_foco:
         logger.error(f"Error al dibujar el foco de opciones: {e_foco}")
     return None
+
+
+def alternar_pantalla_completa(estado: dict) -> bool:
+    """v4.7.0: pasa de ventana a pantalla completa (y al revés) y lo guarda en preferencias."""
+    nuevo = not bool(estado.get('pantalla_completa'))
+    try:
+        pygame.display.toggle_fullscreen()
+    except Exception as e:
+        logger.error(f"No se pudo cambiar a pantalla completa: {e}")
+        return bool(estado.get('pantalla_completa'))
+    estado['pantalla_completa'] = nuevo
+    try:
+        from alpha_football import audio
+        audio.guardar_preferencias({'pantalla_completa': nuevo})
+    except Exception as e:
+        logger.debug(f"No se pudo guardar la preferencia de pantalla completa: {e}")
+    return nuevo
 
 
 def _abrir_guardar(estado: dict) -> str:

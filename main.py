@@ -519,13 +519,28 @@ def main():
         pygame.init()
         pygame.font.init()
         
-        screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
+        # v4.7.0: SCALED deja la resolución lógica en 1280x720 y permite alternar a pantalla
+        # completa (OPCIONES) sin tocar coordenadas; la preferencia se recuerda entre sesiones.
+        pantalla_completa = False
+        try:
+            from alpha_football.audio import cargar_preferencias
+            pantalla_completa = bool(cargar_preferencias().get('pantalla_completa'))
+        except Exception as e_pref:
+            logger.warning(f"No se pudo leer la preferencia de pantalla completa: {e_pref}")
+        try:
+            screen = pygame.display.set_mode((SCREEN_W, SCREEN_H),
+                                             pygame.SCALED | (pygame.FULLSCREEN if pantalla_completa else 0))
+        except Exception as e_modo:
+            logger.warning(f"Modo SCALED no disponible, se usa ventana normal: {e_modo}")
+            screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
+            pantalla_completa = False
         pygame.display.set_caption("Alpha Football v0.4")
         clock = pygame.time.Clock()
         
         # Estado inicial vacío de la sesión
         estado = {
             'current_screen': 'menu',
+            'pantalla_completa': pantalla_completa,     # v4.7.0: lo muestra OPCIONES
             'liga': None,
             'mi_equipo': None,
             'equipos': [],
@@ -605,6 +620,7 @@ def main():
             next_screen = None
             try:
                 render_fn = PANTALLAS.get(current_screen)
+                screen = pygame.display.get_surface() or screen     # v4.7.0: tras alternar pantalla completa
                 if render_fn is not None:
                     next_screen = render_fn(screen, estado)
                 else:

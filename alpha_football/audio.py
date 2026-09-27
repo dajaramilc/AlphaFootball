@@ -588,7 +588,8 @@ def buscar_canciones_async(query: str, n: int = 5) -> None:
 
 # Preferencias persistentes (volumen, música activada, liga por defecto).
 _PREFS_PATH = os.path.join(PROJECT_ROOT, "preferencias.json")
-_PREFS_DEFECTO = {"volumen": 0.5, "musica_activada": True, "liga_por_defecto": None}
+_PREFS_DEFECTO = {"volumen": 0.5, "musica_activada": True, "liga_por_defecto": None,
+                  "pantalla_completa": False}     # v4.7.0
 
 def cargar_preferencias() -> dict:
     """Lee las preferencias del usuario; devuelve los valores por defecto si no existen/ilegibles."""
