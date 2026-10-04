@@ -18,22 +18,9 @@ ESPACIOS = (('camiseta', 0.50), ('manga', 0.30), ('estadio', 0.20))
 NOMBRE_ESPACIO = {'camiseta': "Camiseta", 'manga': "Manga", 'estadio': "Estadio"}
 # perfil: (fijo × referencia, bono × referencia, dificultad del objetivo 0 fácil / 1 media / 2 difícil)
 PERFILES = {'conservadora': (1.00, 0.10, 0), 'equilibrada': (0.90, 0.25, 1), 'ambiciosa': (0.75, 0.50, 2)}
-MARCAS = [   # (marca parodia, rubro, perfil)
-    ("Fly Emirados", "aerolínea", 'ambiciosa'), ("Qatar Airguais", "aerolínea", 'equilibrada'),
-    ("Etihat", "aerolínea", 'conservadora'), ("Turquish Erlains", "aerolínea", 'equilibrada'),
-    ("Adibas", "ropa deportiva", 'equilibrada'), ("Naik", "ropa deportiva", 'ambiciosa'),
-    ("Pumba", "ropa deportiva", 'conservadora'), ("Niu Balans", "ropa deportiva", 'equilibrada'),
-    ("Coca-Kola", "bebidas", 'conservadora'), ("Pepsy", "bebidas", 'equilibrada'),
-    ("Red Bul", "bebidas", 'ambiciosa'), ("Heinekan", "bebidas", 'equilibrada'),
-    ("Sansumg", "tecnología", 'equilibrada'), ("Spotifai", "tecnología", 'ambiciosa'),
-    ("TeamViuer", "tecnología", 'conservadora'), ("Soni", "tecnología", 'equilibrada'),
-    ("Bet366", "apuestas", 'ambiciosa'), ("Betguay", "apuestas", 'ambiciosa'),
-    ("Codere-te", "apuestas", 'equilibrada'), ("Wplei", "apuestas", 'conservadora'),
-    ("Santénder", "banca", 'conservadora'), ("Mastercar", "banca", 'equilibrada'),
-    ("Bisa", "banca", 'conservadora'), ("Standar Charte", "banca", 'equilibrada'),
-    ("Chevrolé", "autos", 'equilibrada'), ("Jip", "autos", 'conservadora'),
-    ("Audí", "autos", 'ambiciosa'), ("Kía Motor", "autos", 'equilibrada'),
-]
+# v4.9.1: el catálogo (150 marcas con región) y los patrocinios reales viven en data/patrocinadores.py
+from alpha_football.data.patrocinadores import MARCAS, PATROCINIOS_REALES   # noqa: E402
+LIGAS_SUDAMERICA = ('brasil', 'argentina', 'betplay', 'uruguay', 'ecuador')
 
 REP_INICIAL = 50
 REP_CUMPLE, REP_FALLA, REP_TITULO, REP_ASCENSO = 6, -5, 8, 8
@@ -179,7 +166,7 @@ def progreso(estado: dict, contrato: dict) -> float:
 
 def _crear_contrato(estado: dict, marca: tuple, espacio: str, rng: random.Random, anios: int,
                     mult: float = 1.0, fijo: Optional[float] = None) -> dict:
-    nombre, rubro, perfil = marca
+    nombre, rubro, perfil = marca[:3]       # v4.9.1: el catálogo trae también la región
     f_fijo, f_bono, dificultad = PERFILES[perfil]
     ref = valor_referencia(estado, espacio) * mult
     return {'marca': nombre, 'rubro': rubro, 'espacio': espacio, 'perfil': perfil,
@@ -187,16 +174,33 @@ def _crear_contrato(estado: dict, marca: tuple, espacio: str, rng: random.Random
             'objetivo': crear_objetivo(estado, dificultad, rng), 'anios': int(anios), 'cumplido_ultima': None}
 
 
-def _nuevo(estado: dict) -> dict:
-    """Los 3 contratos con los que llega el club: rubros distintos y años restantes al azar."""
-    rng = random.Random()
-    marcas = list(MARCAS)
+def region_de(estado: dict) -> str:
+    """v4.9.1: 'sudamerica' si el club juega en una liga sudamericana; si no, 'europa'."""
+    return 'sudamerica' if getattr(estado.get('liga'), 'tipo', '') in LIGAS_SUDAMERICA else 'europa'
+
+
+def marcas_para(estado: dict) -> list:
+    """v4.9.1: marcas del catálogo que pueden patrocinar a este club (globales + las de su región)."""
+    region = region_de(estado)
+    return [m for m in MARCAS if m[3] in ('global', region)]
+
+
+def _nuevo(estado: dict, rng: Optional[random.Random] = None) -> dict:
+    """Los 3 contratos con los que llega el club. Si es de 1ª y tiene patrocinios reales, arranca con
+    esos (pueden repetir rubro); lo que no tenga dato se rellena con marcas de su región en rubros
+    distintos. Años restantes al azar."""
+    rng = rng or random.Random()
+    disponibles = {m[0]: m for m in marcas_para(estado)}
+    real = PATROCINIOS_REALES.get(estado['mi_equipo'].nombre) or {}
+    elegidas = {esp: disponibles.get(real.get(esp)) for esp, _peso in ESPACIOS}
+    marcas = list(disponibles.values())
     rng.shuffle(marcas)
-    contratos, rubros = {}, set()
     for espacio, _peso in ESPACIOS:
-        marca = next(m for m in marcas if m[1] not in rubros)
-        rubros.add(marca[1])
-        contratos[espacio] = _crear_contrato(estado, marca, espacio, rng, rng.randint(1, 3))
+        if elegidas[espacio] is None:
+            usados = {m[1] for m in elegidas.values() if m}
+            elegidas[espacio] = next(m for m in marcas if m[1] not in usados)
+    contratos = {espacio: _crear_contrato(estado, elegidas[espacio], espacio, rng, rng.randint(1, 3))
+                 for espacio, _peso in ESPACIOS}
     return {'club': estado['mi_equipo'].nombre, 'reputacion': REP_INICIAL, 'contratos': contratos,
             'ofertas': [], 'sig_id': 0}
 
@@ -261,7 +265,8 @@ def generar_ofertas(estado: dict, espacio: str, rng: Optional[random.Random] = N
         o['renovacion'] = True
         nuevas.append(o)
         ocupados.add(anterior['rubro'])
-    candidatas = [m for m in MARCAS if m[1] not in ocupados and (not anterior or m[0] != anterior.get('marca'))]
+    # v4.9.1: solo marcas de su región
+    candidatas = [m for m in marcas_para(estado) if m[1] not in ocupados and (not anterior or m[0] != anterior.get('marca'))]
     azar.shuffle(candidatas)
     elegidas = []
     for m in candidatas:

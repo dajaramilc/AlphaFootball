@@ -35,7 +35,7 @@ def test_contratos_iniciales():
     e = estado_carrera(); p = P.datos(e)
     cs = p['contratos']
     assert set(cs) == {'camiseta', 'manga', 'estadio'} and all(cs.values())
-    assert len({c['rubro'] for c in cs.values()}) == 3 and p['reputacion'] == 50
+    assert p['reputacion'] == 50      # v4.9.1: el club 0 de premier tiene patrocinios reales (pueden repetir rubro)
     for espacio, c in cs.items():
         f_fijo, f_bono, _d = P.PERFILES[c['perfil']]
         ref = P.valor_referencia(e, espacio)
@@ -142,7 +142,8 @@ def test_generar_ofertas_exclusividad_y_valor():
 
 
 def test_renovacion_solo_si_cumplio():
-    e = estado_carrera(); e['liga'].jornada_actual = 5
+    # v4.9.1: club 2 (Pool de Higado): el club 0 repite rubro (Etihat en camiseta y estadio) y eso bloquea renovar
+    e = estado_carrera('premier', 2); e['liga'].jornada_actual = 5
     p, viejo = _vaciar(e, 'camiseta')
     viejo['cumplido_ultima'] = True
     ofertas = P.generar_ofertas(e, 'camiseta', random.Random(4), anterior=viejo)
@@ -423,6 +424,103 @@ def test_pantalla_registrada_con_ayuda_y_atajos():
     print("  test_pantalla_registrada_con_ayuda_y_atajos: OK")
 
 
+
+# --- v4.9.1: catálogo de 150 marcas por región y patrocinios reales ---------------------------
+from alpha_football.data import patrocinadores as PAT   # noqa: E402
+from alpha_football.mercado_ia import ligas_de_la_partida   # noqa: E402
+SUDAMERICA = ('brasil', 'argentina', 'betplay', 'uruguay', 'ecuador')
+
+
+def _club(tipo, nombre):
+    from alpha_football.ui.menu import load_league_teams
+    liga = load_league_teams(tipo)
+    return estado_carrera(tipo, [q.nombre for q in liga.equipos].index(nombre))
+
+
+def _regiones_ok(estado, nombres):
+    reg = P.region_de(estado)
+    permitidas = {'global', reg}
+    por_nombre = {m[0]: m for m in P.MARCAS}
+    return all(por_nombre[n][3] in permitidas for n in nombres)
+
+
+def test_catalogo_150_marcas():
+    ms = P.MARCAS
+    assert len(ms) == 150 and ms is PAT.MARCAS
+    assert len({m[0] for m in ms}) == 150
+    assert all(len(m) == 4 and m[2] in P.PERFILES and m[3] in ('global', 'europa', 'sudamerica') for m in ms)
+    assert {m[3] for m in ms} == {'global', 'europa', 'sudamerica'}
+    print("  test_catalogo_150_marcas: OK")
+
+
+def test_reales_existen_y_son_compatibles():
+    e = estado_carrera()
+    por_nombre = {m[0]: m for m in P.MARCAS}
+    primeras = {}
+    for liga, tipo, division in ligas_de_la_partida(e):
+        if division == 1:
+            for q in liga.equipos:
+                primeras[q.nombre] = tipo
+    assert len(primeras) == 96
+    assert len(PAT.PATROCINIOS_REALES) >= 60
+    for club, d in PAT.PATROCINIOS_REALES.items():
+        # v4.9.1: según la base (por defecto o editada) 3 clubes de LaLiga tienen otro nombre
+        alias = club in PAT.ALIAS_BD_EDITADA or club in PAT.ALIAS_BD_EDITADA.values()
+        assert club in primeras or alias, f"{club} no es un club de 1ª"
+        assert set(d) == {'camiseta', 'manga', 'estadio'}
+        permitidas = {'global', 'sudamerica' if primeras.get(club, 'laliga') in SUDAMERICA else 'europa'}
+        for esp, marca in d.items():
+            assert marca is None or marca in por_nombre, f"{club}/{esp}: {marca} no está en MARCAS"
+            assert marca is None or por_nombre[marca][3] in permitidas, f"{club}/{esp}: {marca} de otra región"
+    print("  test_reales_existen_y_son_compatibles: OK")
+
+
+def test_region_nunca_cruza():
+    e_eu = estado_carrera()
+    liga2 = e_eu['segunda_division']['premier']
+    e_eu['liga'], e_eu['mi_equipo'] = liga2, liga2.equipos[0]
+    e_sa = _club('betplay', 'Matecaña Averiada')
+    assert P.region_de(e_eu) == 'europa' and P.region_de(e_sa) == 'sudamerica'
+    for e, prohibida in ((e_eu, 'sudamerica'), (e_sa, 'europa')):
+        assert all(m[3] != prohibida for m in P.marcas_para(e))
+        for i in range(60):
+            cs = P._nuevo(e, random.Random(i))['contratos']
+            assert all(c['marca'] and next(m for m in P.MARCAS if m[0] == c['marca'])[3] != prohibida for c in cs.values())
+        p = P.datos(e)
+        for i in range(60):
+            for espacio in ('camiseta', 'manga', 'estadio'):
+                p['contratos'][espacio] = None
+                for o in P.generar_ofertas(e, espacio, random.Random(i)):
+                    assert next(m for m in P.MARCAS if m[0] == o['marca'])[3] != prohibida
+    print("  test_region_nunca_cruza: OK")
+
+
+def test_club_real_arranca_con_sus_marcas():
+    e = estado_carrera()                                   # Manchester Billete
+    cs = P.datos(e)['contratos']
+    assert [cs[x]['marca'] for x in ('camiseta', 'manga', 'estadio')] == ["Etihat", "Pumba", "Etihat"]
+    assert cs['camiseta']['rubro'] == cs['estadio']['rubro'] == "aerolínea"      # la exclusividad no aplica
+    e = _club('premier', 'Pool de Higado')                 # estadio sin naming → marca regional al azar
+    real = PAT.PATROCINIOS_REALES['Pool de Higado']
+    assert real['estadio'] is None
+    cs = P.datos(e)['contratos']
+    assert cs['camiseta']['marca'] == real['camiseta'] and cs['manga']['marca'] == real['manga']
+    assert cs['estadio'] and _regiones_ok(e, [cs['estadio']['marca']])
+    for c in cs.values():
+        assert 1 <= c['anios'] <= 3 and c['fijo'] > 0 and c['objetivo']['texto']
+    print("  test_club_real_arranca_con_sus_marcas: OK")
+
+
+def test_club_sin_entrada_marcas_de_su_region():
+    e = _club('betplay', 'Matecaña Averiada')
+    assert 'Matecaña Averiada' not in PAT.PATROCINIOS_REALES
+    for i in range(20):
+        cs = P._nuevo(e, random.Random(i))['contratos']
+        assert len({c['rubro'] for c in cs.values()}) == 3
+        assert _regiones_ok(e, [c['marca'] for c in cs.values()])
+    print("  test_club_sin_entrada_marcas_de_su_region: OK")
+
+
 TESTS = [test_fracciones_y_ingresos_esperados, test_contratos_iniciales, test_cobro_jornada,
          test_objetivos_cumple_y_progreso, test_crear_objetivo_dificultad]
 TESTS += [test_generar_ofertas_exclusividad_y_valor, test_renovacion_solo_si_cumplio, test_sin_interesados,
@@ -430,6 +528,9 @@ TESTS += [test_generar_ofertas_exclusividad_y_valor, test_renovacion_solo_si_cum
 TESTS += [test_evaluar_temporada_bonos_y_reputacion, test_cambio_division, test_cierre_contratos_vencen_y_ofertas,
           test_revisar_jornada_ventanas, test_enganches_del_ciclo]
 TESTS += [test_pantalla_patrocinios, test_pantalla_registrada_con_ayuda_y_atajos]
+# v4.9.1: van primero porque los tests de cierre de temporada mutan las ligas cacheadas (ascensos/descensos)
+TESTS = [test_catalogo_150_marcas, test_reales_existen_y_son_compatibles, test_region_nunca_cruza,
+         test_club_real_arranca_con_sus_marcas, test_club_sin_entrada_marcas_de_su_region] + TESTS
 # --- TESTS-FIN ---
 
 if __name__ == '__main__':
