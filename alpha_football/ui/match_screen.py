@@ -524,6 +524,16 @@ def finalizar_jornada_liga(estado: dict, liga: Any, mi_equipo: Any, partido: Any
             revisar_objetivos_secundarios(estado)
         except Exception as e_sec:
             logger.error(f"Error al revisar Marca/Juveniles: {e_sec}")
+        try:  # v4.8.0: cantera (renovación al inicio y a mitad de temporada)
+            from alpha_football.cantera import revisar_jornada as _cantera_jornada
+            _cantera_jornada(estado)
+        except Exception as e_can:
+            logger.error(f"Error en la renovación de la cantera: {e_can}")
+        try:  # v4.9.0: patrocinios (ofertas de invierno y ofertas que vencen con la ventana)
+            from alpha_football import patrocinios as _patro
+            _patro.revisar_jornada(estado)
+        except Exception as e_pat:
+            logger.error(f"Error revisando los patrocinios: {e_pat}")
     except Exception as e:
         logger.error(f"Error en finalizar_jornada_liga: {e}")
 

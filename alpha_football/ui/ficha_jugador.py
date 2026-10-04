@@ -43,6 +43,16 @@ def _ajustar(texto: str, ancho: int) -> str:
     return texto.rstrip(" ·") + "…"
 
 
+def textos_contrato(j) -> tuple:
+    """(línea de contrato, línea de cláusula, color). v4.8.0: sin salario ni años (canteranos) = sin contrato."""
+    from alpha_football.negociacion import dinero_exacto
+    anios = int(getattr(j, 'contrato_anios', 0) or 0)
+    if anios <= 0 and int(getattr(j, 'salario', 0) or 0) <= 0:
+        return "Sin contrato", "Cláusula —", 'blanco'
+    contrato = f"Contrato {anios} año{'s' if anios != 1 else ''}  ·  {dinero_exacto(getattr(j, 'salario', 0))}/año"
+    return contrato, f"Cláusula {dinero_exacto(getattr(j, 'clausula', 0))}", 'rojo' if anios <= 1 else 'blanco'
+
+
 def dibujar_ficha(screen, rect: pygame.Rect, j, estado_txt: str = "", extra: Optional[list] = None) -> int:
     """Dibuja la ficha de `j` dentro de `rect`. Retorna la y final (para ubicar botones debajo).
     `extra`: líneas [(texto, color)] al final de la ficha (p. ej. amarillas acumuladas)."""
@@ -66,11 +76,8 @@ def dibujar_ficha(screen, rect: pygame.Rect, j, estado_txt: str = "", extra: Opt
         draw_text(screen, f"Valor {dinero_exacto(_valor(j))}  ·  Moral {j.moral}  ·  Energía {int(getattr(j, 'energia', 100))}",
                   (x, y), size='sm', color='blanco')
         y += 24
-        anios = int(getattr(j, 'contrato_anios', 0) or 0)
-        contrato = f"Contrato {anios} año{'s' if anios != 1 else ''}  ·  {dinero_exacto(getattr(j, 'salario', 0))}/año"
-        clausula = f"Cláusula {dinero_exacto(getattr(j, 'clausula', 0))}"
-        color_c = 'rojo' if anios <= 1 else 'blanco'
-        if rect.width >= 520:            # ficha ancha: contrato y cláusula en una línea
+        contrato, clausula, color_c = textos_contrato(j)
+        if rect.width >= 520:           # ficha ancha: contrato y cláusula en una línea
             draw_text(screen, f"{contrato}  ·  {clausula}", (x, y), size='sm', color=color_c)
         else:                            # montos exactos: en la ficha angosta van en dos líneas
             draw_text(screen, contrato, (x, y), size='sm', color=color_c)

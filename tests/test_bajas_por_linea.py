@@ -23,6 +23,7 @@ def _once(formacion='4-3-3'):
 
 
 def _equipos():
+    random.seed(3)      # la carga sortea suplentes/edades: sin semilla, los equipos cambiaban en cada corrida
     liga = load_league_teams('premier')
     a, b = liga.equipos[0], liga.equipos[1]
     for e in (a, b):

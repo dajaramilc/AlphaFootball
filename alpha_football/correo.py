@@ -14,7 +14,9 @@ logger = logging.getLogger(__name__)
 
 MAX_CORREOS = 200
 REMITENTES = {'directiva': "Directiva", 'jugador': "Jugador", 'medico': "Cuerpo médico", 'club': "Club",
-              'prensa': "Prensa"}   # v4.6.0: noticias (quiebras de la IA)
+              'prensa': "Prensa",   # v4.6.0: noticias (quiebras de la IA)
+              'cantera': "Cantera",   # v4.8.0: informe semestral
+              'patrocinador': "Patrocinador"}   # v4.9.0
 
 
 def bandeja(estado: dict) -> list:
@@ -27,7 +29,9 @@ def accion(pantalla: str, texto: str) -> dict:
 
 # v4.7.0: firma de cada remitente (los jugadores escriben a su manera: sin plantilla)
 FIRMAS = {'directiva': "La Directiva de {club}", 'medico': "Cuerpo médico de {club}",
-          'club': "Secretaría técnica de {club}", 'prensa': "Redacción deportiva"}
+          'club': "Secretaría técnica de {club}", 'prensa': "Redacción deportiva",
+          'cantera': "Coordinación de cantera de {club}",
+          'patrocinador': "Departamento comercial de {club}"}
 
 
 def enviar(estado: dict, remitente: str, asunto: str, cuerpo: str, accion: Optional[dict] = None,

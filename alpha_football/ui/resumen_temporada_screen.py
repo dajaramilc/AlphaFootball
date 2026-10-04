@@ -220,6 +220,11 @@ def avanzar_nueva_temporada(estado: dict) -> None:
                 registro['fallos_financieros'] = list(ev_dir.get('fallos_financieros') or [])   # v4.6.0
             except Exception as e_dir:
                 logger.error(f"Error al evaluar el objetivo de la directiva: {e_dir}")
+            try:  # v4.9.0: objetivos y bonos de los patrocinios (con la tabla final aún intacta)
+                from alpha_football import patrocinios as _patro
+                _patro.evaluar_temporada(estado, posicion, temp_anterior)
+            except Exception as e_pat:
+                logger.error(f"Error evaluando los patrocinios: {e_pat}")
             try:  # v3.4.0: DTs de la IA que no cumplieron (usa la tabla final: antes del swap)
                 from alpha_football.entrenadores import cierre_temporada as _dts_cierre
                 _dts_cierre(estado)
@@ -383,6 +388,11 @@ def avanzar_nueva_temporada(estado: dict) -> None:
         estado['liga'] = liga
         estado['equipos'] = liga.equipos
         estado['liga_usuario_division'] = getattr(liga, 'division', 1)
+        try:  # v4.9.0: cláusula de ascenso/descenso de los patrocinios
+            from alpha_football import patrocinios as _patro
+            _patro.cambio_division(estado, user_asc, user_des)
+        except Exception as e_pat:
+            logger.error(f"Error en la cláusula de división de los patrocinios: {e_pat}")
 
         # 4. Reset de temporada en la liga del user y en TODAS las de fondo
         #    (antes las 2ª jugaban una sola temporada y quedaban congeladas).

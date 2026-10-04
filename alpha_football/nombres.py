@@ -105,6 +105,9 @@ def desduplicar(estado: dict) -> int:
                 repetidos.append(j)
             else:
                 _USADOS.add(k)
+        for c in (estado.get('datos_carrera') or {}).get('cantera') or []:   # v4.8.0: canteranos (dicts)
+            if isinstance(c, dict):
+                _USADOS.add(_clave(str(c.get('nombre', '')), str(c.get('apellido', ''))))
         for j in repetidos:
             j.nombre, j.apellido = nombre_unico(getattr(j, 'nacionalidad', '') or '')
         if repetidos:

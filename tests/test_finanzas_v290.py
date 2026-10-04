@@ -176,7 +176,7 @@ def test_pantallas_finanzas_y_negociacion():
     from alpha_football.ui import league_screen, finanzas_screen, negociacion_screen, buscador_screen, plantilla_screen
     claves = [b[0] for b in league_screen.BARRA_MENU]
     assert claves == ['inicio', 'direccion', 'negociaciones', 'oficina', 'finanzas', 'opciones']   # v4.2.0: GUARDAR en OPCIONES
-    assert [t[2] for t in league_screen.TARJETAS['finanzas']] == ['finanzas_screen', 'contratos']
+    assert [t[2] for t in league_screen.TARJETAS['finanzas']] == ['finanzas_screen', 'contratos', 'patrocinios_screen']   # v4.9.0
     src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'main.py'), encoding='utf-8').read()
     assert "'finanzas_screen': 'alpha_football.ui.finanzas_screen'" in src and "'negociacion_screen': 'alpha_football.ui.negociacion_screen'" in src   # v3.6.0: MODULOS_PANTALLA
     e = estado_carrera()

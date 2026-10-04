@@ -297,10 +297,12 @@ def _estado(tipo='premier', idx=0):
 
 def test_catastrofico_despide_sin_segunda_oportunidad():
     from alpha_football import directiva as D, correo as C
+    def secundarios(ev):     # v4.7.0: Marca y Juveniles también mueven la calificación (+4 / −3 cada uno)
+        return sum(D.CALIF_SECUNDARIO[x['resultado']] for x in (ev.get('marca'), ev.get('juveniles')) if x)
     e = _estado()
     D.definir_objetivo(e).update(pos_max=2)
     r = D.evaluar_temporada(e, len(e['liga'].equipos))          # último = desciende
-    assert r['despido'] and D.calif_dt(e) == 50 - 8 - 12 - 10
+    assert r['despido'] and D.calif_dt(e) == 50 - 8 - 12 - 10 + secundarios(r)
     e2 = _estado()
     D.definir_objetivo(e2).update(pos_max=1)
     r2 = D.evaluar_temporada(e2, 3)                             # 2 debajo: advertencia
@@ -308,8 +310,8 @@ def test_catastrofico_despide_sin_segunda_oportunidad():
     assert not r2['despido'] and r2['veredicto'] == 'regano'
     assert any(m['asunto'].startswith("Evaluación de la temporada") for m in C.bandeja(e2))
     e3 = _estado(); D.definir_objetivo(e3).update(pos_max=3)
-    D.evaluar_temporada(e3, 1)
-    assert D.calif_dt(e3) == 50 + 8 + 10
+    r3 = D.evaluar_temporada(e3, 1)
+    assert D.calif_dt(e3) == 50 + 8 + 10 + secundarios(r3)
     print("  test_catastrofico_despide_sin_segunda_oportunidad: OK")
 
 

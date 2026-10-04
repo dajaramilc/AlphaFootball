@@ -352,6 +352,7 @@ TARJETAS = {
     'direccion': [
         ("FORMACIÓN", "Once, banco, formación y táctica", 'team_screen'),
         ("PLANTILLA", "Todos tus jugadores, ficha y transferibles", 'plantilla_screen'),
+        ("CANTERA", "Juveniles del club: súbelos o libéralos", 'cantera_screen'),   # v4.8.0
     ],
     'negociaciones': [
         ("NEGOCIAR", "Buscador de jugadores de todas las ligas", 'buscador_screen'),
@@ -373,6 +374,7 @@ TARJETAS = {
     'finanzas': [
         ("RESUMEN", "Ingresos, gastos, masa salarial y saldo", 'finanzas_screen'),
         ("CONTRATOS", "Salarios, vencimientos y renovaciones", 'contratos'),
+        ("PATROCINIOS", "Marcas, objetivos y ofertas", 'patrocinios_screen'),   # v4.9.0
     ],
 }
 

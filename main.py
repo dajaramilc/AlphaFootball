@@ -144,6 +144,7 @@ MODULOS_PANTALLA = {
     'promo_releg_screen': 'alpha_football.ui.promo_releg_screen',
     'otras_ligas_screen': 'alpha_football.ui.otras_ligas_screen',
     'plantilla_screen': 'alpha_football.ui.plantilla_screen',
+    'cantera_screen': 'alpha_football.ui.cantera_screen',              # v4.8.0
     'buscador_screen': 'alpha_football.ui.buscador_screen',
     'favoritos_screen': 'alpha_football.ui.favoritos_screen',
     'historial_pases_screen': 'alpha_football.ui.historial_pases_screen',
@@ -152,6 +153,7 @@ MODULOS_PANTALLA = {
     'correo_screen': 'alpha_football.ui.correo_screen',
     'despido_screen': 'alpha_football.ui.despido_screen',
     'finanzas_screen': 'alpha_football.ui.finanzas_screen',
+    'patrocinios_screen': 'alpha_football.ui.patrocinios_screen',      # v4.9.0
     'negociacion_screen': 'alpha_football.ui.negociacion_screen',
     'contrato_dt_screen': 'alpha_football.ui.contrato_dt_screen',      # v3.2.0
     'veredicto_screen': 'alpha_football.ui.veredicto_screen',

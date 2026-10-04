@@ -34,7 +34,8 @@ def test_ingresos_por_club():
     assert F.ingresos_esperados(grande, 'premier', 1) == int(base * F.PATROCINIO_FRAC) + int(base * F.TAQUILLA_FRAC)
     e['mi_equipo'] = grande
     mov = F.procesar_jornada(e, es_local=False, gf=0, gc=0)
-    assert mov['patrocinio'] == int(base * F.PATROCINIO_FRAC / liga.num_jornadas)
+    from alpha_football import patrocinios as P                      # v4.9.0: cobran los contratos
+    assert mov['patrocinio'] == P.cobro_jornada(e) > 0
     print("  test_ingresos_por_club: OK")
 
 

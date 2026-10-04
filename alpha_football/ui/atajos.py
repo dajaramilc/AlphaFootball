@@ -39,6 +39,7 @@ ATAJOS = {
     'promo_releg_screen': "Enter Continuar · H Ayuda · ESC Continuar",
     'otras_ligas_screen': "↑ ↓ País · ← → División · C Copas · H Ayuda · ESC Volver",   # v3.8.0
     'plantilla_screen': "↑ ↓ Jugador · Clic columna Ordenar · S Orden · T Transferible · R Renovar · P Préstamo · H Ayuda · ESC Volver",
+    'cantera_screen': "↑ ↓ Canterano · S Subir · L Liberar · Enter Confirmar · H Ayuda · ESC Volver",
     'buscador_screen': "↑ ↓ Jugador · Tab Campo · Enter Buscar · Filtros · Solo libres · H Ayuda · ESC Volver",
     'favoritos_screen': "↑ ↓ Jugador · Enter Negociar · Supr Quitar · Clic en la caja Buscar · H Ayuda · ESC Volver",
     'historial_pases_screen': "← → Pestaña · ↑ ↓ RePág AvPág Desplazar · H Ayuda · ESC Volver",
@@ -47,6 +48,7 @@ ATAJOS = {
     'correo_screen': "↑ ↓ Mensaje · Enter Ir · O Opciones · H Ayuda · ESC Volver",
     'despido_screen': "← → Club · Enter Aceptar · H Ayuda",
     'finanzas_screen': "1 2 3 Espaldarazo · H Ayuda · ESC Volver",
+    'patrocinios_screen': "← → Espacio · ↑ ↓ Oferta · F Firmar · P Prima · 1 2 Negociar · R Rechazar · X Rescindir · H Ayuda · ESC Volver",
     'negociacion_screen': "← → Tab Botón · Enter Pulsar · 0-9 Monto · H Ayuda · ESC Cancelar",
     'contrato_dt_screen': "← → Oferta · Enter Aceptar · R Rechazar renovación · H Ayuda · ESC Volver",
     'veredicto_screen': "Enter Continuar · H Ayuda",

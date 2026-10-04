@@ -29,8 +29,8 @@ FACTOR_INGRESOS = {
 }
 SALARIO_MIN = 20_000
 CLAUSULA_MULT_INICIAL = 2.0
-PATROCINIO_FRAC = 0.40          # patrocinio de la temporada = 40% del presupuesto medio de la liga
-TAQUILLA_FRAC = 0.50            # taquilla de la temporada (de local) = 50% del presupuesto medio
+PATROCINIO_FRAC = 0.55          # v4.9.0 (antes 0.40): valor de referencia de los patrocinios de la temporada
+TAQUILLA_FRAC = 0.35            # v4.9.0 (antes 0.50): la suma sigue en 0.90 (ingresos_esperados no cambia)
 FACTOR_TAQUILLA = {'victoria': 1.2, 'empate': 1.0, 'derrota': 0.85}
 JORNADAS_ROJO_VENTA = 4         # v4.6.0: antes 3
 PUNTOS_QUIEBRA = 6              # v4.6.0: cerrar la temporada en rojo resta puntos en la siguiente
@@ -290,7 +290,12 @@ def procesar_jornada(estado: dict, es_local: bool, gf: int, gc: int) -> dict:
     n = max(1, int(getattr(liga, 'num_jornadas', 10) or 10))
     medio = base_ingresos(mi, getattr(liga, 'tipo', ''), getattr(liga, 'division', 1) or 1)   # v4.6.0: según el club y su liga
     resultado = 'victoria' if gf > gc else 'derrota' if gf < gc else 'empate'
-    patrocinio = int(medio * PATROCINIO_FRAC / n)
+    try:   # v4.9.0: cobran los contratos de patrocinio (sin contratos, no hay patrocinio)
+        from alpha_football import patrocinios as _P
+        patrocinio = _P.cobro_jornada(estado)
+    except Exception as e_pat:   # un fallo no deja al club sin cobrar: patrocinio de fórmula
+        logger.error(f"Error cobrando los patrocinios: {e_pat}")
+        patrocinio = int(medio * PATROCINIO_FRAC / n)
     taquilla = int(medio * TAQUILLA_FRAC / max(1, n / 2) * FACTOR_TAQUILLA[resultado]) if es_local else 0
     salarios = masa_salarial(mi, estado) // n
     mi.balance = int(mi.balance) + patrocinio + taquilla - salarios
@@ -387,6 +392,12 @@ def cierre_temporada(estado: dict) -> list:
                              C.accion('finanzas_screen', "VER FINANZAS"))
         else:
             dc['temporadas_en_rojo'] = 0
+    if mi is not None:     # v4.9.0: vencen patrocinios y llegan las ofertas de la ventana de inicio
+        try:
+            from alpha_football import patrocinios as _P
+            _P.cierre_contratos(estado)
+        except Exception as e_pat:
+            logger.error(f"Error en el cierre de los patrocinios: {e_pat}")
     return salidas
 
 

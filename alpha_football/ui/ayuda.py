@@ -355,6 +355,7 @@ AYUDA['menu'] = _ayuda_menu
 _TEXTO_TARJETA = {
     'team_screen': "Elige el once, el banco, la formación, el estilo y la mentalidad.",
     'plantilla_screen': "Lista de tus jugadores: ficha, orden por columnas, transferibles y renovaciones.",
+    'cantera_screen': "Juveniles del club: se renuevan cada 6 meses. Súbelos al primer equipo o libéralos.",
     'buscador_screen': "Busca jugadores de todas las ligas por nombre, posición y rangos, y negocia su fichaje.",
     'favoritos_screen': "Tu lista de jugadores seguidos: búscalos y negocia su fichaje cuando quieras.",
     'ofertas_screen': "Ofertas que otros clubes hacen por tus jugadores: acepta, rechaza o contraoferta.",
@@ -369,14 +370,15 @@ _TEXTO_TARJETA = {
     'contrato_dt_screen': "Tu sueldo, años de contrato, patrimonio y la renovación con el club.",
     'ofertas_dt_screen': "Clubes que te quieren como DT. El número rojo son las ofertas vigentes.",
     'finanzas_screen': "Ingresos, gastos, masa salarial y saldo del club.",
+    'patrocinios_screen': "Tus 3 patrocinadores, sus objetivos y las ofertas para firmar, negociar o rechazar.",
     'contratos': "Salarios y vencimientos de tu plantilla ordenados por contrato, para renovar.",
 }
 _TEXTO_PESTANA = {
     'inicio': "Tablero principal: tabla, JUGAR, jornada y tu club.",
-    'direccion': "Formación y plantilla.",
+    'direccion': "Formación, plantilla y cantera.",
     'negociaciones': "Fichajes, ofertas recibidas, historial de pases y ojeador.",
     'oficina': "Correo, estadísticas, copa, carrera, otras ligas, objetivos y tu contrato.",
-    'finanzas': "Resumen económico y contratos.",
+    'finanzas': "Resumen económico, contratos y patrocinios.",
     'opciones': "Volumen, música y GUARDAR PARTIDA (tecla O desde cualquier pantalla).",
 }
 
@@ -759,6 +761,32 @@ def _ayuda_historial_pases(estado: dict) -> list:
     ]
 
 
+# ---------------------------------------------------------------- cantera (v4.8.0)
+def _ayuda_cantera(estado: dict) -> list:
+    from alpha_football.ui import cantera_screen as CS
+    r = CS._rects()
+    return [
+        (CS.R_LISTA, "Canteranos", "Cada 6 meses llegan nuevos, algunos se van y el resto mejora. En dorado, la joya."),
+        (CS.R_FICHA, "Ficha", "Datos del canterano elegido: media, potencial y atributos."),
+        (r['subir'], "Subir", "Lo pasa al primer equipo con contrato nuevo (tecla S). Necesita cupo en la plantilla."),
+        (r['liberar'], "Liberar", "Lo saca de la cantera; pide confirmación (tecla L, Enter confirma)."),
+        (r['volver'], "Volver", "Regresa al hub (también ESC)."),
+    ]
+
+
+# ---------------------------------------------------------------- patrocinios (v4.9.0)
+def _ayuda_patrocinios(estado: dict) -> list:
+    from alpha_football.ui import patrocinios_screen as PS
+    r = PS._rects()
+    return [
+        (r['reputacion'], "Reputación", "Sube al cumplir objetivos y baja al fallarlos, descender o rescindir. Mejora las ofertas."),
+        (_union([PS._rect_espacio(i) for i in range(3)]), "Espacios",
+         "Camiseta, manga y estadio: marca, fijo, bono, objetivo y años. ← → o clic para elegir."),
+        (PS.R_OFERTAS, "Ofertas", "Firma (F), firma con prima (P), pide +10% o +20% (1, 2) o rechaza (R). Vencen con la ventana."),
+        (r['volver'], "Volver", "Regresa al hub (también ESC)."),
+    ]
+
+
 # ---------------------------------------------------------------- ojeador
 def _ayuda_ojeador(estado: dict) -> list:
     from alpha_football.ui import ojeador_screen as O
@@ -826,6 +854,8 @@ def _ayuda_despido(estado: dict) -> list:
 
 
 AYUDA['historial_pases_screen'] = _ayuda_historial_pases
+AYUDA['cantera_screen'] = _ayuda_cantera
+AYUDA['patrocinios_screen'] = _ayuda_patrocinios
 AYUDA['ojeador_screen'] = _ayuda_ojeador
 AYUDA['objetivos_screen'] = _ayuda_objetivos
 AYUDA['correo_screen'] = _ayuda_correo

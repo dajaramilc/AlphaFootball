@@ -103,6 +103,7 @@ class Jugador:
     # ventana no puede volver a ser traspasado (solo cedido a préstamo)
     ventana_traspaso: str = ""
     remate: bool = False                        # v4.6.0: rematado por un club en quiebra (precio 60%)
+    joya: bool = False                          # v4.8.0: joya de cantera (solo mientras está en la cantera)
     energia_vivo: Optional[float] = None       # transitorio: energía en el tramo que se simula
 
     def __post_init__(self):
@@ -286,6 +287,7 @@ class Jugador:
                 prestamo=dict(datos["prestamo"]) if isinstance(datos.get("prestamo"), dict) else None,
                 ventana_traspaso=str(datos.get("ventana_traspaso", "") or ""),
                 remate=bool(datos.get("remate", False)),
+                joya=bool(datos.get("joya", False)),
             )
         except Exception as e:
             logger.warning(f"Excepción al reconstruir Jugador: {e}. Usando fallback.")

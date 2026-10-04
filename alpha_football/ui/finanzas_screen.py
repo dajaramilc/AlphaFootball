@@ -97,7 +97,12 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         restantes = max(0, n - sum(1 for p in liga.calendario if p.jugado and mi.id in (p.local_id, p.visitante_id)))
         medio = F.presupuesto_medio(liga)
         masa = F.masa_salarial(mi, estado)
-        por_jornada = int(medio * F.PATROCINIO_FRAC / n) + int(medio * F.TAQUILLA_FRAC / n) - masa // n
+        try:   # v4.9.0: el patrocinio por jornada sale de los contratos
+            from alpha_football import patrocinios as _P
+            patro_jornada = _P.cobro_jornada(estado)
+        except Exception:
+            patro_jornada = int(medio * F.PATROCINIO_FRAC / n)
+        por_jornada = patro_jornada + int(medio * F.TAQUILLA_FRAC / n) - masa // n
         proyeccion = mi.balance + por_jornada * restantes
         dc = estado.get('datos_carrera') or {}
 
