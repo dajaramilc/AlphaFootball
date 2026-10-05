@@ -155,7 +155,8 @@ def test_dts_libres_del_editor_entran_a_la_bolsa_una_vez():
 
 
 # ---------------------------------------------------------------- jugadores libres del editor
-def _libre_dict(nombre='Neymar', apellido='Duro-en-fiesta', ovr=85, jid=90001):
+# v4.9.2: nombre que no existe en la base: 'Neymar Duro-en-fiesta' es un libre real y a veces salía dos veces
+def _libre_dict(nombre='Libreditor', apellido='De-prueba', ovr=85, jid=90001):
     return Jugador(nombre=nombre, apellido=apellido, posicion='DEL', ataque=ovr, defensa=ovr, fisico=ovr,
                    tecnica=ovr, mental=ovr, moral=70, id=jid, edad=30).to_dict()
 
@@ -173,8 +174,8 @@ def test_libres_del_editor_estan_toda_la_carrera():
         for jornada in (1, 2, 3):
             e['liga'].jornada_actual = jornada
             nombres = [j.nombre_completo for j in NG.asegurar_agentes_libres(e)]
-            assert nombres.count('Neymar Duro-en-fiesta') == 1, (jornada, nombres)
-        j = next(x for x in e['free_agents_list'] if x.nombre == 'Neymar')
+            assert nombres.count('Libreditor De-prueba') == 1, (jornada, nombres)
+        j = next(x for x in e['free_agents_list'] if x.nombre == 'Libreditor')
         assert j.overall == 85 and j.valor > 0
     finally:
         FA._libres_de_la_base = orig
@@ -186,10 +187,10 @@ def test_libre_del_editor_fichado_ya_no_vuelve():
     try:
         e = estado_carrera()
         e['mi_equipo'].balance = 10 ** 9
-        j = next(x for x in NG.asegurar_agentes_libres(e) if x.nombre == 'Neymar')
+        j = next(x for x in NG.asegurar_agentes_libres(e) if x.nombre == 'Libreditor')
         FA.quitar_libre_editor(e, j)
         e['liga'].jornada_actual = 5
-        assert all(x.nombre != 'Neymar' for x in NG.asegurar_agentes_libres(e))
+        assert all(x.nombre != 'Libreditor' for x in NG.asegurar_agentes_libres(e))
     finally:
         FA._libres_de_la_base = orig
     print("  test_libre_del_editor_fichado_ya_no_vuelve: OK")
@@ -200,7 +201,7 @@ def test_fichar_libre_del_editor_lo_saca_de_la_bolsa():
     try:
         e = estado_carrera()
         e['mi_equipo'].balance = 10 ** 9
-        j = next(x for x in NG.asegurar_agentes_libres(e) if x.nombre == 'Neymar')
+        j = next(x for x in NG.asegurar_agentes_libres(e) if x.nombre == 'Libreditor')
         NG.fichar(e, j, None, 0)
         assert not e['datos_carrera']['libres_editor']
     finally:

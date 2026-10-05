@@ -281,11 +281,12 @@ def test_dropdown_rasgo_no_restaura():
         e['edit_dropdown_activo'] = 'rasgo'                            # (modo equipo: el rasgo no aplica)
         click(ED.R_RESTAURAR.center); ED.render(screen, e)
         assert not llamado and not e['edit_dropdown_activo']
-        # con un jugador elegido, el clic sobre RESTAURAR BASE cae en un ítem del rasgo: lo cambia
+        # con un jugador elegido, el clic en un ítem del rasgo lo cambia (v4.9.2: RESTAURAR BASE bajó y ya
+        # no queda bajo esta lista; el caso "lista encima del botón" se prueba en test_patrocinios_editor)
         e['edit_jugador_idx'] = 0; pygame.event.clear(); ED.render(screen, e)
         e['edit_dropdown_activo'] = 'rasgo'
-        valor = next(v for v, _t, r in ED._opciones_dropdown('rasgo') if r.collidepoint(ED.R_RESTAURAR.center))
-        click(ED.R_RESTAURAR.center); ED.render(screen, e)
+        valor, _t, r_op = ED._opciones_dropdown('rasgo')[-1]
+        click(r_op.center); ED.render(screen, e)
         db = ED.cargar_base_datos_inicial(e)
         jug = db[e['edit_liga_sel']][e['edit_equipo_idx']]['jugadores'][0]
         assert not llamado and jug.get('rasgo') == (None if valor == 'ninguno' else valor)

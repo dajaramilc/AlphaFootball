@@ -334,6 +334,8 @@ class Equipo:
     dt_nombre: str = ""      # v3.4.0: DT puesto a mano en el editor
     dt_estilo: str = ""      # v4.6.0: estilo del DT puesto en el editor ("" = el real / el del club)
     dt_calif: int = 0        # v4.6.0: calificación del DT puesta en el editor (0 = según estrellas)
+    # v4.9.2: patrocinios de la primera temporada puestos en el editor ({espacio: marca}; vacío = los reales)
+    patrocinios: dict = field(default_factory=dict)
     sin_fichajes_hasta: int = 0   # v4.6.0: quebró: no ficha hasta terminar esa temporada
     sancion_puntos: int = 0       # v4.6.0: puntos restados por quiebra esta temporada (el recuento los respeta)
 
@@ -452,6 +454,7 @@ class Equipo:
                 dt_nombre=str(datos.get("dt_nombre", "") or ""),  # v3.4.0
                 dt_estilo=_normalizar_estilo(datos["dt_estilo"]) if datos.get("dt_estilo") else "",  # v4.6.0
                 dt_calif=int(datos.get("dt_calif", 0) or 0),
+                patrocinios={str(k): str(v) for k, v in (datos.get("patrocinios") or {}).items() if v},  # v4.9.2
             )
         except Exception as e:
             logger.error(f"Error al reconstruir Equipo: {e}")

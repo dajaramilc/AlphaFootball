@@ -21,6 +21,7 @@ PERFILES = {'conservadora': (1.00, 0.10, 0), 'equilibrada': (0.90, 0.25, 1), 'am
 # v4.9.1: el catálogo (150 marcas con región) y los patrocinios reales viven en data/patrocinadores.py
 from alpha_football.data.patrocinadores import MARCAS, PATROCINIOS_REALES   # noqa: E402
 LIGAS_SUDAMERICA = ('brasil', 'argentina', 'betplay', 'uruguay', 'ecuador')
+SIN_PATROCINIO = 'ninguno'       # v4.9.2: el club arranca con ese espacio vacío (pueden llegar ofertas después)
 
 REP_INICIAL = 50
 REP_CUMPLE, REP_FALLA, REP_TITULO, REP_ASCENSO = 6, -5, 8, 8
@@ -179,27 +180,47 @@ def region_de(estado: dict) -> str:
     return 'sudamerica' if getattr(estado.get('liga'), 'tipo', '') in LIGAS_SUDAMERICA else 'europa'
 
 
-def marcas_para(estado: dict) -> list:
-    """v4.9.1: marcas del catálogo que pueden patrocinar a este club (globales + las de su región)."""
-    region = region_de(estado)
+def marcas_de_region(region: str) -> list:
+    """v4.9.2: marcas que pueden patrocinar a un club de esa región (las globales + las suyas)."""
     return [m for m in MARCAS if m[3] in ('global', region)]
 
 
+def marcas_para(estado: dict) -> list:
+    """v4.9.1: marcas del catálogo que pueden patrocinar a este club (globales + las de su región)."""
+    return marcas_de_region(region_de(estado))
+
+
+def inicial_de(nombre_club: str, editados: Optional[dict], espacio: str, validas=None):
+    """v4.9.2: con qué arranca el club en ese espacio: una marca, SIN_PATROCINIO (vacío) o None (al azar).
+    Manda lo puesto en el editor (si la marca vale para su región); si no, el dato real. Un club con
+    datos reales cuyo estadio no tiene naming arranca sin patrocinador de estadio."""
+    ed = (editados or {}).get(espacio)
+    if ed == SIN_PATROCINIO or (ed and (validas is None or ed in validas)):
+        return ed
+    real = PATROCINIOS_REALES.get(nombre_club)
+    if real is None:
+        return None
+    return real.get(espacio) or (SIN_PATROCINIO if espacio == 'estadio' else None)
+
+
 def _nuevo(estado: dict, rng: Optional[random.Random] = None) -> dict:
-    """Los 3 contratos con los que llega el club. Si es de 1ª y tiene patrocinios reales, arranca con
-    esos (pueden repetir rubro); lo que no tenga dato se rellena con marcas de su región en rubros
-    distintos. Años restantes al azar."""
+    """Los contratos con los que llega el club. Si es de 1ª y tiene patrocinios reales, arranca con
+    esos (pueden repetir rubro, y el estadio sin naming queda vacío); lo que no tenga dato se rellena
+    con marcas de su región en rubros distintos. Años restantes al azar."""
     rng = rng or random.Random()
+    mi = estado['mi_equipo']
     disponibles = {m[0]: m for m in marcas_para(estado)}
-    real = PATROCINIOS_REALES.get(estado['mi_equipo'].nombre) or {}
-    elegidas = {esp: disponibles.get(real.get(esp)) for esp, _peso in ESPACIOS}
+    iniciales = {esp: inicial_de(mi.nombre, getattr(mi, 'patrocinios', None), esp, disponibles)
+                 for esp, _peso in ESPACIOS}
+    elegidas = {esp: disponibles.get(v) for esp, v in iniciales.items()}
     marcas = list(disponibles.values())
     rng.shuffle(marcas)
     for espacio, _peso in ESPACIOS:
-        if elegidas[espacio] is None:
+        if elegidas[espacio] is None and iniciales[espacio] != SIN_PATROCINIO:
             usados = {m[1] for m in elegidas.values() if m}
             elegidas[espacio] = next(m for m in marcas if m[1] not in usados)
-    contratos = {espacio: _crear_contrato(estado, elegidas[espacio], espacio, rng, rng.randint(1, 3))
+    contratos = {espacio: (_crear_contrato(estado, elegidas[espacio], espacio, rng, rng.randint(1, 3))
+                           if elegidas[espacio] else None)
                  for espacio, _peso in ESPACIOS}
     return {'club': estado['mi_equipo'].nombre, 'reputacion': REP_INICIAL, 'contratos': contratos,
             'ofertas': [], 'sig_id': 0}
@@ -259,7 +280,10 @@ def generar_ofertas(estado: dict, espacio: str, rng: Optional[random.Random] = N
     mult = mult_reputacion(rep) * factor
     ocupados = {c['rubro'] for esp, c in p['contratos'].items() if c and esp != espacio}
     nuevas = []
-    if anterior and anterior.get('cumplido_ultima') is True and anterior.get('rubro') not in ocupados:
+    # v4.9.2: la misma marca en otro espacio (camiseta y estadio en la vida real) no veta su renovación
+    de_otras = {c['rubro'] for esp, c in p['contratos'].items()
+                if c and esp != espacio and (not anterior or c['marca'] != anterior.get('marca'))}
+    if anterior and anterior.get('cumplido_ultima') is True and anterior.get('rubro') not in de_otras:
         o = _crear_contrato(estado, (anterior['marca'], anterior['rubro'], anterior['perfil']), espacio, azar,
                             azar.randint(1, 3), mult, fijo=anterior['fijo'] * azar.uniform(1.10, 1.20))
         o['renovacion'] = True
@@ -305,7 +329,8 @@ def firmar(estado: dict, oferta_id: int, con_prima: bool = False) -> tuple:
         espacio = o['espacio']
         if p['contratos'].get(espacio):
             return False, "Ese espacio ya tiene patrocinador."
-        if any(c and c['rubro'] == o['rubro'] for esp, c in p['contratos'].items() if esp != espacio):
+        if any(c and c['rubro'] == o['rubro'] and c['marca'] != o['marca']      # v4.9.2: la misma marca sí puede
+               for esp, c in p['contratos'].items() if esp != espacio):
             return False, f"Ya tienes una marca del rubro {o['rubro']} en otro espacio."
         c = {k: v for k, v in o.items() if k not in ('id', 'renovacion', 'negociada')}
         extra = ""

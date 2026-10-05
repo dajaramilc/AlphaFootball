@@ -500,13 +500,13 @@ def test_club_real_arranca_con_sus_marcas():
     cs = P.datos(e)['contratos']
     assert [cs[x]['marca'] for x in ('camiseta', 'manga', 'estadio')] == ["Etihat", "Pumba", "Etihat"]
     assert cs['camiseta']['rubro'] == cs['estadio']['rubro'] == "aerolínea"      # la exclusividad no aplica
-    e = _club('premier', 'Pool de Higado')                 # estadio sin naming → marca regional al azar
+    e = _club('premier', 'Pool de Higado')                 # v4.9.2: estadio sin naming → arranca sin patrocinador
     real = PAT.PATROCINIOS_REALES['Pool de Higado']
     assert real['estadio'] is None
     cs = P.datos(e)['contratos']
     assert cs['camiseta']['marca'] == real['camiseta'] and cs['manga']['marca'] == real['manga']
-    assert cs['estadio'] and _regiones_ok(e, [cs['estadio']['marca']])
-    for c in cs.values():
+    assert cs['estadio'] is None
+    for c in (cs['camiseta'], cs['manga']):
         assert 1 <= c['anios'] <= 3 and c['fijo'] > 0 and c['objetivo']['texto']
     print("  test_club_real_arranca_con_sus_marcas: OK")
 

@@ -46,7 +46,7 @@ COPAS = ('libertadores', 'champions')
 
 # v3.6.0: RESTAURAR BASE y las listas de los dropdowns con rects fijos, para despachar el clic
 # ANTES que cualquier otro control (con un dropdown abierto el clic es solo suyo).
-R_RESTAURAR = pygame.Rect(530, 505, 200, 36)
+R_RESTAURAR = pygame.Rect(530, 547, 200, 36)   # v4.9.2: baja 42 px (patrocinios en CLUBES)
 
 # v3.9.0: resto de rects del editor expuestos (los usa la ayuda H); render los usa tal cual.
 R_COL_LISTAS = pygame.Rect(40, 100, 450, 500)
@@ -70,9 +70,9 @@ R_J_EDAD = pygame.Rect(700, 275, 130, 36)
 R_J_POSICION = pygame.Rect(860, 275, 300, 36)
 R_J_RASGO = pygame.Rect(530, 360, 300, 36)
 R_J_POTENCIAL = pygame.Rect(860, 360, 140, 36)
-R_ARCHIVO = pygame.Rect(530, 455, 400, 36)
-R_EXPORTAR = pygame.Rect(950, 455, 120, 36)
-R_IMPORTAR = pygame.Rect(1085, 455, 120, 36)
+R_ARCHIVO = pygame.Rect(530, 497, 400, 36)
+R_EXPORTAR = pygame.Rect(950, 497, 120, 36)
+R_IMPORTAR = pygame.Rect(1085, 497, 120, 36)
 R_APLICAR = pygame.Rect(40, 615, 300, 50)
 R_VOLVER = pygame.Rect(360, 615, 240, 50)          # v3.9.0: 240 (en 200 no cabía "VOLVER AL MENÚ")
 
@@ -102,6 +102,58 @@ def rect_fila_lista(i: int) -> pygame.Rect:
     return pygame.Rect(55, 180 + i * 36, 380, 32)
 
 
+# --- v4.9.2: patrocinios de la primera temporada de cada club (pestaña CLUBES) ---
+ESPACIOS_PATRO = (('camiseta', "Camiseta"), ('manga', "Manga (ropa)"), ('estadio', "Estadio"))
+
+
+def rect_patro_campo(espacio: str, nivel: str) -> pygame.Rect:
+    """Caja (dropdown) del rubro o de la marca del espacio (camiseta, manga, estadio)."""
+    y = 362 + [esp for esp, _t in ESPACIOS_PATRO].index(espacio) * 31
+    return pygame.Rect(640, y, 210, 28) if nivel == 'rubro' else pygame.Rect(862, y, 340, 28)
+
+
+def region_editor(estado: dict) -> str:
+    from alpha_football.patrocinios import LIGAS_SUDAMERICA
+    tipo, _div = _tipo_div(estado.get('edit_liga_sel'))
+    return 'sudamerica' if tipo in LIGAS_SUDAMERICA or tipo == 'libertadores' else 'europa'
+
+
+def patrocinio_editor(club: dict, espacio: str):
+    """Con qué arrancará el club en ese espacio: la marca editada, si no la real; 'ninguno' = sin
+    patrocinador (p. ej. estadio sin naming); None = al azar."""
+    from alpha_football import patrocinios as P
+    return P.inicial_de(club.get('nombre'), club.get('patrocinios'), espacio)
+
+
+def opciones_patro(club: dict, espacio: str, region: str, nivel: str) -> list:
+    """Opciones del dropdown: los rubros de la región, o [None = al azar, 'ninguno'] + las marcas del rubro actual."""
+    from alpha_football import patrocinios as P
+    marcas = sorted(P.marcas_de_region(region), key=lambda m: (m[1], m[0]))
+    if nivel == 'rubro':
+        return sorted({m[1] for m in marcas})
+    actual = {m[0]: m for m in marcas}.get(patrocinio_editor(club, espacio))
+    return [None, P.SIN_PATROCINIO] + ([m[0] for m in marcas if m[1] == actual[1]] if actual else [])
+
+
+def fijar_patrocinio(club: dict, espacio: str, marca) -> None:
+    """Guarda la marca editada; None = "al azar": se borra lo editado y vuelve a valer el dato real."""
+    editados = club.setdefault('patrocinios', {})
+    if marca is None:
+        editados.pop(espacio, None)
+    else:
+        editados[espacio] = marca
+    if not editados:
+        club.pop('patrocinios', None)
+
+
+def fijar_rubro(club: dict, espacio: str, region: str, rubro: str) -> None:
+    """Elegir un rubro deja su primera marca (si ya había una de ese rubro, no la pisa)."""
+    from alpha_football import patrocinios as P
+    del_rubro = sorted(m[0] for m in P.marcas_de_region(region) if m[1] == rubro)
+    if del_rubro and patrocinio_editor(club, espacio) not in del_rubro:
+        fijar_patrocinio(club, espacio, del_rubro[0])
+
+
 def _boton(screen, rect, texto: str, hover: bool, size: str = 'sm', color: str = 'blanco') -> None:
     """v3.9.0: botón con el texto UNA sola vez y en un tamaño que cabe (antes se escribía dos veces)."""
     draw_button(screen, rect, "", hover)
@@ -110,7 +162,7 @@ def _boton(screen, rect, texto: str, hover: bool, size: str = 'sm', color: str =
     screen.blit(txt, txt.get_rect(center=rect.center))
 
 
-def _opciones_dropdown(tipo: str) -> list:
+def _opciones_dropdown(tipo: str, estado=None) -> list:
     """v3.6.0: [(valor, texto, rect)] de la lista desplegada del dropdown `tipo`."""
     if tipo == 'estilo_dt':
         r = R_DT_ESTILO
@@ -120,6 +172,14 @@ def _opciones_dropdown(tipo: str) -> list:
         return [(pos, pos.upper(), pygame.Rect(860, 311 + i * 30, 300, 30)) for i, pos in enumerate(POSICIONES)]
     if tipo == 'rasgo':
         return [(rsg, rsg.upper(), pygame.Rect(530, 396 + i * 30, 300, 30)) for i, rsg in enumerate(RASGOS_JUGADOR)]
+    if str(tipo).startswith('patro_') and estado is not None:      # v4.9.2: 'patro_<rubro|marca>_<espacio>'
+        _p, nivel, esp = tipo.split('_', 2)
+        valores = opciones_patro(estado.get('edit_patro_club') or {}, esp, region_editor(estado), nivel)
+        caja, alto = rect_patro_campo(esp, nivel), 22
+        y0 = max(104, min(caja.bottom, 716 - len(valores) * alto))  # listas largas: suben para caber en pantalla
+        textos = {None: "Al azar (dato real si lo hay)", 'ninguno': "Ninguno (sin patrocinador)"}
+        return [(v, v.capitalize() if nivel == 'rubro' else textos.get(v, v),
+                 pygame.Rect(caja.x, y0 + i * alto, caja.width, alto)) for i, v in enumerate(valores)]
     return []
 
 
@@ -130,10 +190,10 @@ def _dibujar_dropdown(screen, estado: dict, mouse_pos, aplica: dict) -> None:
         if not drop or not aplica.get(drop):
             return
         foco_d = int(estado.get('edit_drop_foco', 0) or 0)   # v4.2.0: opción con foco de teclado
-        for i, (_valor, texto, r) in enumerate(_opciones_dropdown(drop)):
+        for i, (_valor, texto, r) in enumerate(_opciones_dropdown(drop, estado)):
             pygame.draw.rect(screen, (30, 40, 70) if r.collidepoint(mouse_pos) or i == foco_d else (10, 14, 26), r)
             pygame.draw.rect(screen, (0, 191, 255), r, width=1)
-            draw_text(screen, texto, (r.x + 12, r.y + 5), size='sm', color='blanco')
+            draw_text(screen, texto, (r.x + 12, r.y + (5 if r.height >= 30 else 0)), size='sm', color='blanco')
     except Exception as e:
         logger.error(f"No se pudo dibujar el dropdown del editor: {e}")
 
@@ -612,10 +672,12 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         # fuera, lo cierra. Nunca llega a los campos/botones de abajo (p. ej. RESTAURAR BASE).
         aplica_drop = {'estilo_dt': seccion == 'entrenadores' and dt_sel is not None,
                        'posicion': jugador_sel is not None, 'rasgo': jugador_sel is not None}
+        aplica_drop.update({f"patro_{nivel}_{esp}": seccion == 'clubes' and bool(equipo_sel)       # v4.9.2
+                            for nivel in ('rubro', 'marca') for esp, _t in ESPACIOS_PATRO})
         drop = estado.get('edit_dropdown_activo')
         # v4.2.0: teclado en el dropdown: ↑ ↓ opción, Enter la elige, Esc lo cierra
         if drop and campo_inicial is None:
-            opciones = _opciones_dropdown(drop)
+            opciones = _opciones_dropdown(drop, estado)
             foco_d = int(estado.get('edit_drop_foco', 0) or 0)
             for ev in eventos:
                 if ev.type != pygame.KEYDOWN or not opciones:
@@ -633,7 +695,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             estado['edit_drop_foco'] = foco_d
         if drop and click_pos:
             try:
-                for valor, _txt, r in _opciones_dropdown(drop):
+                for valor, _txt, r in _opciones_dropdown(drop, estado):
                     if r.collidepoint(click_pos) and aplica_drop.get(drop):
                         if drop == 'estilo_dt':
                             dt_sel[k_est] = valor
@@ -643,6 +705,12 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                             jugador_sel['posicion'] = valor
                         elif drop == 'rasgo':
                             jugador_sel['rasgo'] = None if valor == "ninguno" else valor
+                        elif drop.startswith('patro_'):          # v4.9.2
+                            _p, nivel, esp = drop.split('_', 2)
+                            if nivel == 'rubro':
+                                fijar_rubro(equipo_sel, esp, region_editor(estado), valor)
+                            else:
+                                fijar_patrocinio(equipo_sel, esp, valor)
                         break
             except Exception as e_drop:
                 logger.error(f"Error en el dropdown {drop} del editor: {e_drop}")
@@ -925,6 +993,34 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 draw_text(screen, "Presupuesto (en enteros $, ej. 15000000 para $15M):", (530, 265), size='sm', color='blanco')
                 _campo(screen, R_EQ_PRESUPUESTO, f"{equipo_sel.get('balance', 0):,}", activo == 'team_budget')
                 activar(R_EQ_PRESUPUESTO, 'team_budget')
+                # v4.9.2: patrocinios con los que el club arranca la primera temporada
+                draw_text(screen, "Patrocinios de la 1ª temporada (clic en rubro o marca; dorado = editado):",
+                          (530, 336), size='sm', color='blanco')
+                try:
+                    from alpha_football.data.patrocinadores import MARCAS as _MARCAS
+                    rubro_de = {m[0]: m[1] for m in _MARCAS}
+                    for esp, etiqueta in ESPACIOS_PATRO:
+                        marca = patrocinio_editor(equipo_sel, esp)
+                        editado = bool((equipo_sel.get('patrocinios') or {}).get(esp))
+                        c_rubro, c_marca = rect_patro_campo(esp, 'rubro'), rect_patro_campo(esp, 'marca')
+                        draw_text(screen, etiqueta, (530, c_rubro.y + 4), size='sm', color='blanco')
+                        for caja, texto, color in ((c_rubro, _truncar(rubro_de.get(marca, "—").capitalize(), 19), 'blanco'),
+                                                   (c_marca, "Ninguno" if marca == 'ninguno' else _truncar(marca or "Al azar", 32),
+                                                    'dorado' if editado else 'blanco')):
+                            pygame.draw.rect(screen, (20, 26, 46), caja, border_radius=6)      # caja baja: texto 5 px más arriba que _campo
+                            pygame.draw.rect(screen, (0, 191, 255), caja, width=1, border_radius=6)
+                            draw_text(screen, texto, (caja.x + 12, caja.y + 3), size='sm', color=color)
+                        for nivel, caja in (('rubro', c_rubro), ('marca', c_marca)):
+                            draw_text(screen, "▼", (caja.right - 24, caja.y + 3), size='sm', color='blanco')
+                            if click_pos and caja.collidepoint(click_pos):
+                                ops = opciones_patro(equipo_sel, esp, region_editor(estado), nivel)
+                                actual = rubro_de.get(marca) if nivel == 'rubro' else marca
+                                estado['edit_patro_club'] = equipo_sel
+                                estado['edit_dropdown_activo'] = f"patro_{nivel}_{esp}"
+                                estado['edit_drop_foco'] = ops.index(actual) if actual in ops else 0
+                                estado['edit_input_activo'] = None
+                except Exception as e_pat:
+                    logger.error(f"Patrocinios en el editor: {e_pat}")
         elif seccion == 'ligas':
             texto = dict(ligas).get(estado['edit_liga_sel'], '')
             draw_text(screen, f"LIGA {texto}", (530, 120), size='md', color='dorado')
@@ -976,7 +1072,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             activar(R_J_POTENCIAL, 'player_potencial')
 
         # --- ACCIONES: EXPORTAR, IMPORTAR, RESTAURAR ---
-        actions_y = 430
+        actions_y = R_ARCHIVO.y - 25
         draw_text(screen, "IMPORTAR / EXPORTAR BASE DE DATOS", (530, actions_y), size='sm', color='dorado')
         _campo(screen, R_ARCHIVO, estado['edit_filepath'], activo == 'file_path', size='sm')
         activar(R_ARCHIVO, 'file_path')

@@ -581,8 +581,9 @@ def _ayuda_editor(estado: dict) -> list:
     from alpha_football.ui import edit_screen as E
     drop = estado.get('edit_dropdown_activo')
     if drop:
-        ops = E._opciones_dropdown(drop)
-        nombre = {'estilo_dt': "estilo táctico", 'posicion': "posición", 'rasgo': "rasgo"}.get(drop, "opción")
+        ops = E._opciones_dropdown(drop, estado)
+        nombre = {'estilo_dt': "estilo táctico", 'posicion': "posición", 'rasgo': "rasgo"}.get(
+            drop, "rubro" if '_rubro_' in str(drop) else "patrocinador")     # v4.9.2: dropdowns de patrocinios
         return [
             (_union(r for _v, _t, r in ops), "Lista desplegada", f"Clic en un {nombre} para elegirlo."),
             (E.R_FORMULARIO, "Formulario", "Un clic fuera de la lista la cierra sin cambiar nada."),
@@ -610,7 +611,9 @@ def _ayuda_editor(estado: dict) -> list:
     elif seccion == 'clubes':
         its += [(_union(E.rect_fila_lista(i) for i in range(10)), "Clubes", "Clic en un club para editarlo."),
                 (_union([E.R_EQ_NOMBRE, E.R_EQ_PRESUPUESTO]), "Nombre y presupuesto",
-                 "Clic y escribe; Enter confirma. Presupuesto en pesos enteros.")]
+                 "Clic y escribe; Enter confirma. Presupuesto en pesos enteros."),
+                (_union([E.rect_patro_campo('camiseta', 'rubro'), E.rect_patro_campo('estadio', 'marca')]), "Patrocinios",   # v4.9.2
+                 "Marcas con que el club arranca la 1ª temporada. Clic en rubro o marca abre la lista de su región.")]
     elif seccion == 'jugadores':
         if not libres:
             its += [(_union(E.rect_fila('equipos', i) for i in range(5)), "Clubes", "Clic en un club para ver su plantilla."),

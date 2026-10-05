@@ -5,7 +5,8 @@ MARCAS: 150 marcas parodia (nombre, rubro, perfil, región). La región limita d
 'global' en cualquier club, 'europa' solo en clubes europeos y 'sudamerica' solo en los sudamericanos.
 PATROCINIOS_REALES: lo que lleva hoy cada club de 1ª en la vida real (en parodia) para la primera
 temporada: camiseta = patrocinador principal, manga = marca de ropa, estadio = naming del estadio.
-None = sin dato fiable o sin patrocinador: ese espacio se rellena con una marca de su región al azar.
+None en camiseta o manga = sin dato fiable: se rellena con una marca de su región al azar.
+None en estadio = el estadio no tiene naming: el club arranca sin patrocinador de estadio (v4.9.2).
 Fuentes: Wikipedia (temporadas 2026-27 en Europa, 2026 en Sudamérica) y prensa deportiva; Girona usa 2025-26.
 """
 C, E, A = 'conservadora', 'equilibrada', 'ambiciosa'
