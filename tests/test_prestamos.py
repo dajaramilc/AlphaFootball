@@ -19,15 +19,15 @@ def _abierto(e, j=1):
 
 
 def test_regreso_por_ventana():
-    e = estado_carrera(); n = e['liga'].num_jornadas            # 22: ventanas 1-3, 11-13, 20-22
+    e = estado_carrera(); n = e['liga'].num_jornadas            # 22: ventanas 1-3 y 11-13 (v0.4.11.0: sin cierre)
     _abierto(e, 2)
     assert P.regreso(e, 6) == [1, 11] and P.regreso(e, 12) == [2, 1]
     _abierto(e, 12)
-    assert P.regreso(e, 6) == [1, n - 2] and P.regreso(e, 12) == [2, 11]
-    _abierto(e, 21)
+    assert P.regreso(e, 6) == [2, 1] and P.regreso(e, 12) == [2, 11]
+    _abierto(e, 21)                                             # cerrado, pasado el invierno
     assert P.regreso(e, 6) == [2, 11]
     _abierto(e, 8)                                              # cerrado: empieza en el invierno
-    assert P.regreso(e, 6) == [1, n - 2]
+    assert P.regreso(e, 6) == [2, 1]
     print("  test_regreso_por_ventana: OK")
 
 
@@ -55,7 +55,7 @@ def test_acordado_con_mercado_cerrado_espera_la_ventana():
     e['datos_carrera'] = json.loads(json.dumps(e['datos_carrera']))    # guardar / cargar
     e['liga'].jornada_actual = 11
     P.revisar_jornada(e)
-    assert j in mi.jugadores and j.prestamo['vuelve'] == [1, e['liga'].num_jornadas - 2]
+    assert j in mi.jugadores and j.prestamo['vuelve'] == [2, 1]     # v0.4.11.0: 6 meses desde el invierno = inicio de la siguiente
     print("  test_acordado_con_mercado_cerrado_espera_la_ventana: OK")
 
 

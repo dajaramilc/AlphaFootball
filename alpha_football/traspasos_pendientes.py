@@ -43,6 +43,13 @@ def jornada_apertura(estado: dict) -> int:
                             int(getattr(liga, 'num_jornadas', 22) or 22))
 
 
+def _cuando(estado: dict, j_ap: int) -> str:
+    """v0.4.11.0: 'en la jornada N' o, si la próxima ventana ya es la de la temporada siguiente, eso."""
+    if int(j_ap) > int(getattr(estado.get('liga'), 'jornada_actual', 1) or 1):
+        return f"en la jornada {j_ap}, en cuanto se abra el mercado"
+    return "al empezar la próxima temporada, en cuanto se abra el mercado"
+
+
 def pendiente_de(estado: dict, jugador) -> Optional[dict]:
     """El traspaso acordado de este jugador (venta o compra), si lo hay."""
     nombre, jid = _nombre(jugador), str(getattr(jugador, 'id', ''))
@@ -65,7 +72,7 @@ def diferir_venta(estado: dict, jugador, comprador, monto: int) -> str:
         logger.error(f"No se pudo limpiar la salida de {_nombre(jugador)}: {e}")
     # el comprador puede ser un club que no está en las ligas vivas (ofertas del exterior)
     estado.setdefault('_compradores_pendientes', {})[_nombre(jugador)] = comprador
-    return f"{_nombre(jugador)} se irá a {getattr(comprador, 'nombre', 'su nuevo club')} en la jornada {j_ap}, en cuanto se abra el mercado."
+    return f"{_nombre(jugador)} se irá a {getattr(comprador, 'nombre', 'su nuevo club')} {_cuando(estado, j_ap)}."
 
 
 def diferir_compra(estado: dict, jugador, club, monto: int) -> str:
@@ -79,7 +86,7 @@ def diferir_compra(estado: dict, jugador, club, monto: int) -> str:
         # agente libre: no está en ningún club, se guarda entero (la lista de libres no se guarda)
         reg['datos'] = jugador.to_dict()
     _pendientes(estado).append(reg)
-    return f"{_nombre(jugador)} llegará en la jornada {j_ap}, en cuanto se abra el mercado."
+    return f"{_nombre(jugador)} llegará {_cuando(estado, j_ap)}."
 
 
 def actualizar_datos(estado: dict, jugador) -> None:

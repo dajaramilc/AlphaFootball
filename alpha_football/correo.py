@@ -16,7 +16,8 @@ MAX_CORREOS = 200
 REMITENTES = {'directiva': "Directiva", 'jugador': "Jugador", 'medico': "Cuerpo médico", 'club': "Club",
               'prensa': "Prensa",   # v4.6.0: noticias (quiebras de la IA)
               'cantera': "Cantera",   # v4.8.0: informe semestral
-              'patrocinador': "Patrocinador"}   # v4.9.0
+              'patrocinador': "Patrocinador",   # v4.9.0
+              'presidente': "Presidente"}   # v0.4.10.0: personal y directo (canal MENSAJES)
 
 
 def bandeja(estado: dict) -> list:
@@ -25,6 +26,18 @@ def bandeja(estado: dict) -> list:
 
 def accion(pantalla: str, texto: str) -> dict:
     return {'pantalla': pantalla, 'texto': texto}
+
+
+# v0.4.10.0: NOTIFICACIONES = MENSAJES (lo personal) + CORREO (lo institucional del club)
+CANAL_MENSAJE = ('jugador', 'presidente')
+
+
+def canal(msg: dict) -> str:
+    return msg.get('canal') or ('mensaje' if msg.get('remitente') in CANAL_MENSAJE else 'correo')
+
+
+def de_canal(estado: dict, cual: str) -> list:
+    return [m for m in bandeja(estado) if canal(m) == cual]
 
 
 # v4.7.0: firma de cada remitente (los jugadores escriben a su manera: sin plantilla)
@@ -56,6 +69,8 @@ def formatear(estado: dict, msg: dict) -> str:
     """v4.7.0: el correo como se lee: saludo, cuerpo y firma (los de jugadores, tal cual)."""
     cuerpo = str(msg.get('cuerpo', ''))
     remitente = msg.get('remitente')
+    if remitente == 'presidente':          # v0.4.10.0: personal, sin "Estimado míster… Atentamente"
+        return f"{cuerpo}\n\nEl presidente"
     if remitente == 'jugador' or remitente not in FIRMAS:
         return cuerpo
     partes = str(estado.get('dt_nombre', '') or '').split()
@@ -74,16 +89,36 @@ def borrar(estado: dict, msg_id: int) -> None:
 
 def limpiar_temporadas_anteriores(estado: dict) -> None:
     """v4.7.0: al empezar la temporada se borran los correos de las anteriores."""
+    try:   # v0.4.10.0: un evento sin responder no se pierde al limpiar: se aplica su opción por defecto
+        from alpha_football import eventos as EV
+        EV.resolver_pendientes(estado)
+    except Exception as e:
+        logger.error(f"No se pudieron cerrar los eventos pendientes: {e}")
     t = int(estado.get('temporada', 1) or 1)
     lista = bandeja(estado)
     lista[:] = [m for m in lista if int(m.get('temporada', t) or t) >= t]
 
 
-def no_leidos(estado: dict) -> int:
-    return sum(1 for m in bandeja(estado) if not m.get('leido'))
+def no_leidos(estado: dict, cual: Optional[str] = None) -> int:
+    return sum(1 for m in bandeja(estado) if not m.get('leido') and (cual is None or canal(m) == cual))
 
 
 def marcar_leido(estado: dict, msg_id: int) -> None:
     for m in bandeja(estado):
         if m.get('id') == msg_id:
             m['leido'] = True
+
+
+def retorno(estado: dict, actual: str, siguiente: Optional[str]) -> Optional[str]:
+    """v0.4.11.0: la pantalla abierta desde un mensaje (estado['volver_notif']) vuelve a ese mensaje
+    al salir con VOLVER/ESC, en vez de al hub. Devuelve la pantalla a la que hay que ir."""
+    marca = estado.get('volver_notif')
+    if not marca or not siguiente:
+        return siguiente
+    if actual == marca and siguiente in ('volver', 'league_screen'):
+        estado.pop('volver_notif', None)
+        return 'correo_screen'
+    # ya estaba en el hub y siguió por otro camino: la marca era de una visita anterior
+    if actual == 'league_screen' and marca != 'league_screen' and siguiente != 'correo_screen':
+        estado.pop('volver_notif', None)
+    return siguiente

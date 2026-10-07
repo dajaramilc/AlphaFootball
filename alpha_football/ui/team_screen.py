@@ -433,6 +433,16 @@ def baja_de(estado, j, en_partido: bool) -> Optional[str]:
     return None
 
 
+def _goles_totales(estado: dict, j) -> int:
+    """v0.4.11.0: goles de todas las competiciones para la tarjeta del jugador."""
+    try:
+        from alpha_football.competiciones import goles_totales
+        return goles_totales(estado, j, getattr(estado.get('mi_equipo'), 'nombre', None))
+    except Exception as e:
+        logger.error(f"No se pudieron sumar los goles de copa: {e}")
+        return int(getattr(j, 'goles', 0) or 0)
+
+
 def _amarillas_ficha(j) -> str:
     from alpha_football.sanciones import amarillas, limite
     return f"L {amarillas(j, 'liga')}/{limite('liga')} · C {amarillas(j, 'copa')}/{limite('copa')}"
@@ -707,7 +717,7 @@ def _render_direccion(screen, estado, mi_equipo, alin, es_amistoso, modo_prepart
         datos = [("Edad", getattr(jsel, 'edad', '?')), ("Potencial", getattr(jsel, 'potencial', 0) or '?'),
                  ("Ataque", jsel.ataque), ("Defensa", jsel.defensa), ("Físico", jsel.fisico),
                  ("Técnica", jsel.tecnica), ("Mental", jsel.mental), ("Moral", getattr(jsel, 'moral', 70)),
-                 ("Goles", getattr(jsel, 'goles', 0)), ("Rasgo", getattr(jsel, 'rasgo', '') or '-'),
+                 ("Goles", _goles_totales(estado, jsel)), ("Rasgo", getattr(jsel, 'rasgo', '') or '-'),
                  ("Resistencia", getattr(jsel, 'resistencia', 50)),                        # v3.1.0
                  ("Energía", int(_energia_de(estado, jsel, en_partido))),
                  ("Personalidad", PERSONALIDAD_TXT.get(getattr(jsel, 'personalidad', ''), '-')),

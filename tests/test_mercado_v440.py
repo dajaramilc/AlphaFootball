@@ -359,7 +359,7 @@ def test_escalada_por_rechazo_y_por_jornada():
     e['liga'].jornada_actual = 3
     S.cierre_jornada(e, rng=random.Random(3))                       # jornada sin vender: escalón 3
     assert j.escalon_salida == 3 and D.confianza(e) == 60 and D.calif_dt(e) == calif0 - 2
-    e['liga'].jornada_actual = 20
+    e['liga'].jornada_actual = 12                                   # v0.4.11.0: ventana de invierno (ya no hay cierre)
     S.cierre_jornada(e, rng=random.Random(3))
     assert j.escalon_salida == 4 and D.confianza(e) == 50 and D.calif_dt(e) == calif0 - 6
     e['liga'].jornada_actual = 10                                   # ventana cerrada: no sube
@@ -457,8 +457,9 @@ def test_ia_vende_salidas_forzadas():
 def test_eventos_ventana():
     from alpha_football.ui import aviso_mercado as AM
     # v4.5.0: mercado de invierno a mitad de temporada
-    assert AM.eventos_ventana(22) == {1: 'abre', 4: 'cierra', 11: 'abre', 14: 'cierra', 20: 'abre'}
-    assert AM.eventos_ventana(14) == {1: 'abre', 4: 'cierra', 7: 'abre', 10: 'cierra', 12: 'abre'}
+    # v0.4.11.0: sin ventana de cierre
+    assert AM.eventos_ventana(22) == {1: 'abre', 4: 'cierra', 11: 'abre', 14: 'cierra'}
+    assert AM.eventos_ventana(14) == {1: 'abre', 4: 'cierra', 7: 'abre', 10: 'cierra'}
     print("  test_eventos_ventana: OK")
 
 
@@ -499,7 +500,7 @@ def test_franja_no_choca_y_render():
     from alpha_football.ui import aviso_mercado as AM
     from alpha_football.ui.league_screen import R_SOBRE
     from alpha_football.ui.theme import get_font
-    e = estado_carrera(); e['liga'].jornada_actual = 21
+    e = estado_carrera(); e['liga'].jornada_actual = 12             # v0.4.11.0: invierno (ya no hay cierre)
     r = AM.rect_franja(e)
     assert r is not None and r.top >= 76 and not r.colliderect(R_SOBRE) and r.bottom <= 106
     assert 16 + AM._ancho_cabecera(e) + 8 <= r.left                 # la cabecera real de este club
@@ -570,8 +571,8 @@ def test_escalada_ultima_jornada_manda_correo():
     j.pide_salir = j.transferible = True; j.escalon_salida = 1; j.moral = 30
     from alpha_football.ui.league_screen import inicializar_calendario_liga
     inicializar_calendario_liga(liga)
-    liga.jornada_actual = liga.num_jornadas
-    nuestros = [p for p in liga.calendario if mi.id in (p.local_id, p.visitante_id)]
+    liga.jornada_actual = 12     # v0.4.11.0: ventana de invierno; la clave usa los partidos jugados, no la jornada
+    nuestros =[p for p in liga.calendario if mi.id in (p.local_id, p.visitante_id)]
     assert len(nuestros) >= 2
     for p in nuestros[:-1]:
         p.jugado = True

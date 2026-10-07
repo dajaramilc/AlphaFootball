@@ -31,24 +31,40 @@ VENTAJA_PARA_TITULO = 5        # v4.6.0: se exige el título con 5+ de media sob
 TOPE_SALARIAL_PCT = 0.70       # v4.6.0: la masa salarial no puede pasar el 70% de los ingresos esperados
 SALDO_MIN_PCT = 0.10           # v4.6.0: cerrar con al menos el 10% del presupuesto inicial
 MARGEN_MASA_INICIAL = 1.10     # v4.6.0: el tope nunca queda bajo la masa heredada + 10% (no castiga la plantilla que ya tenías)
+PUESTO_EXTRA_USER = 2          # v0.4.11.0: en 1ª al user se le piden dos puestos más que su ranking por media
+PUESTO_EXTRA_USER_2A = 1       # v0.4.11.0: en 2ª, uno (ya es la más dura: 50-57% con el criterio de la IA)
+MITAD_EXTRA_USER = 1           # v0.4.11.0: "terminar entre los N primeros" llega un puesto más abajo de la mitad
+VENTAJA_TITULO_USER = 3        # v0.4.11.0: y el título con 3+ de media sobre el 2º
+EXIGENTE_SOLO_MITAD_ALTA = False   # v0.4.11.0: ver tests/calibrar_objetivos.py (meta: caída de 10 a 15 puntos)
+# Medido en 60 temporadas simuladas por liga (cumplimiento IA → user): Premier 68.3 → 56.2% y BetPlay
+# 65.7 → 53.8% en 1ª (caída 12.1 y 11.9); en 2ª, Premier 50.3 → 44.0% y BetPlay 57.4 → 49.7%.
+# Con un solo puesto extra en 1ª la caída era de 4 puntos; con tres, 16.4 y 13.7.
 
 
-def objetivo_por_ranking(r: int, n: int, division: int, cupo: int, ventaja: float = 0.0) -> tuple:
+def objetivo_por_ranking(r: int, n: int, division: int, cupo: int, ventaja: float = 0.0,
+                         exigente: bool = False) -> tuple:
     """
     (tipo, puesto máximo que cumple, texto) según el ranking r de n por media de plantilla.
     Medido en 1000 temporadas: exigir exactamente el ranking era cumplir 23-61%; con +1
     puesto de margen (y el título solo para dominadores) queda en ~70-85%.
     """
     meta = min(n, r + MARGEN_OBJETIVO)
+    ventaja_titulo = VENTAJA_PARA_TITULO
+    mitad = n // 2
+    if exigente:                       # v0.4.11.0: solo el user como DT (la IA sigue como antes)
+        ventaja_titulo = VENTAJA_TITULO_USER
+        mitad += MITAD_EXTRA_USER
+        if not EXIGENTE_SOLO_MITAD_ALTA or r <= n // 2:
+            meta = max(1, meta - (PUESTO_EXTRA_USER_2A if division == 2 else PUESTO_EXTRA_USER))
     if division == 2:
         if meta <= 2:
             return 'ascenso', 2, "Ascender a 1ª división (top 2)"
         return 'mitad', meta, f"Terminar entre los {meta} primeros"
-    if r == 1 and ventaja >= VENTAJA_PARA_TITULO:
+    if r == 1 and ventaja >= ventaja_titulo:
         return 'campeon', 1, "Ser campeón de liga"
     if meta <= cupo:
         return 'copa', cupo, f"Clasificar a la copa internacional (top {cupo})"
-    if meta <= n // 2:
+    if meta <= mitad:
         return 'mitad', meta, f"Terminar entre los {meta} primeros"
     if meta <= n - 2:
         return 'salvarse', max(1, n - 2), "No descender"
@@ -117,7 +133,9 @@ def _correo_objetivos(estado: dict, obj: dict) -> None:
                  f"{extra}\n"
                  f"Si supera el objetivo deportivo recibirá un premio de {m(ref * PREMIO['superado'])}; si lo "
                  f"cumple, {m(ref * PREMIO['cumplido'])}. Fallar cualquiera de los objetivos supone una "
-                 "advertencia, y reincidir, la rescisión de su contrato.",
+                 "advertencia, y reincidir, la rescisión de su contrato.\n\n"
+                 "El saldo no pasa de una temporada a otra: superar el objetivo sube el presupuesto de la "
+                 "próxima un 25%; cumplirlo, un 10%; fallarlo lo baja un 15%.",
                  C.accion('objetivos_screen', "VER OBJETIVOS"))
     except Exception as e:
         logger.error(f"No se pudo enviar el correo de objetivos: {e}")
@@ -143,7 +161,7 @@ def definir_objetivo(estado: dict) -> Optional[dict]:
         except Exception:
             cupo = 3
         ventaja = (ranking[0].ovr_promedio - ranking[1].ovr_promedio) if len(ranking) > 1 else 0
-        tipo, pos_max, texto = objetivo_por_ranking(r, len(ranking), division, cupo, ventaja)
+        tipo, pos_max, texto = objetivo_por_ranking(r, len(ranking), division, cupo, ventaja, exigente=True)
         obj = dc['objetivo'] = {'temporada': temporada, 'tipo': tipo, 'pos_max': pos_max, 'texto': texto,
                                 'ranking_inicial': r, 'presupuesto_ref': int(getattr(mi, 'balance', 0) or 0)}
         dc.setdefault('confianza', CONFIANZA_INICIAL)
@@ -172,10 +190,10 @@ def actualizar_confianza(estado: dict, gf: int, gc: int) -> None:
     if dc['confianza'] < 40 and not dc.get('aviso_confianza'):   # v3.1.0: aviso por correo
         dc['aviso_confianza'] = True
         from alpha_football import correo as C
-        C.enviar(estado, 'directiva', "La directiva está preocupada",
-                 f"La confianza de la directiva ha caído a {dc['confianza']}. Necesitamos una mejora "
-                 "inmediata de los resultados.",
-                 C.accion('objetivos_screen', "VER OBJETIVOS"))
+        C.enviar(estado, 'presidente', "Estoy preocupado",
+                 f"Míster, le soy sincero: la confianza de la directiva en usted cayó a {dc['confianza']}. "
+                 "Yo lo sigo defendiendo, pero necesito resultados para seguir haciéndolo.",
+                 C.accion('objetivos_screen', "VER OBJETIVOS"))   # v0.4.10.0
     elif dc['confianza'] >= 40:
         dc['aviso_confianza'] = False
 

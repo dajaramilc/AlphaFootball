@@ -30,7 +30,7 @@ def test_clave_ventana():
     n = 22
     assert clave_ventana_traspaso(1, 2, n) == '1-verano'
     assert clave_ventana_traspaso(1, 11, n) == '1-invierno'
-    assert clave_ventana_traspaso(1, 21, n) == '2-verano'      # el cierre es el verano siguiente
+    assert clave_ventana_traspaso(1, 21, n) == ''               # v0.4.11.0: ya no hay ventana de cierre
     assert clave_ventana_traspaso(1, 7, n) == ''               # mercado cerrado
     print("  test_clave_ventana: OK")
 

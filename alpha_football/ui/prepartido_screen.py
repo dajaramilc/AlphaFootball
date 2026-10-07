@@ -581,7 +581,12 @@ def _render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                     dt = {'nombre': _DTR[eq.nombre][0], 'estilo': _DTR[eq.nombre][1]}
                 if not dt:
                     return None
-                return f"DT: {dt['nombre'][:18]} · {_NE.get(dt['estilo'], '')}"
+                nac = dt.get('nacionalidad') or ''     # v0.4.10.0: nacionalidad del DT junto al nombre
+                if not nac:
+                    from alpha_football.data.nacionalidades import nacionalidad_dt as _nac_dt
+                    nac = _nac_dt(dt['nombre'])
+                pais = f" ({nac[:12]})" if nac else ""
+                return f"DT: {dt['nombre'][:18]}{pais} · {_NE.get(dt['estilo'], '')}"
             estilo_l = _linea_dt(local) or estilo_l
             estilo_v = _linea_dt(visitante) or estilo_v
         except Exception as e_dt:

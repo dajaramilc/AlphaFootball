@@ -362,6 +362,7 @@ _TEXTO_TARJETA = {
     'historial_pases_screen': "Todos los traspasos de la temporada en las ligas y los tuyos.",
     'ojeador_screen': "Tres fichajes recomendados por tu ojeador en cada ventana de pases.",
     'correo_screen': "Mensajes de la directiva, jugadores y otros clubes. El número rojo son los no leídos.",
+    'notificaciones_screen': "Mensajes de jugadores y presidente a la izquierda; correo del club a la derecha. Últimos 5 de cada uno.",   # v0.4.10.0
     'stats_screen': "Goleadores, asistidores, vallas invictas y mejores notas de la liga y tu equipo.",
     'copa_screen': "Tu copa internacional: fase de liga o grupos, llaves y estadísticas.",
     'career_screen': "Tus temporadas anteriores, títulos y récords como DT.",
@@ -838,8 +839,17 @@ def _ayuda_correo(estado: dict) -> list:
             its.append((C._rect_accion(), "Acción", "Te lleva a lo que pide el mensaje (negociar, renovar, ofertas...). Enter."))
     except Exception:
         pass
-    its.append((C._volver(), "Volver", "Regresa al hub (también ESC)."))
+    its.append((C._rect_accion(), "Decisiones", "Algunos mensajes piden decidir: clic o ← → y Enter. Sin responder, se deja pasar."))   # v0.4.10.0
+    its.append((C._volver(), "Volver", "Regresa a NOTIFICACIONES (también ESC)."))
     return its
+
+
+def _ayuda_notificaciones(estado: dict) -> list:     # v0.4.10.0
+    from alpha_football.ui import notificaciones_screen as NS
+    return [(NS.R_MENSAJES, "Mensajes", "Lo personal: lo que te escriben tus jugadores y el presidente."),
+            (NS.R_CORREO, "Correo", "Lo institucional: directiva, secretaría, médicos, cantera, patrocinadores y prensa."),
+            (NS.rect_todos(0), "Ver todos", "Abre la lista completa de ese lado. Clic en un mensaje lo abre directo."),
+            (NS._volver(), "Volver", "Regresa al hub (también ESC).")]
 
 
 # ---------------------------------------------------------------- despido / fin de contrato
@@ -862,6 +872,7 @@ AYUDA['patrocinios_screen'] = _ayuda_patrocinios
 AYUDA['ojeador_screen'] = _ayuda_ojeador
 AYUDA['objetivos_screen'] = _ayuda_objetivos
 AYUDA['correo_screen'] = _ayuda_correo
+AYUDA['notificaciones_screen'] = _ayuda_notificaciones
 AYUDA['despido_screen'] = _ayuda_despido
 
 

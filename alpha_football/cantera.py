@@ -223,6 +223,7 @@ def subir(estado: dict, jugador_id: int) -> tuple:
         if len(mi.jugadores) >= market.PLANTILLA_MAXIMA:
             return False, f"Plantilla llena ({market.PLANTILLA_MAXIMA}). Libera un cupo antes de subirlo."
         j.joya = False                       # en el primer equipo es un jugador normal
+        j.canterano = getattr(mi, 'nombre', '') or ''     # v0.4.11.0: progresa más rápido en su club
         tipo = _tipo_liga(estado, mi)
         if tipo:
             market.registrar_region_jugador(j, tipo)

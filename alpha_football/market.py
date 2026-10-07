@@ -561,16 +561,14 @@ DURACION_VENTANA = 3     # jornadas que dura cada ventana (≈ 1 mes en una liga
 
 
 def ventanas_mercado(num_jornadas: int) -> list:
-    """[(primera, última, nombre)] de las ventanas de la temporada: inicio (1-3), invierno a mitad
-    de temporada (J n/2 a n/2+2) y cierre (las 3 últimas). El invierno se omite si no entra."""
+    """[(primera, última, nombre)] de las ventanas de la temporada: inicio (1-3) e invierno a mitad
+    de temporada (J n/2 a n/2+2). El invierno se omite si no entra. v0.4.11.0: sin ventana de cierre."""
     n = max(1, int(num_jornadas or 22))
     d = DURACION_VENTANA
     ventanas = [(1, min(d, n), 'inicio')]
     medio = n // 2
     if medio > d + 1 and medio + d - 1 < n - d:
         ventanas.append((medio, medio + d - 1, 'invierno'))
-    if n - d + 1 > d:
-        ventanas.append((n - d + 1, n, 'cierre'))
     return ventanas
 
 
@@ -585,14 +583,11 @@ def proxima_apertura(jornada: int, num_jornadas: int) -> int:
 
 
 def clave_ventana_traspaso(temporada: int, jornada: int, num_jornadas: int) -> str:
-    """Ventana de traspasos en curso: el cierre de una temporada y el inicio de la siguiente son
-    la misma ventana de verano. '' con el mercado cerrado."""
+    """Ventana de traspasos en curso ('<T>-verano' = inicio, '<T>-invierno'). '' con el mercado cerrado."""
     v = ventana_actual(jornada, num_jornadas)
     if v is None:
         return ''
-    if v[2] == 'invierno':
-        return f"{int(temporada)}-invierno"
-    return f"{int(temporada) + (1 if v[2] == 'cierre' else 0)}-verano"
+    return f"{int(temporada)}-{'invierno' if v[2] == 'invierno' else 'verano'}"
 
 
 def traspasado_en_ventana(estado: Any, jugador: Any) -> bool:
@@ -611,7 +606,7 @@ def traspasado_en_ventana(estado: Any, jugador: Any) -> bool:
 
 
 def ventana_mercado_abierta(jornada: int, num_jornadas: int) -> bool:
-    """El mercado está abierto en las jornadas 1-3, en el invierno (mitad de temporada) y en las 3 últimas."""
+    """El mercado está abierto en las jornadas 1-3 y en el invierno (mitad de temporada)."""
     try:
         return ventana_actual(jornada, num_jornadas) is not None
     except Exception:

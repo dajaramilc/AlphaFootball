@@ -19,6 +19,7 @@ def limpiar(j: Any) -> None:
     try:
         j.transferible = j.pide_salir = False
         j.salida_forzada = j.descontento_avisado = False
+        j.renovacion_avisada = False       # v0.4.10.0
         j.escalon_salida = 0
     except Exception as e:
         logger.error(f"No se pudo limpiar la salida de {getattr(j, 'nombre', '?')}: {e}")
@@ -56,6 +57,8 @@ def marcar_salida_forzada(estado: dict, equipo) -> list:
 UMBRAL_DESCONTENTO = 50
 MORAL_POR_RECHAZO = 8
 MORAL_RENOVAR_BIEN = 10
+MORAL_RENOVAR_AVISO = 5          # v0.4.10.0: extra si renuevas después de que te lo pidió
+UMBRAL_QUIERE_RENOVAR = 75
 MARGEN_OFERTA = (0.9, 1.2)
 EFECTO_ESCALON = {2: (-5, 0), 3: (-5, -2), 4: (-10, -4)}      # (confianza, calificación DT)
 
@@ -160,6 +163,43 @@ def revisar_descontento(estado: dict, rng: Optional[random.Random] = None) -> li
         except Exception as e:
             logger.error(f"No se pudo revisar el descontento de {getattr(j, 'nombre', '?')}: {e}")
     return avisados
+
+
+TEXTOS_QUIERE_RENOVAR = {      # v0.4.10.0
+    'lider': "Míster, este vestuario es mi casa y no me veo en otro lado. Se me acaba el contrato en verano "
+             "y quiero seguir liderando este grupo. Siéntese con mi agente cuando pueda.",
+    'profesional': "Míster, estoy a gusto, trabajo bien aquí y mi contrato termina al final de la temporada. "
+                   "Me gustaría dejarlo resuelto pronto para concentrarme solo en jugar.",
+    'mercenario': "Míster, estoy contento aquí, no le voy a mentir. Se me acaba el contrato y prefiero firmar "
+                  "con ustedes antes de escuchar a otros… si los números acompañan, claro.",
+    'polemico': "Míster, mire que no soy de decir estas cosas, pero aquí estoy bien. Se me vence el contrato: "
+                "renuévenme antes de que cambie de opinión.",
+    'normal': "Míster, estoy muy contento en el club y mi contrato termina al final de la temporada. "
+              "Me encantaría quedarme. ¿Podemos hablar de la renovación?",
+}
+
+
+def revisar_renovaciones(estado: dict, rng: Optional[random.Random] = None) -> list:
+    """v0.4.10.0: un jugador contento (moral ≥ 75) en su último año escribe pidiendo renovar.
+    Desde la mitad de la temporada, uno por jornada (el mejor primero) y una vez por contrato."""
+    from alpha_football import correo as C
+    liga, mi = estado.get('liga'), estado.get('mi_equipo')
+    if liga is None or mi is None:
+        return []
+    if int(getattr(liga, 'jornada_actual', 1) or 1) <= int(getattr(liga, 'num_jornadas', 22) or 22) // 2:
+        return []
+    cand = [j for j in list(getattr(mi, 'jugadores', []) or [])
+            if int(getattr(j, 'contrato_anios', 0) or 0) == 1 and int(j.moral) >= UMBRAL_QUIERE_RENOVAR
+            and not j.pide_salir and not j.salida_forzada and not getattr(j, 'prestamo', None)
+            and not getattr(j, 'renovacion_avisada', False)]
+    if not cand:
+        return []
+    j = max(cand, key=lambda x: x.overall)
+    texto = TEXTOS_QUIERE_RENOVAR.get(j.personalidad, TEXTOS_QUIERE_RENOVAR['normal'])
+    C.enviar(estado, 'jugador', f"{_nombre(j)} quiere renovar", f"{texto}\n{_nombre(j)}",
+             {'pantalla': 'negociacion_screen', 'texto': "RENOVAR", 'renovar': j.id})
+    j.renovacion_avisada = True
+    return [j]
 
 
 def revisar_curados(estado: dict) -> list:
@@ -304,6 +344,7 @@ def cierre_jornada(estado: dict, rng: Optional[random.Random] = None) -> None:
     try:
         revisar_curados(estado)
         revisar_descontento(estado, rng)
+        revisar_renovaciones(estado, rng)       # v0.4.10.0
         if _ventana_abierta(estado):
             mi = estado.get('mi_equipo')
             pendientes = estado.get('ofertas_recibidas') or []
@@ -335,3 +376,6 @@ def al_renovar(estado: dict, jugador, salario: int) -> None:
         for c in getattr(jugador, 'causas_moral', []) or []:
             if isinstance(c, dict):
                 c['sueldo'] = 0
+    if getattr(jugador, 'renovacion_avisada', False):      # v0.4.10.0: nos lo pidió y cumplimos
+        jugador.moral = min(100, int(jugador.moral) + MORAL_RENOVAR_AVISO)
+        jugador.renovacion_avisada = False

@@ -86,7 +86,7 @@ def test_mercado_cerrado_difiere_venta_y_compra():
     assert N.fichar(e, fichado, club, 1)[0] is False                       # ya está acordado
     e['datos_carrera'] = json.loads(json.dumps(e['datos_carrera']))       # guardar / cargar
     e.pop('_compradores_pendientes', None)
-    liga.jornada_actual = liga.num_jornadas - 2                            # se abre el mercado
+    liga.jornada_actual = 11                                               # v0.4.11.0: se abre el invierno (ya no hay cierre)
     assert TP.ejecutar(e) == 2
     assert vendido not in mi.jugadores and any(x is vendido for x in comprador.jugadores)
     assert fichado in mi.jugadores and fichado not in club.jugadores

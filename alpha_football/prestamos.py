@@ -100,9 +100,8 @@ def _regreso(estado: dict, meses: int) -> tuple:
         return t + 1, vs[k][2], vs[k][0]
     k += 1
     if k >= len(vs):
-        # desde el cierre, 6 meses = el invierno de la temporada siguiente (el inicio es la misma
-        # ventana de verano); sin invierno, el cierre siguiente
-        k, t = (1 if len(vs) > 2 else len(vs) - 1), t + 1
+        # v0.4.11.0 (sin ventana de cierre): desde el invierno, 6 meses = el inicio de la siguiente
+        k, t = 0, t + 1
     return t, vs[k][2], vs[k][0]
 
 
@@ -113,6 +112,8 @@ def _vuelve(p: dict, n: int) -> list:
     v = list(p.get('vuelve') or [0, 0])
     k = p.get('ventana')
     vs = ventanas_mercado(n)
+    if k == 'cierre':                  # v0.4.11.0: save de antes; esa ventana ya no existe
+        return [int(v[0]) + 1, vs[0][0]]
     if isinstance(k, str):
         w = next((x for x in vs if x[2] == k), vs[-1])
         v[1] = w[0]
@@ -365,10 +366,8 @@ def _vencidos(estado: dict) -> None:
 def _avisar_contratos(estado: dict) -> None:
     """Ventana de cierre: aviso (una vez por temporada) de los cedidos a los que se les termina el
     contrato; al cerrar la temporada vuelven a su dueño (cierre_contratos) y ahí renuevan o quedan libres."""
-    from alpha_football.market import ventanas_mercado
     t, jor, n = _momento(estado)
-    vs = ventanas_mercado(n)
-    if len(vs) < 2 or not vs[-1][0] <= jor <= vs[-1][1]:
+    if jor < n - 2:                    # v0.4.11.0: las 3 últimas jornadas (ya no hay ventana de cierre)
         return
     mi = getattr(_mi(estado), 'nombre', None)
     avisados = _dc(estado).setdefault('avisos_contrato_prestamo', [])
@@ -405,7 +404,7 @@ def revisar_jornada(estado: dict, rng: Optional[random.Random] = None) -> None:
         if _abierto(estado):
             _ejecutar_pendientes(estado)
             _vencidos(estado)
-            _avisar_contratos(estado)
+        _avisar_contratos(estado)      # v0.4.11.0: las 3 últimas jornadas ya no son ventana de mercado
     except Exception as e:
         logger.error(f"Error revisando los préstamos: {e}", exc_info=True)
 

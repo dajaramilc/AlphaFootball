@@ -91,6 +91,7 @@ class Jugador:
     causas_moral: list = field(default_factory=list)
     jornadas_sin_jugar: int = 0
     descontento_avisado: bool = False
+    renovacion_avisada: bool = False       # v0.4.10.0: ya escribió pidiendo renovar este contrato
     # sanciones por competición y amarillas acumuladas de la temporada (sanciones.py);
     # partidos_sancion queda como la sanción de LIGA
     sancion_copa: int = 0
@@ -104,6 +105,7 @@ class Jugador:
     ventana_traspaso: str = ""
     remate: bool = False                        # v4.6.0: rematado por un club en quiebra (precio 60%)
     joya: bool = False                          # v4.8.0: joya de cantera (solo mientras está en la cantera)
+    canterano: str = ""                         # v0.4.11.0: club que lo formó (subido desde su cantera); '' = no
     energia_vivo: Optional[float] = None       # transitorio: energía en el tramo que se simula
 
     def __post_init__(self):
@@ -281,6 +283,7 @@ class Jugador:
                 causas_moral=[dict(c) for c in (datos.get("causas_moral") or []) if isinstance(c, dict)][-4:],
                 jornadas_sin_jugar=int(datos.get("jornadas_sin_jugar", 0) or 0),
                 descontento_avisado=bool(datos.get("descontento_avisado", False)),
+                renovacion_avisada=bool(datos.get("renovacion_avisada", False)),      # v0.4.10.0
                 sancion_copa=int(datos.get("sancion_copa", 0) or 0),
                 amarillas_liga=int(datos.get("amarillas_liga", 0) or 0),
                 amarillas_copa=int(datos.get("amarillas_copa", 0) or 0),
@@ -288,6 +291,7 @@ class Jugador:
                 ventana_traspaso=str(datos.get("ventana_traspaso", "") or ""),
                 remate=bool(datos.get("remate", False)),
                 joya=bool(datos.get("joya", False)),
+                canterano=str(datos.get("canterano", "") or ""),                     # v0.4.11.0
             )
         except Exception as e:
             logger.warning(f"Excepción al reconstruir Jugador: {e}. Usando fallback.")

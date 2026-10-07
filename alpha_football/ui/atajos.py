@@ -43,9 +43,10 @@ ATAJOS = {
     'buscador_screen': "↑ ↓ Jugador · Tab Campo · Enter Buscar · Filtros · Solo libres · H Ayuda · ESC Volver",
     'favoritos_screen': "↑ ↓ Jugador · Enter Negociar · Supr Quitar · Clic en la caja Buscar · H Ayuda · ESC Volver",
     'historial_pases_screen': "← → Pestaña · ↑ ↓ RePág AvPág Desplazar · H Ayuda · ESC Volver",
-    'ojeador_screen': "← → Fichaje · Enter Fichar · M Correo · H Ayuda · ESC Volver",
+    'ojeador_screen': "← → Fichaje · Enter Fichar · M Notificaciones · H Ayuda · ESC Volver",
     'objetivos_screen': "I Reglas · H Ayuda · ESC Volver",
     'correo_screen': "↑ ↓ Mensaje · Enter Ir · O Opciones · H Ayuda · ESC Volver",
+    'notificaciones_screen': "← → Panel · ↑ ↓ Elegir · Enter Abrir · O Opciones · H Ayuda · ESC Volver",   # v0.4.10.0
     'despido_screen': "← → Club · Enter Aceptar · H Ayuda",
     'finanzas_screen': "1 2 3 Espaldarazo · H Ayuda · ESC Volver",
     'patrocinios_screen': "← → Espacio · ↑ ↓ Oferta · F Firmar · P Prima · 1 2 Negociar · R Rechazar · X Rescindir · H Ayuda · ESC Volver",

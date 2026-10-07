@@ -362,7 +362,7 @@ TARJETAS = {
         ("OJEADOR", "3 fichajes recomendados por ventana", 'ojeador_screen'),
     ],
     'oficina': [
-        ("CORREO", "Mensajes de la directiva, jugadores y clubes", 'correo_screen'),   # v3.1.0
+        ("NOTIFICACIONES", "Mensajes de jugadores y presidente, y correo del club", 'notificaciones_screen'),   # v0.4.10.0
         ("ESTADÍSTICAS", "Goleadores, asistencias, vallas", 'stats_screen'),
         ("COPA INTERNACIONAL", "Grupos, llaves y estadísticas", 'copa_screen'),
         ("HISTORIAL DE CARRERA", "Tus temporadas y títulos", 'career_screen'),
@@ -630,7 +630,7 @@ def _alertas_inicio(estado, mi_equipo) -> list:
         from alpha_football.correo import no_leidos       # v3.1.0: correo sin leer primero
         k = no_leidos(estado)
         if k:
-            avisos.insert(0, (f"{k} correo{'s' if k != 1 else ''} sin leer (OFICINA > CORREO)", 'dorado'))
+            avisos.insert(0, (f"{k} notificaci{'ones' if k != 1 else 'ón'} sin leer (OFICINA > NOTIFICACIONES)", 'dorado'))
         try:  # v3.4.0: clubes que te ofrecen el banquillo
             from alpha_football.entrenadores import ofertas_activas
             k_dt = len(ofertas_activas(estado))
@@ -1024,7 +1024,7 @@ def _render_tarjetas(screen, estado, tab, mouse_pos, click_pos) -> Optional[str]
                 pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), rect, width=3, border_radius=8)
             draw_text(screen, titulo, (rect.x + 24, rect.y + 40), size='lg', color='blanco')
             draw_text(screen, sub, (rect.x + 24, rect.y + 90), size='sm', color='azul')
-            n_badge = n_ofertas if destino == 'ofertas_screen' else (n_correo if destino == 'correo_screen' else 0)
+            n_badge = n_ofertas if destino == 'ofertas_screen' else (n_correo if destino == 'notificaciones_screen' else 0)
             if destino == 'ofertas_dt_screen':     # v3.4.0
                 n_badge = n_ofertas_dt
             if n_badge > 0:
@@ -1117,6 +1117,9 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         max_offset = max(0, len(partidos_historial(estado)) - PARTIDOS_VISIBLES)   # v4.3.0: liga + copa
 
         tab = estado.get('hub_tab') if estado.get('hub_tab') in PESTANAS else 'inicio'
+        # v0.4.11.0: pestaña abierta desde un mensaje; si ya está en otra, no vuelve al correo
+        if estado.get('volver_notif') == 'league_screen' and tab != estado.get('volver_notif_tab'):
+            estado.pop('volver_notif', None)
         bar_foco = int(estado.get('hub_bar_foco', 0)) % len(BARRA_MENU)
         # Al volver de otra pantalla (o de OPCIONES/GUARDAR) el foco vuelve a la pestaña activa.
         if bar_foco >= len(PESTANAS) or PESTANAS[bar_foco] != tab:
@@ -1206,6 +1209,11 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                     if tarjetas:
                         return _abrir(estado, tarjetas[foco % len(tarjetas)][2])
             elif ev.key == pygame.K_ESCAPE:
+                if tab != 'inicio' and estado.get('volver_notif') == 'league_screen':   # v0.4.11.0
+                    estado.pop('volver_notif', None)
+                    tab, bar_foco, foco = 'inicio', 0, 0
+                    _guardar_foco()
+                    return 'correo_screen'
                 if tab != 'inicio':
                     tab, bar_foco, foco = 'inicio', 0, 0
                 else:
@@ -1216,7 +1224,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         # v4.2.0: clic en el sobre de correo
         if click_pos and R_SOBRE.collidepoint(click_pos):
             _guardar_foco()
-            return 'correo_screen'
+            return 'notificaciones_screen'
 
         # --- Clic en la barra ---
         rects = _rects_barra()

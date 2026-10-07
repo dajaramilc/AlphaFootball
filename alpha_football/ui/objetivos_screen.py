@@ -41,7 +41,7 @@ R_FIN = pygame.Rect(856, 184, 408, 250)
 R_MARCA = pygame.Rect(16, 446, 616, 250)
 R_JUV = pygame.Rect(648, 446, 616, 250)          # termina en y=696 (barra de atajos)
 R_AYUDA_META = pygame.Rect(R_LOCAL.right - 56, R_LOCAL.y + 12, 36, 36)
-R_REGLAS = pygame.Rect(SCREEN_W // 2 - 380, 150, 760, 330)
+R_REGLAS = pygame.Rect(SCREEN_W // 2 - 380, 150, 760, 368)   # v0.4.11.0: una fila más (antes 330)
 
 
 def _volver() -> pygame.Rect:
@@ -210,6 +210,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                      ("Descender o quedar 4+ puestos por debajo de la meta = despido directo", 'rojo'),
                      ("Pasar el tope salarial o cerrar bajo el saldo mínimo = objetivo fallado", 'rojo'),
                      (f"Ranking de tu plantilla al empezar: {obj.get('ranking_inicial', '?')}º por media", 'azul'),
+                     ("El saldo no pasa de temporada: el presupuesto siguiente sube 25% / 10% o baja 15%", 'azul'),   # v0.4.11.0
                      ("Clic o ESC para cerrar", 'blanco')]
             for i, (t, col) in enumerate(filas):
                 draw_text(screen, t, (R_REGLAS.x + 20, R_REGLAS.y + 18 + i * 38), size='md' if i == 0 else 'sm',

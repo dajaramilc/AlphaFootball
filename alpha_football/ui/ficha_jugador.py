@@ -99,13 +99,21 @@ def dibujar_ficha(screen, rect: pygame.Rect, j, estado_txt: str = "", extra: Opt
             y += 22                      # más juntas: deja lugar a las líneas extra
         y += 4
         nota = float(getattr(j, 'promedio_nota', 0.0) or 0.0)
-        stats = f"PJ {j.partidos_jugados}  ·  Goles {j.goles}  ·  Asist. {getattr(j, 'asistencias', 0)}  ·  Nota {nota:.1f}"
+        goles = j.goles
+        try:   # v0.4.11.0: liga + copa (la ficha no recibe el estado: usa el de la partida activa)
+            from alpha_football import market as _mk, competiciones as _cp
+            goles = _cp.goles_totales(_mk.ACTIVE_ESTADO or {}, j)
+        except Exception:
+            pass
+        stats = f"PJ {j.partidos_jugados}  ·  Goles {goles}  ·  Asist. {getattr(j, 'asistencias', 0)}  ·  Nota {nota:.1f}"
         draw_text(screen, stats, (x, y), size='sm', color='blanco')
         y += 24
         if j.posicion == 'POR':
             draw_text(screen, f"Vallas invictas: {getattr(j, 'porterias_cero', 0)}", (x, y), size='sm', color='blanco')
             y += 24
         rasgo_txt = f"Rasgo: {str(j.rasgo).replace('_', ' ')}" if getattr(j, 'rasgo', None) else ""
+        if getattr(j, 'canterano', ''):             # v0.4.11.0
+            rasgo_txt = f"{rasgo_txt}  ·  Canterano" if rasgo_txt else "Canterano"
         pers_txt = f"Personalidad: {PERSONALIDAD_TXT.get(getattr(j, 'personalidad', ''), '-')}"
         junto = f"{rasgo_txt}  ·  {pers_txt}" if rasgo_txt else pers_txt
         # v3.9.0: si rasgo + personalidad no caben en el ancho de la ficha, van en dos líneas

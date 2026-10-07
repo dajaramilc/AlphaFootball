@@ -273,7 +273,7 @@ def test_atajos_globales_m_o():
     MAIN = _main()
     e = estado_carrera(); e['current_screen'] = 'league_screen'
     quedan = MAIN.procesar_atajos_globales(e, [_ev(pygame.K_m, 'm')])
-    assert quedan == [] and e['current_screen'] == 'correo_screen'
+    assert quedan == [] and e['current_screen'] == 'notificaciones_screen'
     e['current_screen'] = 'stats_screen'
     MAIN.procesar_atajos_globales(e, [_ev(pygame.K_o, 'o')])
     assert e['current_screen'] == 'options_screen' and e['options_return'] == 'stats_screen'
@@ -318,7 +318,7 @@ def test_sobre_badge():
     e['datos_carrera']['aviso_mercado_visto'] = [1, e['liga'].jornada_actual]   # sin el cartel del mercado (v4.4.0)
     pygame.event.clear(); L.render(screen, e)
     click(L.R_SOBRE.center)
-    assert L.render(screen, e) == 'correo_screen'
+    assert L.render(screen, e) == 'notificaciones_screen'
     assert not any(r.colliderect(L.R_SOBRE) for r in L._rects_barra())
     print("  test_sobre_badge: OK")
 

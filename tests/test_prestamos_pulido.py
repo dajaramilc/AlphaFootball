@@ -300,11 +300,11 @@ def test_dato_malformado_no_corta_los_regresos():
 
 def test_regreso_por_nombre_de_ventana_si_la_liga_se_achica():
     e = estado_carrera(); liga = e['liga']; mi = e['mi_equipo']
-    liga.num_jornadas = 38; _abierto(e, 37)                       # ventana de cierre
+    liga.num_jornadas = 38; _abierto(e, 20)                       # v0.4.11.0: ventana de invierno (sin cierre)
     club = _club(e); j = _suplente(club)
     P.iniciar(e, j, club, mi, 12, 50)
-    assert j.prestamo['vuelve'] == [2, 36]
-    liga.num_jornadas = 8; e['temporada'] = 2; liga.jornada_actual = 6   # 8 jornadas: cierre J6-8, sin invierno
+    assert j.prestamo['vuelve'] == [2, 19]
+    liga.num_jornadas = 8; e['temporada'] = 2; liga.jornada_actual = 2   # 8 jornadas: solo inicio (J1-3), sin invierno
     P.revisar_jornada(e)
     assert j in club.jugadores and j.prestamo is None
     print("  test_regreso_por_nombre_de_ventana_si_la_liga_se_achica: OK")

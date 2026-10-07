@@ -419,6 +419,12 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         pygame.draw.line(screen, COLORS['azul'], (R_LISTA.x + 8, FILA_Y0 - 6), (R_LISTA.right - 8, FILA_Y0 - 6), 1)
         alin = getattr(mi_equipo, 'alineacion_activa', None) or estado.get('alineacion_activa')
         titulares = set(getattr(alin, 'titulares', []) or [])
+        try:   # v0.4.11.0: goles de liga + copa, con el índice calculado una vez por cuadro
+            from alpha_football import competiciones as _cp
+            _idx_goles, _club = _cp.goles_copa(estado), getattr(estado.get('mi_equipo'), 'nombre', '')
+            _goles = lambda jj: _cp.goles_totales(estado, jj, _club, _idx_goles)
+        except Exception:
+            _goles = lambda jj: jj.goles
         for i in range(FILAS_VISIBLES):
             k = scroll + i
             if k >= len(orden):
@@ -441,7 +447,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                        str(getattr(j, 'potencial', 0) or '?'), _dinero(_valor(j)),
                        f"{_num(getattr(j, 'contrato_anios', 0))} a", str(_num(getattr(j, 'moral', 0))),
                        str(_num(getattr(j, 'energia', 100))),
-                       str(j.partidos_jugados), f"{j.goles}/{getattr(j, 'asistencias', 0)}",
+                       str(j.partidos_jugados), f"{_goles(j)}/{getattr(j, 'asistencias', 0)}",
                        f"{nota:.1f}" if j.partidos_jugados else "-", marca]
             for n, ((_c, _t, x), v) in enumerate(zip(COLUMNAS, valores)):
                 color = c_marca if n == len(valores) - 1 else ('verde' if n == 1 and idx in titulares else 'blanco')

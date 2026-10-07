@@ -387,12 +387,14 @@ def _fichar_diferido(estado: dict, jugador, club, precio: int) -> tuple[bool, st
 # --- Ojeador ──────────────────────────────────────────────────────────────────
 
 def _clave_ventana(estado: dict) -> tuple:
-    """Ventana de mercado actual o la próxima: (temporada, 'inicio'|'invierno'|'cierre')."""
+    """Ventana de mercado actual o la próxima: (temporada, 'inicio'|'invierno')."""
     from alpha_football.market import ventanas_mercado
     liga = estado.get('liga')
     j = int(getattr(liga, 'jornada_actual', 1) or 1)
     temporada = int(estado.get('temporada', 1) or 1)
-    nombre = next((v[2] for v in ventanas_mercado(getattr(liga, 'num_jornadas', 22)) if j <= v[1]), 'cierre')
+    nombre = next((v[2] for v in ventanas_mercado(getattr(liga, 'num_jornadas', 22)) if j <= v[1]), None)
+    if nombre is None:                 # v0.4.11.0: pasado el invierno, la próxima es el inicio siguiente
+        return (temporada + 1, 'inicio')
     return (temporada, nombre)
 
 

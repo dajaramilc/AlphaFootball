@@ -26,6 +26,8 @@ def _factor_progreso_edad(edad: int) -> float:
     v2.3.6 (nerf): cuánto del progreso por partido se aprovecha según la edad.
     Los jóvenes crecen, en el pico se sube despacio y a los 31+ subir cuesta muchísimo.
     """
+    if edad <= 20:      # v0.4.10.0: los menores de 21 progresan un poco más rápido (antes 0.75)
+        return 0.90
     if edad <= 21:
         return 0.75
     if edad <= 24:
@@ -35,6 +37,19 @@ def _factor_progreso_edad(edad: int) -> float:
     if edad <= 30:
         return 0.25
     return 0.08
+
+
+BOOST_CANTERANO = 1.5          # v0.4.11.0
+EDAD_BOOST_CANTERANO = 23
+
+
+def factor_canterano(j: Any, equipo: Any) -> float:
+    """v0.4.11.0: el canterano (hasta 23 años) progresa ×1.5 mientras siga en el club que lo formó."""
+    origen = getattr(j, 'canterano', '') or ''
+    if origen and origen == getattr(equipo, 'nombre', None) \
+            and int(getattr(j, 'edad', 25) or 25) <= EDAD_BOOST_CANTERANO:
+        return BOOST_CANTERANO
+    return 1.0
 
 
 def _nota_partido(jugador: Any, gano: bool, empato: bool, rng: random.Random) -> float:
@@ -193,7 +208,7 @@ def desarrollar_plantilla_post_partido(
                 inc *= 1.15
         except Exception:
             pass
-        j.progreso_desarrollo += inc * _factor_progreso_edad(edad_j)
+        j.progreso_desarrollo += inc * _factor_progreso_edad(edad_j) * factor_canterano(j, equipo)
 
         # Subidas de OVR: cada 1.0 de progreso -> +1 a 3 atributos base al azar.
         # v0.8.x: respetar el techo de potencial. Si el jugador ya está en su techo,

@@ -16,14 +16,14 @@ from test_revision_v291 import estado_carrera   # noqa: E402
 
 
 def test_ventanas_con_invierno():
-    assert M.ventanas_mercado(22) == [(1, 3, 'inicio'), (11, 13, 'invierno'), (20, 22, 'cierre')]
+    assert M.ventanas_mercado(22) == [(1, 3, 'inicio'), (11, 13, 'invierno')]
     abiertas = [j for j in range(1, 23) if M.ventana_mercado_abierta(j, 22)]
-    assert abiertas == [1, 2, 3, 11, 12, 13, 20, 21, 22]
-    assert AM.eventos_ventana(22) == {1: 'abre', 4: 'cierra', 11: 'abre', 14: 'cierra', 20: 'abre'}
+    assert abiertas == [1, 2, 3, 11, 12, 13]
+    assert AM.eventos_ventana(22) == {1: 'abre', 4: 'cierra', 11: 'abre', 14: 'cierra'}
     e = estado_carrera(); e['liga'].jornada_actual = 8
     assert TP.jornada_apertura(e) == 11                  # acordado en J8 → llega en el invierno
     e['liga'].jornada_actual = 15
-    assert TP.jornada_apertura(e) == 20
+    assert TP.jornada_apertura(e) == 1                   # v0.4.11.0: tras el invierno, la J1 siguiente
     print("  test_ventanas_con_invierno: OK")
 
 
@@ -36,7 +36,8 @@ def test_cartel_de_invierno():
     e['aviso_mercado_activo'] = None; e['liga'].jornada_actual = n // 2 + 3
     AM.manejar(e, [], None)
     assert e['aviso_mercado_activo']['tipo'] == 'cierra'
-    assert any(f"Reabre en la jornada {n - 2}" in m['cuerpo'] for m in C.bandeja(e))
+    # v0.4.11.0: sin ventana de cierre, tras el invierno reabre al empezar la próxima temporada
+    assert any("Reabre al empezar la próxima temporada" in m['cuerpo'] for m in C.bandeja(e))
     print("  test_cartel_de_invierno: OK")
 
 

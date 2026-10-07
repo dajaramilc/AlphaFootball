@@ -451,16 +451,15 @@ def avanzar_nueva_temporada(estado: dict) -> None:
         except Exception as e_ret:
             logger.error(f"Error procesando retiros: {e_ret}")
 
-        _pc.mostrar("PASANDO DE TEMPORADA", "Mercado de pretemporada", 0.65)
-        # 4c. v2.3.7: ingresos de la IA y mercado de pretemporada (los recién
-        #     ascendidos fichan más para intentar mantenerse).
+        _pc.mostrar("PASANDO DE TEMPORADA", "Ingresos de los clubes", 0.65)
+        # 4c. Ingresos de la IA. v0.4.11.0: ya no hay ronda de pretemporada (la IA fichaba antes
+        #     que el user); ahora ficha en la ventana de inicio, jornada a jornada, a la vez que él.
         try:
-            from alpha_football.mercado_ia import ingresos_fin_temporada, ronda_fichajes_ia
+            from alpha_football.mercado_ia import ingresos_fin_temporada
             ingresos_fin_temporada(estado)
             estado['mercado_ia_log'] = []
-            ronda_fichajes_ia(estado, 'pretemporada')
         except Exception as e_mia:
-            logger.error(f"Error en el mercado de pretemporada de la IA: {e_mia}")
+            logger.error(f"Error en los ingresos de temporada de la IA: {e_mia}")
 
         try:  # v4.4.0: la IA vende a los que pidieron salir tras descender
             from alpha_football.mercado_ia import vender_salidas_forzadas
@@ -493,6 +492,12 @@ def avanzar_nueva_temporada(estado: dict) -> None:
             _prestamos_j1(estado)
         except Exception as e_pr:
             logger.error(f"Error con los préstamos al empezar la temporada: {e_pr}")
+        try:  # v0.4.11.0: sin ventana de cierre, lo acordado tras el invierno se concreta al abrir la J1
+            from alpha_football import traspasos_pendientes as _tp_j1
+            _tp_j1.ejecutar(estado)
+            _tp_j1.limpiar_ofertas(estado)
+        except Exception as e_tp:
+            logger.error(f"Error concretando los traspasos acordados al empezar la temporada: {e_tp}")
 
         _pc.mostrar("PASANDO DE TEMPORADA", "Sorteando las copas", 0.9)
         # 5. v3.8.0: copas de la temporada nueva (clasificados por la tabla final de cada 1ª).

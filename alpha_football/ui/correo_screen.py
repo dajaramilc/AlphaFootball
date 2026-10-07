@@ -45,6 +45,25 @@ def _rect_accion() -> pygame.Rect:
 
 R_BORRAR = pygame.Rect(R_MSG.right - 200, R_MSG.bottom - 70, 180, 50)   # v4.7.0
 LINEAS_CUERPO = 18
+ALTO_OPCION = 46            # v0.4.10.0: botones de decisión de un evento (uno por opción, apilados)
+
+
+def rects_evento(n: int) -> list:
+    base = _rect_accion()
+    return [pygame.Rect(base.x, base.y - (n - 1 - i) * ALTO_OPCION, 420, ALTO_OPCION - 6) for i in range(n)]
+
+
+def _evento_pendiente(m: dict) -> Optional[dict]:
+    ev = m.get('evento')
+    return ev if ev and ev.get('resuelto') is None else None
+
+
+def _borrar(estado: dict, m: dict) -> None:
+    """v0.4.10.0: borrar un evento sin responder no esquiva la consecuencia: se aplica la de por defecto."""
+    if _evento_pendiente(m):
+        from alpha_football import eventos as EV
+        EV.resolver_pendientes(estado)
+    C.borrar(estado, m['id'])
 
 
 def _envolver(texto: str, ancho_px: int, size: str = 'sm') -> list:
@@ -84,13 +103,24 @@ def _ir(estado: dict, msg: dict) -> Optional[str]:
     if not acc.get('pantalla'):
         return None
     from alpha_football.ui.league_screen import _abrir
-    return _abrir(estado, acc['pantalla'])
+    destino = _abrir(estado, acc['pantalla'])
+    estado['volver_notif'] = destino            # v0.4.11.0: VOLVER/ESC regresa a este mensaje
+    if destino == 'league_screen':              # el destino es una pestaña del hub
+        estado['volver_notif_tab'] = estado.get('hub_tab')
+    return destino
+
+
+def _mensajes(estado: dict) -> list:
+    """v0.4.10.0: la lista del canal abierto desde NOTIFICACIONES (sin canal: toda la bandeja)."""
+    cual = estado.get('correo_canal')
+    return C.de_canal(estado, cual) if cual else C.bandeja(estado)
 
 
 def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
     try:
-        mensajes = C.bandeja(estado)
+        mensajes = _mensajes(estado)
         sel = max(0, min(int(estado.get('correo_sel', 0) or 0), len(mensajes) - 1))
+        opc = int(estado.get('correo_opc', 0) or 0)
         mouse_pos = pygame.mouse.get_pos()
         click = None
         for ev in pygame.event.get():
@@ -98,14 +128,25 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 return 'menu'
             if ev.type == pygame.KEYDOWN:
                 if ev.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
-                    return 'league_screen'
+                    return 'notificaciones_screen'
+                pend = _evento_pendiente(mensajes[sel]) if mensajes else None
+                if pend and ev.key in (pygame.K_LEFT, pygame.K_RIGHT):      # v0.4.10.0: elegir opción
+                    opc = max(0, min(len(pend['opciones']) - 1, opc + (1 if ev.key == pygame.K_RIGHT else -1)))
+                    continue
+                if pend and ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                    from alpha_football import eventos as EV
+                    EV.resolver(estado, mensajes[sel]['id'], opc)
+                    opc = 0
+                    continue
                 if ev.key == pygame.K_DOWN:
                     sel = min(len(mensajes) - 1, sel + 1)
+                    opc = 0
                 elif ev.key == pygame.K_UP:
                     sel = max(0, sel - 1)
+                    opc = 0
                 elif ev.key == pygame.K_DELETE and mensajes:        # v4.7.0: borrar
-                    C.borrar(estado, mensajes[sel]['id'])
-                    mensajes = C.bandeja(estado)
+                    _borrar(estado, mensajes[sel])
+                    mensajes = _mensajes(estado)
                     sel = max(0, min(sel, len(mensajes) - 1))
                 elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER) and mensajes:
                     destino = _ir(estado, mensajes[sel])
@@ -116,13 +157,22 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         inicio = max(0, sel - FILAS + 1)
         if click:
             if _volver().collidepoint(click):
-                return 'league_screen'
+                return 'notificaciones_screen'
             for i in range(min(FILAS, len(mensajes) - inicio)):
                 if _rect_fila(i).collidepoint(click):
                     sel = inicio + i
-            if mensajes and R_BORRAR.collidepoint(click):     # v4.7.0
-                C.borrar(estado, mensajes[sel]['id'])
-                mensajes = C.bandeja(estado)
+                    opc = 0
+            pend = _evento_pendiente(mensajes[sel]) if (click and mensajes) else None
+            if pend:                                          # v0.4.10.0: clic en una opción de la decisión
+                for i, r in enumerate(rects_evento(len(pend['opciones']))):
+                    if r.collidepoint(click):
+                        from alpha_football import eventos as EV
+                        EV.resolver(estado, mensajes[sel]['id'], i)
+                        opc = 0
+                click = None            # con decisión pendiente no hay botón de acción
+            if click and mensajes and R_BORRAR.collidepoint(click):     # v4.7.0
+                _borrar(estado, mensajes[sel])
+                mensajes = _mensajes(estado)
                 sel = max(0, min(sel, len(mensajes) - 1))
                 click = None
             if click and mensajes and _rect_accion().collidepoint(click):
@@ -130,12 +180,14 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 if destino:
                     return destino
         estado['correo_sel'] = sel
+        estado['correo_opc'] = opc
         if mensajes:
             C.marcar_leido(estado, mensajes[sel]['id'])
 
         draw_gradient_bg(screen)
-        draw_text(screen, "CORREO", (16, 12), size='lg', color='dorado')
-        draw_text(screen, f"{len(mensajes)} mensajes  ·  {C.no_leidos(estado)} sin leer  ·  "
+        cual = estado.get('correo_canal')
+        draw_text(screen, {'mensaje': "MENSAJES", 'correo': "CORREO"}.get(cual, "CORREO"), (16, 12), size='lg', color='dorado')
+        draw_text(screen, f"{len(mensajes)} en total  ·  {C.no_leidos(estado, cual)} sin leer  ·  "
                           f"↑/↓ elegir · Enter acción · Supr borrar · Esc volver", (16, 48), size='sm', color='azul')
         draw_button(screen, _volver(), "VOLVER", _volver().collidepoint(mouse_pos))
         draw_panel(screen, R_LISTA)
@@ -156,11 +208,21 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         draw_text(screen, C.REMITENTES.get(m['remitente'], m['remitente']), (x, y), size='sm', color='azul')
         for k, linea in enumerate(_envolver(m['asunto'], R_MSG.width - 40, 'md')[:2]):
             draw_text(screen, linea, (x, y + 26 + k * 30), size='md', color='dorado')
-        for k, linea in enumerate(_envolver(C.formatear(estado, m), R_MSG.width - 40)[:LINEAS_CUERPO]):
+        for k, linea in enumerate(_envolver(C.formatear(estado, m), R_MSG.width - 40)[:LINEAS_CUERPO - (6 if m.get('evento') else 0)]):
             draw_text(screen, linea, (x, y + 96 + k * 23), size='sm', color='blanco')
         acc = m.get('accion') or {}
         if acc.get('pantalla'):
             draw_button(screen, _rect_accion(), acc.get('texto', 'IR'), _rect_accion().collidepoint(mouse_pos))
+        evd = m.get('evento')                              # v0.4.10.0: decisión o su resultado
+        if evd and evd.get('resuelto') is None:
+            for i, r in enumerate(rects_evento(len(evd['opciones']))):
+                draw_button(screen, r, evd['opciones'][i], r.collidepoint(mouse_pos) or i == opc)
+        elif evd:
+            elegido = evd['opciones'][evd['resuelto']] if 0 <= int(evd['resuelto']) < len(evd['opciones']) else "—"
+            y0 = _rect_accion().y - 3 * 24
+            draw_text(screen, f"Decidiste: {elegido}", (x, y0), size='sm', color='dorado')
+            for k, linea in enumerate(_envolver(" · ".join(evd.get('resumen') or []), R_MSG.width - 240)[:4]):
+                draw_text(screen, linea, (x, y0 + 24 + k * 22), size='sm', color='azul')
         draw_button(screen, R_BORRAR, "BORRAR", R_BORRAR.collidepoint(mouse_pos))
         aviso = estado.get('correo_aviso_vis')     # v3.5.0: acuerdo de compra que ya no vale
         if aviso and aviso[0] == m.get('id') and aviso[1]:

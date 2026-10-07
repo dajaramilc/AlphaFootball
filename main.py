@@ -151,6 +151,7 @@ MODULOS_PANTALLA = {
     'ojeador_screen': 'alpha_football.ui.ojeador_screen',
     'objetivos_screen': 'alpha_football.ui.objetivos_screen',
     'correo_screen': 'alpha_football.ui.correo_screen',
+    'notificaciones_screen': 'alpha_football.ui.notificaciones_screen',      # v0.4.10.0
     'despido_screen': 'alpha_football.ui.despido_screen',
     'finanzas_screen': 'alpha_football.ui.finanzas_screen',
     'patrocinios_screen': 'alpha_football.ui.patrocinios_screen',      # v4.9.0
@@ -333,7 +334,7 @@ def procesar_atajos_globales(estado: dict, eventos_frame: list) -> list:
         quedan = []
         for ev in eventos_frame:
             if ev.type == pygame.KEYDOWN and ev.key in (pygame.K_m, pygame.K_o) and not (ev.mod & pygame.KMOD_CTRL):
-                destino = 'correo_screen' if ev.key == pygame.K_m else 'options_screen'
+                destino = 'notificaciones_screen' if ev.key == pygame.K_m else 'options_screen'
                 if destino != actual:
                     if destino == 'options_screen':
                         estado['options_return'] = actual
@@ -536,7 +537,7 @@ def main():
             logger.warning(f"Modo SCALED no disponible, se usa ventana normal: {e_modo}")
             screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
             pantalla_completa = False
-        pygame.display.set_caption("Alpha Football v0.4")
+        pygame.display.set_caption("Alpha Football v0.4.10.0")
         clock = pygame.time.Clock()
         
         # Estado inicial vacío de la sesión
@@ -647,6 +648,13 @@ def main():
                     _atajos.dibujar(screen, current_screen, estado)
                 except Exception as e_barra:
                     logger.error(f"Error al dibujar la barra de atajos: {e_barra}")
+
+            # v0.4.11.0: lo que se abrió desde un mensaje vuelve a ese mensaje
+            try:
+                from alpha_football.correo import retorno as _retorno_notif
+                next_screen = _retorno_notif(estado, current_screen, next_screen)
+            except Exception as e_ret:
+                logger.error(f"Error al resolver el retorno a notificaciones: {e_ret}")
 
             # 3. Transicionar o salir según la respuesta de la pantalla
             # v3.6.0: la pantalla de la que se viene (el hub la usa para dejar el foco en JUGAR)

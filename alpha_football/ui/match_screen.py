@@ -475,6 +475,11 @@ def finalizar_jornada_liga(estado: dict, liga: Any, mi_equipo: Any, partido: Any
             _salidas_cierre(estado)
         except Exception as e_sal:
             logger.error(f"Error en las salidas de jugadores: {e_sal}")
+        try:  # v0.4.10.0: evento aleatorio de vestuario de la jornada (eventos.py)
+            from alpha_football.eventos import cierre_jornada as _eventos_cierre
+            _eventos_cierre(estado)
+        except Exception as e_ev:
+            logger.error(f"Error en los eventos de la jornada: {e_ev}")
         try:  # v3.1.0: recuperación física de todos, pedidos de la directiva y cláusulas
             from alpha_football.energia import recuperar_todos
             recuperar_todos(estado)

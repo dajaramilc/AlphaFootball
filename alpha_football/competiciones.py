@@ -565,6 +565,14 @@ def _pool(estado: dict, tipo: str) -> dict:
                     logger.warning(f"competiciones: club editado inválido en {tipo}: {e_eq}")
     except Exception as e_db:
         logger.error(f"competiciones: no se pudo leer la base editada: {e_db}")
+    try:   # v0.4.10.0: nacionalidad real de los jugadores del banco internacional
+        from alpha_football.retiros import nacionalizar
+        from alpha_football.data.nacionalidades import PAIS_CLUB
+        for _eq in equipos.values():
+            for _j in getattr(_eq, 'jugadores', []) or []:
+                nacionalizar(_j, PAIS_CLUB.get(_eq.nombre, ''))
+    except Exception as e_nac:
+        logger.error(f"competiciones: nacionalidades del pool {tipo}: {e_nac}")
     try:
         from alpha_football.plantilla import aplicar_techo_region
         aplicar_techo_region(tipo, list(equipos.values()))
@@ -944,6 +952,48 @@ def registrar_stats(estado: dict, tipo: str, club: str, reporte: list, goles_con
     c = copa(estado, tipo)
     if c is not None:
         _acumular_stats(c, club, reporte, goles_contra)
+
+
+def goles_copa(estado: dict) -> dict:
+    """v0.4.11.0: {(club, nombre completo): goles} sumando las copas de la temporada en curso."""
+    out: dict = {}
+    for c in ((estado.get('datos_carrera') or {}).get('copas') or {}).values():
+        for s in ((c or {}).get('stats') or {}).values():
+            try:
+                k = (s.get('club', ''), s.get('nombre', ''))
+                out[k] = out.get(k, 0) + int(s.get('goles', 0) or 0)
+            except Exception as e_s:
+                logger.debug(f"competiciones: fila de goles de copa inválida {s}: {e_s}")
+    return out
+
+
+def club_de(estado: dict, jugador) -> str:
+    """v0.4.11.0: nombre del club donde está el jugador ('' si no se encuentra)."""
+    mi = estado.get('mi_equipo')
+    if mi is not None and any(x is jugador for x in getattr(mi, 'jugadores', []) or []):
+        return str(getattr(mi, 'nombre', '') or '')
+    ligas = [estado.get('liga')]
+    for clave in ('primera_division', 'segunda_division'):
+        ligas += list((estado.get(clave) or {}).values())
+    for liga in ligas:
+        for eq in getattr(liga, 'equipos', []) or []:
+            if any(x is jugador for x in getattr(eq, 'jugadores', []) or []):
+                return str(getattr(eq, 'nombre', '') or '')
+    return ''
+
+
+def goles_totales(estado: dict, jugador, club: Optional[str] = None, indice: Optional[dict] = None) -> int:
+    """v0.4.11.0: goles de liga + copa. `indice` = goles_copa(estado) ya calculado (listas largas)."""
+    liga = int(getattr(jugador, 'goles', 0) or 0)
+    try:
+        idx = indice if indice is not None else goles_copa(estado)
+        if not idx:
+            return liga
+        club = club if club is not None else club_de(estado, jugador)
+        return liga + int(idx.get((club, getattr(jugador, 'nombre_completo', '')), 0))
+    except Exception as e_g:
+        logger.debug(f"competiciones: no se pudieron sumar los goles de copa: {e_g}")
+        return liga
 
 
 def _simular(estado: dict, c: dict, p: dict, rng) -> None:

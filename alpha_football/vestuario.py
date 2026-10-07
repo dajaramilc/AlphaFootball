@@ -194,9 +194,9 @@ def post_partido_user(estado: dict, user_eq, rival, gf: int, gc: int, reporte: l
         if clasico:
             dc['confianza'] = max(0, min(100, D.confianza(estado) + (6 if gf > gc else -6 if gf < gc else 0)))
             if gf > gc:
-                C.enviar(estado, 'directiva', f"¡Ganaste el clásico a {rival.nombre}!",
-                         "La afición y la directiva celebran la victoria en el clásico. Enhorabuena a usted y "
-                         "a todo el cuerpo técnico.")
+                C.enviar(estado, 'presidente', f"¡Ganamos el clásico a {rival.nombre}!",
+                         "Míster, hoy da gusto ser presidente de este club. La gente está feliz y yo también. "
+                         "Felicite de mi parte a los muchachos.")   # v0.4.10.0
             elif gf < gc:
                 D.ajustar_calif(estado, D.CALIF['clasico_perdido'])
             p = D.pedido_activo(estado)
@@ -204,13 +204,16 @@ def post_partido_user(estado: dict, user_eq, rival, gf: int, gc: int, reporte: l
                 D.resolver_pedido(estado, gf > gc)
         racha = (list(dc.get('racha', [])) + ['G' if gf > gc else 'P' if gf < gc else 'E'])[-3:]
         dc['racha'] = racha
+        # v0.4.10.0: últimos 3 resultados SIN reiniciar (racha se vacía al avisar): eventos.va_mal
+        dc['ult_res'] = (list(dc.get('ult_res', [])) + ['G' if gf > gc else 'P' if gf < gc else 'E'])[-3:]
         if racha == ['G'] * 3:
-            C.enviar(estado, 'directiva', "Tres victorias seguidas",
-                     "La directiva felicita al cuerpo técnico por la racha de tres victorias consecutivas.")
+            C.enviar(estado, 'presidente', "Tres victorias seguidas",
+                     "Míster, tres seguidas. Así da gusto ir al palco. Siga así, que la gente ya se ilusiona.")
             dc['racha'] = []
         elif racha == ['P'] * 3:
-            C.enviar(estado, 'directiva', "Advertencia: tres derrotas seguidas",
-                     "Tres derrotas consecutivas preocupan a la directiva. Esperamos una reacción inmediata del equipo.",
+            C.enviar(estado, 'presidente', "Tres derrotas seguidas: tenemos que hablar",
+                     "Míster, tres derrotas al hilo. Me paran en la calle para preguntarme qué pasa y ya no sé "
+                     "qué contestar. Necesito una reacción ya.",
                      C.accion('objetivos_screen', "VER OBJETIVOS"))
             dc['racha'] = []
     except Exception as e:

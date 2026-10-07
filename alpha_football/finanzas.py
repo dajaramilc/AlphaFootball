@@ -331,6 +331,78 @@ def procesar_jornada(estado: dict, es_local: bool, gf: int, gc: int) -> dict:
     return {'patrocinio': patrocinio, 'taquilla': taquilla, 'salarios': salarios}
 
 
+# v0.4.11.0: presupuesto por temporada. El saldo no se arrastra: al cerrar, el club se queda con
+# el sobrante y fija un presupuesto nuevo según su tamaño (base), su salud y el objetivo deportivo.
+SALUD_ROJO = 0.80
+SALUD_TRAMOS = ((0.25, 0.90), (0.75, 1.00), (1.50, 1.10))    # (saldo/base menor que, factor)
+SALUD_MAX = 1.20
+FACTOR_OBJETIVO = {'superado': 1.25, 'cumplido': 1.10, 'fallado': 0.85}
+BONO_LIGA, BONO_COPA = 0.15, 0.20
+MULT_MIN, MULT_MAX = 0.60, 1.75
+PISO_PRESUPUESTO = 0.10
+
+
+def factor_salud(saldo: int, base: int) -> float:
+    """Cómo cerró el club respecto de su presupuesto base: en rojo 0.80 … más de 150% 1.20."""
+    if int(saldo) < 0:
+        return SALUD_ROJO
+    r = int(saldo) / max(1, int(base))
+    return next((f for tope, f in SALUD_TRAMOS if r < tope), SALUD_MAX)
+
+
+def presupuesto_temporada(base: int, saldo: int, resultado: str, campeon_liga: bool = False,
+                          campeon_copa: bool = False) -> dict:
+    """Desglose del presupuesto nuevo: base × salud × objetivo × (1 + bonos), entre ×0.60 y ×1.75;
+    la deuda se descuenta entera (piso: 10% de la base)."""
+    base, saldo = int(base), int(saldo)
+    salud = factor_salud(saldo, base)
+    objetivo = FACTOR_OBJETIVO.get(resultado, 1.0)
+    bonos = (BONO_LIGA if campeon_liga else 0.0) + (BONO_COPA if campeon_copa else 0.0)
+    mult = max(MULT_MIN, min(MULT_MAX, salud * objetivo * (1 + bonos)))
+    deuda = max(0, -saldo)
+    total = max(int(base * PISO_PRESUPUESTO), int(round(base * mult)) - deuda)
+    return {'base': base, 'saldo': saldo, 'salud': salud, 'objetivo': objetivo, 'bonos': bonos,
+            'mult': mult, 'deuda': deuda, 'total': total}
+
+
+def aplicar_presupuesto_temporada(estado: dict) -> Optional[dict]:
+    """Cierre de temporada (ya con la liga y la división nuevas): reemplaza el saldo por el
+    presupuesto de la temporada que empieza y lo comunica por correo."""
+    mi, liga = estado.get('mi_equipo'), estado.get('liga')
+    if mi is None or liga is None:
+        return None
+    temporada = int(estado.get('temporada', 1) or 1)
+    dc = estado.setdefault('datos_carrera', {})
+    reg = (estado.get('historial') or [{}])[-1] or {}
+    propio = reg.get('equipo') == mi.nombre and int(reg.get('temporada', 0) or 0) == temporada - 1
+    copas = (dc.get('campeones_copas') or [{}])[-1] or {}
+    campeon_copa = int(copas.get('temporada', 0) or 0) == temporada - 1 and \
+        mi.nombre in [v for k, v in copas.items() if k != 'temporada']
+    base = presupuesto_base(mi, getattr(liga, 'tipo', 'betplay'), getattr(liga, 'division', 1) or 1)
+    info = presupuesto_temporada(base, int(getattr(mi, 'balance', 0) or 0),
+                                 reg.get('objetivo_resultado', '') if propio else '',
+                                 propio and reg.get('campeon_liga') == mi.nombre, campeon_copa)
+    mi.balance = info['total']
+    dc['presupuesto_temporada'] = dict(info, temporada=temporada)
+    try:
+        from alpha_football import correo as C
+        m = lambda v: f"${v / 1_000_000:.1f}M"
+        cierre = (f"Cierre de la temporada anterior: {m(info['saldo'])} (el sobrante queda en las arcas del club)."
+                  if info['saldo'] >= 0 else
+                  f"Cierre de la temporada anterior: −{m(info['deuda'])} (la deuda se descuenta del presupuesto).")
+        titulos = f" Títulos: +{int(round(info['bonos'] * 100))}%." if info['bonos'] else ""
+        C.enviar(estado, 'directiva', f"Presupuesto de la temporada {temporada}",
+                 "La directiva ha fijado el presupuesto de la nueva temporada.\n\n"
+                 f"{cierre}\n"
+                 f"Presupuesto base del club: {m(info['base'])}.\n"
+                 f"Salud financiera: ×{info['salud']:.2f}. Objetivo deportivo: ×{info['objetivo']:.2f}.{titulos}\n\n"
+                 f"Presupuesto disponible: {m(info['total'])}.",
+                 C.accion('finanzas_screen', "VER FINANZAS"))
+    except Exception as e:
+        logger.error(f"No se pudo avisar el presupuesto de la temporada: {e}")
+    return info
+
+
 def cierre_temporada(estado: dict) -> list:
     """
     Fin de temporada: contratos −1 año (los del user que llegan a 0 se van libres; la IA
@@ -345,8 +417,16 @@ def cierre_temporada(estado: dict) -> list:
     mi = estado.get('mi_equipo')
     salidas = []
     azar = random.Random(f"cierre-{estado.get('temporada', 1)}")
+    acordados = set()       # v0.4.11.0: ya traspasados, esperan la J1: su contrato no corre ni vencen
+    try:
+        from alpha_football import traspasos_pendientes as _TP
+        acordados = {(p.get('jugador'), str(p.get('jugador_id'))) for p in _TP._pendientes(estado)}
+    except Exception as e_tp:
+        logger.error(f"No se pudieron leer los traspasos acordados: {e_tp}")
     for eq in _todos_los_equipos(estado):
         for j in list(eq.jugadores):
+            if acordados and (getattr(j, 'nombre_completo', ''), str(getattr(j, 'id', ''))) in acordados:
+                continue
             j.contrato_anios = int(getattr(j, 'contrato_anios', 1) or 1) - 1
             if j.contrato_anios > 0:
                 continue
@@ -392,6 +472,10 @@ def cierre_temporada(estado: dict) -> list:
                              C.accion('finanzas_screen', "VER FINANZAS"))
         else:
             dc['temporadas_en_rojo'] = 0
+    try:    # v0.4.11.0: el saldo no se arrastra; va después del control de números rojos
+        aplicar_presupuesto_temporada(estado)
+    except Exception as e_pres:
+        logger.error(f"Error fijando el presupuesto de la temporada: {e_pres}")
     if mi is not None:     # v4.9.0: vencen patrocinios y llegan las ofertas de la ventana de inicio
         try:
             from alpha_football import patrocinios as _P

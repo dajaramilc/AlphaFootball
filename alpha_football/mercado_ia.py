@@ -51,7 +51,9 @@ _ATRIBUTOS = ("ataque", "defensa", "fisico", "tecnica", "mental")
 
 PLANTILLA_MIN_VENDEDOR = 20    # un club no vende si se queda con menos
 PLANTILLA_MAX_IA = 30          # por encima, libera a los peores suplentes
-MEJORA_MINIMA = 2              # el fichaje debe superar al titular más flojo por 2+
+PROB_CLUB_VENTANA = 0.25       # clubes que buscan refuerzo por jornada con el mercado abierto
+PROB_CLUB_INICIO = 0.50        # v0.4.11.0: en la ventana de inicio (reemplaza a la ronda de pretemporada)
+MEJORA_MINIMA = 2             # el fichaje debe superar al titular más flojo por 2+
 
 
 def _rango(tipo: str, division: int) -> tuple[int, int]:
@@ -324,7 +326,8 @@ def ronda_fichajes_ia(estado: dict, modo: str = 'ventana',
     """
     Una ronda de fichajes entre los clubes de la IA de las 16 ligas (v3.7.0).
     modo='pretemporada': todos buscan (hasta 2 fichajes; 3 los recién ascendidos) con el 90%
-    del presupuesto. modo='ventana': 25% de los clubes, 1 fichaje, con el 60%.
+    del presupuesto. modo='ventana': 25% de los clubes (50% en la ventana de inicio; los recién
+    ascendidos, 2 intentos), con el 60%.
     Retorna el log de movimientos (también se acumula en estado['mercado_ia_log']).
     """
     azar = rng or random.Random()
@@ -338,6 +341,15 @@ def ronda_fichajes_ia(estado: dict, modo: str = 'ventana',
     ascendidos = set(estado.get('_recien_ascendidos') or [])
     compradores = [c for c in equipos if c[0] is not mi_equipo]
     azar.shuffle(compradores)
+    en_inicio = False              # v0.4.11.0
+    try:
+        from alpha_football.market import ventana_actual
+        liga_u = estado.get('liga')
+        v = ventana_actual(int(getattr(liga_u, 'jornada_actual', 1) or 1),
+                           int(getattr(liga_u, 'num_jornadas', 22) or 22))
+        en_inicio = bool(v) and v[2] == 'inicio'
+    except Exception as e_v:
+        logger.error(f"No se pudo leer la ventana de mercado: {e_v}")
     log = []
     for comprador, tipo_c, div_c in compradores:
         if int(getattr(comprador, 'sin_fichajes_hasta', 0) or 0) >= int(estado.get('temporada', 1) or 1):
@@ -346,9 +358,9 @@ def ronda_fichajes_ia(estado: dict, modo: str = 'ventana',
         if modo == 'pretemporada':
             intentos, fraccion = (3 if es_asc else 2), 0.9
         else:
-            if azar.random() > 0.25:
+            if azar.random() > (PROB_CLUB_INICIO if en_inicio else PROB_CLUB_VENTANA):
                 continue
-            intentos, fraccion = 1, 0.6
+            intentos, fraccion = (2 if es_asc and en_inicio else 1), 0.6
         for _ in range(intentos):
             try:
                 limite = max(0, int(getattr(comprador, 'balance', 0) or 0)) * fraccion

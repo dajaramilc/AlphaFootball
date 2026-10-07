@@ -79,15 +79,34 @@ def prob_retiro(edad: int, promedio_nota: float = 0.0) -> float:
     return prob
 
 
+def nacionalizar(j: Any, pais_defecto: str, forzar: bool = False) -> None:
+    """v0.4.10.0: nacionalidad real si el nombre está en la tabla; si no, el país de su liga."""
+    from alpha_football.data.nacionalidades import nacionalidad_real
+    actual = getattr(j, 'nacionalidad', '')
+    if forzar or not actual:
+        real = nacionalidad_real(f"{j.nombre} {j.apellido}")
+        if real:
+            j.nacionalidad = real
+            return
+    if not actual:
+        j.nacionalidad = pais_defecto
+
+
 def asignar_nacionalidades(estado: dict) -> None:
-    """Completa la nacionalidad que falte con el país de la liga donde juega el jugador."""
+    """Nacionalidad real (tabla) o, si falta, el país de la liga donde juega. v0.4.10.0: la tabla
+    pisa lo guardado una sola vez por partida (saves viejos: todos tenían el país de su liga)."""
     from alpha_football.mercado_ia import ligas_de_la_partida
+    from alpha_football.data.nacionalidades import PAIS_CLUB
+    dc = estado.setdefault('datos_carrera', {})
+    forzar = not dc.get('nac_reales')
     for liga, tipo, _div in ligas_de_la_partida(estado):
         pais = PAIS_POR_LIGA.get(tipo, '')
         for eq in liga.equipos:
             for j in eq.jugadores:
-                if not getattr(j, 'nacionalidad', ''):
-                    j.nacionalidad = pais
+                nacionalizar(j, PAIS_CLUB.get(eq.nombre, pais), forzar)
+    for j in estado.get('free_agents_list') or []:
+        nacionalizar(j, '', forzar)
+    dc['nac_reales'] = True
 
 
 def _atributos_para(posicion: str, ovr: int, rng: random.Random) -> list[int]:
@@ -106,10 +125,13 @@ def _atributos_para(posicion: str, ovr: int, rng: random.Random) -> list[int]:
     return attrs
 
 
-def generar_regen(retirado: Any, rng: random.Random, id_nuevo: int, nombres_usados: set) -> Any:
+def generar_regen(retirado: Any, rng: random.Random, id_nuevo: int, nombres_usados: set,
+                  pais_club: str = '') -> Any:
     """Juvenil que reemplaza a `retirado`: misma nacionalidad, posición y potencial máximo."""
     from alpha_football.models import Jugador
-    pais = getattr(retirado, 'nacionalidad', '') or 'España'
+    pais = getattr(retirado, 'nacionalidad', '') or pais_club or 'España'
+    if pais not in NOMBRES_POR_PAIS and pais_club in NOMBRES_POR_PAIS:
+        pais = pais_club      # v0.4.10.0: sin lista de nombres de su país, es un canterano local
     nombres, apellidos = NOMBRES_POR_PAIS.get(pais, NOMBRES_POR_PAIS['España'])
     from alpha_football.nombres import en_uso, nombre_unico, reservar
     for _ in range(20):
@@ -198,7 +220,7 @@ def procesar_retiros(estado: dict, rng: Optional[random.Random] = None) -> list[
                 try:
                     if azar.random() >= prob_retiro(getattr(j, 'edad', 25), getattr(j, 'promedio_nota', 0)):
                         continue
-                    regen = generar_regen(j, azar, siguiente_id, usados)
+                    regen = generar_regen(j, azar, siguiente_id, usados, pais_club=PAIS_POR_LIGA.get(tipo, ''))
                     siguiente_id += 1
                     eq.jugadores[idx] = regen
                     registrar_region_jugador(regen, tipo)

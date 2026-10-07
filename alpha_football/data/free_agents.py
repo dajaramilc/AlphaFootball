@@ -109,6 +109,8 @@ def get_free_agents(jornada: int) -> list[Jugador]:
                 id=id_base + idx,
                 edad=edad,
             )
+            from alpha_football.data.nacionalidades import nacionalidad_real
+            j.nacionalidad = nacionalidad_real(f"{nombre} {apellido}")    # v0.4.10.0
             # v0.8.x: poblar valor y potencial al construir para que NUNCA salga
             # con "Valor $0" en la UI del mercado ni en la sección de ofertas.
             try:

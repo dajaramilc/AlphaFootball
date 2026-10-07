@@ -60,3 +60,6 @@ context.md
 # Configuración local de otras herramientas y bases de prueba
 .commandcode/
 alpha_football_db_custom.json
+
+# Indice local de CodeGraph
+.codegraph/

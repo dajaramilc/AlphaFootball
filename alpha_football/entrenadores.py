@@ -77,13 +77,32 @@ def puede_pagar(equipo, dt: dict) -> bool:
 
 
 def _nuevo(estado: dict, nombre: str, estilo: str, calif: int, interino: bool = False,
-           sueldo_anual: Optional[int] = None) -> dict:
+           sueldo_anual: Optional[int] = None, nacionalidad: str = '') -> dict:
     d = dts(estado)
     dt = {'id': int(d['sig_id']), 'nombre': nombre, 'estilo': normalizar_estilo(estilo),
-          'calif': int(calif), 'interino': bool(interino),
+          'calif': int(calif), 'interino': bool(interino), 'nacionalidad': str(nacionalidad or ''),
           'sueldo': 0 if interino else int(sueldo_anual if sueldo_anual is not None else sueldo_pedido(calif))}
     d['sig_id'] = int(d['sig_id']) + 1
     return dt
+
+
+def _pais_de_club(estado: dict, equipo) -> str:
+    """v0.4.10.0: país de la liga donde juega el club ('' si no se encuentra)."""
+    from alpha_football.mercado_ia import ligas_de_la_partida
+    from alpha_football.retiros import PAIS_POR_LIGA
+    for liga, tipo, _div in ligas_de_la_partida(estado):
+        if any(eq is equipo for eq in liga.equipos):
+            return PAIS_POR_LIGA.get(tipo, '')
+    return ''
+
+
+def _nacionalidad_dt(estado: dict, nombre: str, equipo=None, rng=None) -> str:
+    """v0.4.10.0: país real del DT parodiado; si no está, el de la liga del club; si no, uno al azar."""
+    from alpha_football.data.nacionalidades import nacionalidad_dt
+    from alpha_football.retiros import PAIS_POR_LIGA
+    paises = sorted(set(PAIS_POR_LIGA.values()))
+    return (nacionalidad_dt(nombre) or (_pais_de_club(estado, equipo) if equipo is not None else '')
+            or (rng or random.Random(nombre)).choice(paises))
 
 
 def dt_de(estado: dict, equipo) -> Optional[dict]:
@@ -114,17 +133,28 @@ def asegurar_dts(estado: dict) -> None:
         # v4.6.0: estilo y calificación puestos en el editor pisan a la tabla y a las estrellas
         estilo = (getattr(eq, 'dt_estilo', '') or (real[1] if real else getattr(eq, 'estilo_dt', 'anchelottismo')))
         calif = int(getattr(eq, 'dt_calif', 0) or 0) or calif_inicial(eq)
-        asignar(estado, eq, _nuevo(estado, nombre, estilo, calif, sueldo_anual=sueldo_inicial(eq, calif)))
+        asignar(estado, eq, _nuevo(estado, nombre, estilo, calif, sueldo_anual=sueldo_inicial(eq, calif),
+                                   nacionalidad=_nacionalidad_dt(estado, nombre, eq)))
     if not d.get('libres_editor_ok'):          # v4.6.0: los DTs libres creados en el editor
         d['libres_editor_ok'] = True
         for x in _dts_libres_editor():
             try:
                 d['libres'].append(_nuevo(estado, str(x['nombre']), x.get('estilo', 'anchelottismo'),
-                                          max(1, min(99, int(x.get('calif', 50) or 50)))))
+                                          max(1, min(99, int(x.get('calif', 50) or 50))),
+                                          nacionalidad=_nacionalidad_dt(estado, str(x['nombre']))))
             except Exception as e_dl:
                 logger.error(f"DT libre del editor inválido {x}: {e_dl}")
     while len(d['libres']) < N_LIBRES:
-        d['libres'].append(_nuevo(estado, nombre_generado(rng), rng.choice(ESTILOS_DT), rng.randint(35, 70)))
+        nom = nombre_generado(rng)
+        d['libres'].append(_nuevo(estado, nom, rng.choice(ESTILOS_DT), rng.randint(35, 70),
+                                  nacionalidad=_nacionalidad_dt(estado, nom, rng=rng)))
+    por_id = {str(eq.id): eq for eq, _liga in clubes(estado)}      # v0.4.10.0: saves sin el campo
+    for cid, dt in d['por_club'].items():
+        if not dt.get('nacionalidad'):
+            dt['nacionalidad'] = _nacionalidad_dt(estado, dt.get('nombre', ''), por_id.get(cid))
+    for dt in d['libres']:
+        if not dt.get('nacionalidad'):
+            dt['nacionalidad'] = _nacionalidad_dt(estado, dt.get('nombre', ''))
 
 
 def _dts_libres_editor() -> list:
@@ -154,8 +184,10 @@ def mejor_libre(estado: dict, equipo) -> dict:
         rng = random.Random(d['sig_id'])
         tope = max(SUELDO_DT_MIN, int(FRAC_SUELDO_DT * max(0, int(getattr(equipo, 'balance', 0) or 0))))
         calif = rng.randint(30, 50)
-        return _nuevo(estado, nombre_generado(rng), rng.choice(ESTILOS_DT), calif,
-                      sueldo_anual=min(sueldo_pedido(calif), tope))
+        nom = nombre_generado(rng)
+        return _nuevo(estado, nom, rng.choice(ESTILOS_DT), calif,
+                      sueldo_anual=min(sueldo_pedido(calif), tope),
+                      nacionalidad=_nacionalidad_dt(estado, nom, equipo, rng))
     mejor = max(candidatos, key=lambda x: x['calif'])
     d['libres'].remove(mejor)
     return mejor
@@ -210,15 +242,20 @@ def _va_mal(liga, equipo) -> bool:
     return p >= esperado(liga, equipo) + PUESTOS_BAJO and p > len(liga.equipos) / 2
 
 
+# v0.4.11.0: (calificación mínima, piso, techo) de media respecto de la tuya. Antes solo había
+# techo y cualquier club más flojo podía ofrecerte el banquillo.
+BANDAS_OFERTA = ((70, -2, 10), (55, -4, 5), (0, -6, 0))
+
+
 def en_banda(estado: dict, equipo) -> bool:
-    """¿El club está a tu alcance según tu calificación? (≥70: +10 OVR, ≥55: +5, si no ≤ tuyo)."""
+    """¿El club está a tu alcance según tu calificación? (≥70: −2 a +10 · ≥55: −4 a +5 · resto: −6 a 0)."""
     from alpha_football.directiva import calif_dt
     mi = estado.get('mi_equipo')
     if mi is None:
         return False
     c, ovr, suyo = calif_dt(estado), mi.ovr_promedio, getattr(equipo, 'ovr_promedio', 0)
-    tope = ovr + 10 if c >= 70 else ovr + 5 if c >= 55 else ovr
-    return suyo <= tope
+    piso, techo = next((p, t) for minimo, p, t in BANDAS_OFERTA if c >= minimo)
+    return ovr + piso <= suyo <= ovr + techo
 
 
 def despedir(estado: dict, equipo, liga, motivo: str) -> dict:
@@ -248,7 +285,9 @@ def _ofrecer_al_user(estado: dict, equipo, liga, motivo: str = "") -> None:
     from alpha_football.directiva import calif_dt
     d = dts(estado)
     rng = random.Random(f"interino-{equipo.id}-{estado.get('temporada', 1)}")
-    asignar(estado, equipo, _nuevo(estado, nombre_generado(rng) + " (interino)", 'anchelottismo', 40, interino=True))
+    nom = nombre_generado(rng)
+    asignar(estado, equipo, _nuevo(estado, nom + " (interino)", 'anchelottismo', 40, interino=True,
+                                   nacionalidad=_nacionalidad_dt(estado, nom, equipo, rng)))
     d['ofertas'].append({'club_id': str(equipo.id), 'club': equipo.nombre, 'liga': getattr(liga, 'nombre', ''),
                          'jornadas': JORNADAS_OFERTA, 'temporada': int(estado.get('temporada', 1) or 1),
                          'motivo': motivo})

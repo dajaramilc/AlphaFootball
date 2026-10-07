@@ -115,9 +115,9 @@ def test_ojeador_recomienda_3_pagables_que_mejoran():
     assert len({id(r[0]) for r in recs}) == len(recs)
     otra = N.recomendaciones_ojeador(e)                  # misma ventana: las mismas
     assert [id(r[0]) for r in otra] == [id(r[0]) for r in recs]
-    e['liga'].jornada_actual = e['liga'].num_jornadas    # ventana de cierre: se recalculan
+    e['liga'].jornada_actual = e['liga'].num_jornadas    # pasado el invierno: se recalculan para la próxima
     N.recomendaciones_ojeador(e)
-    assert e['datos_carrera']['ojeador']['clave'][1] == 'cierre'
+    assert tuple(e['datos_carrera']['ojeador']['clave']) == (2, 'inicio')
     print("  test_ojeador_recomienda_3_pagables_que_mejoran: OK")
 
 

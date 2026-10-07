@@ -67,7 +67,7 @@ def _objetivo_de(club, liga) -> str:
             cupo = cupos_copa(getattr(liga, 'tipo', ''))
         except Exception:
             cupo = 3
-        return D.objetivo_por_ranking(r, len(ranking), getattr(liga, 'division', 1) or 1, cupo, ventaja)[2]
+        return D.objetivo_por_ranking(r, len(ranking), getattr(liga, 'division', 1) or 1, cupo, ventaja, exigente=True)[2]
     except Exception as e:
         logger.error(f"No se pudo calcular el objetivo de la oferta: {e}")
         return "—"

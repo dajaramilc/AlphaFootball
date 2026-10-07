@@ -431,7 +431,7 @@ def test_lesion_del_user_llega_al_correo():
 def test_pantallas_v310():
     from alpha_football.ui import correo_screen, league_screen, plantilla_screen, objetivos_screen
     from alpha_football import correo as C
-    assert league_screen.TARJETAS['oficina'][0][2] == 'correo_screen'
+    assert league_screen.TARJETAS['oficina'][0][2] == 'notificaciones_screen'
     src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'main.py'), encoding='utf-8').read()
     assert "'correo_screen': 'alpha_football.ui.correo_screen'" in src   # v3.6.0: MODULOS_PANTALLA
     e = _estado()
@@ -443,9 +443,9 @@ def test_pantallas_v310():
     assert correo_screen.render(screen, e) == 'team_screen' and e['team_contexto'] == 'carrera'
     pygame.event.clear()
     pygame.event.post(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE, mod=0, unicode=''))
-    assert correo_screen.render(screen, e) == 'league_screen'
+    assert correo_screen.render(screen, e) == 'notificaciones_screen'
     C.enviar(e, 'club', "Oferta", "")
-    assert any('correo' in t.lower() for t, _c in league_screen._alertas_inicio(e, e['mi_equipo']))
+    assert any('notificaci' in t.lower() for t, _c in league_screen._alertas_inicio(e, e['mi_equipo']))
     for mod in (plantilla_screen, objetivos_screen):
         pygame.event.clear(); assert mod.render(screen, e) is None
     print("  test_pantallas_v310: OK")

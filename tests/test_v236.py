@@ -299,8 +299,10 @@ def test_v238_retiros_y_regens():
         for i, j in enumerate(eq.jugadores):
             if j.edad <= 18:
                 pos, pot = viejos[(id(eq), i)]
-                assert j.posicion == pos and j.potencial == min(99, pot) and j.nacionalidad == pais
-                assert j.nombre in NOMBRES_POR_PAIS[pais][0] and j.overall < j.potencial
+                # v0.4.10.0: el regen hereda la nacionalidad real del retirado (si tiene lista de nombres) o la del club
+                assert j.posicion == pos and j.potencial == min(99, pot)
+                assert j.nacionalidad == pais or j.nacionalidad in NOMBRES_POR_PAIS, j.nacionalidad
+                assert j.nombre in NOMBRES_POR_PAIS[j.nacionalidad][0] and j.overall < j.potencial
     assert all(0 <= i < len(user.jugadores) for i in alin.titulares + alin.convocados)
     assert any(r['es_user'] for r in retiros)
 
