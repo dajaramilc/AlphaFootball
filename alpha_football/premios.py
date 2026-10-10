@@ -6,10 +6,15 @@ Al cerrar la temporada se elige al mejor jugador de TODAS las ligas (1ª y 2ª d
 5 países) según su rendimiento de la temporada: nota media, goles, asistencias,
 vallas invictas, títulos (liga y copa) y el peso de la liga donde jugó.
 Mecánica pura y testeable: recibe las ligas y devuelve un dict serializable.
+
+v0.4.17.0: los premios se CALCULAN al cerrar la temporada pero se ENTREGAN en una fecha: el Balón de
+Oro el último lunes de octubre y el Jugador Sudamericano del Año (los que juegan en las ligas
+sudamericanas) el 15 de enero. Mientras tanto esperan en datos_carrera['premios_pendientes'].
 """
 from __future__ import annotations
 
 import logging
+from datetime import date, timedelta
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -134,3 +139,137 @@ def calcular_balon_de_oro(primeras: dict, segundas: dict, temporada: int,
 
     podio = [_ficha(*c) for c in candidatos[:n_podio]]
     return {'temporada': int(temporada), 'ganador': podio[0], 'podio': podio}
+
+
+# ── v0.4.17.0: premios por fecha ─────────────────────────────────────────────────
+
+PREMIOS = {
+    'balon_oro': {'nombre': "Balón de Oro", 'palmares': 'balon_oro', 'frase': "gana el Balón de Oro"},
+    'sudamericano': {'nombre': "Jugador Sudamericano del Año", 'palmares': 'sudamericano',
+                     'frase': "es elegido Jugador Sudamericano del Año"},
+}
+
+
+def calcular_sudamericano(primeras: dict, segundas: dict, temporada: int, campeon_libertadores=None,
+                          datos_copas: Optional[dict] = None, n_podio: int = 3) -> Optional[dict]:
+    """El mejor de los que juegan en las ligas sudamericanas (1ª y 2ª), con su Libertadores. Misma
+    fórmula y mismo dict que el Balón de Oro."""
+    from alpha_football.paises import SUDAMERICA
+    solo = lambda mapa: {t: l for t, l in (mapa or {}).items() if t in SUDAMERICA}
+    copas = {k: v for k, v in (datos_copas or {}).items() if k == 'libertadores'}
+    return calcular_balon_de_oro(solo(primeras), solo(segundas), temporada, campeon_libertadores, n_podio, copas)
+
+
+def _gala_en(premio: str, anio: int) -> date:
+    if premio == 'sudamericano':
+        return date(anio, 1, 15)
+    d = date(anio, 10, 31)                               # Balón de Oro: último lunes de octubre
+    return d - timedelta(days=d.weekday())
+
+
+def fecha_entrega(estado: dict, premio: str) -> date:
+    """La primera gala de ese premio en o después del inicio de la temporada en curso (al cerrar una
+    temporada, la que acaba de empezar)."""
+    from alpha_football import temporada as T
+    ini = T.inicio(estado)
+    d = _gala_en(premio, ini.year)
+    return d if d >= ini else _gala_en(premio, ini.year + 1)
+
+
+def _pendientes(estado: dict) -> list:
+    dc = estado.setdefault('datos_carrera', {})
+    if not isinstance(dc.get('premios_pendientes'), list):
+        dc['premios_pendientes'] = []
+    return dc['premios_pendientes']
+
+
+def _entregar(estado: dict, p: dict, gala: bool = True, frenar: bool = True) -> bool:
+    """Entrega un premio: palmarés, noticia de Prensa y, si alguien del podio juega en tu club, la gala.
+    Un pendiente dañado (premio desconocido o sin ganador) se descarta. Con `frenar`, la gala además
+    detiene a CONTINUAR ese día."""
+    cfg, datos = PREMIOS.get(p.get('premio')), p.get('datos') or {}
+    g = datos.get('ganador') or {}
+    if cfg is None or not g:
+        return False
+    dc = estado.setdefault('datos_carrera', {})
+    dc.setdefault(cfg['palmares'], []).append(datos)
+    podio = datos.get('podio') or [g]
+    try:    # v0.4.23.0: es una noticia (antes, un correo de Prensa)
+        from alpha_football import correo as C, noticias
+        otros = "".join(f" {i + 2}º: {x.get('nombre', '?')} ({x.get('equipo', '?')})."
+                        for i, x in enumerate(podio[1:3]))
+        noticias.publicar(estado, 'premio', f"{cfg['nombre']}: {g.get('nombre', '?')}",
+                          f"{g.get('nombre', '?')} ({g.get('equipo', '?')}, {g.get('liga', '?')}) {cfg['frase']} de la "
+                          f"temporada {datos.get('temporada', '?')}: {g.get('goles', 0)} goles, {g.get('asistencias', 0)} "
+                          f"asistencias y nota {float(g.get('nota', 0) or 0):.2f}.{otros}",
+                          importancia=5, accion=C.accion('career_screen', "VER PALMARÉS"))
+    except Exception as e:
+        logger.error(f"No se pudo anunciar el {cfg['nombre']}: {e}")
+    club = estado.get('mi_equipo')
+    mi = getattr(club, 'nombre', None)
+    # "tuyo": lo ganó con tu club o ya juega en él (lo fichaste entre el cierre y la gala). La ficha no
+    # cambia: el palmarés conserva el club con el que lo ganó.
+    plantilla = {getattr(j, 'nombre_completo', '') for j in getattr(club, 'jugadores', None) or []} - {''}
+    tuyos = [x.get('nombre') for x in podio if x.get('equipo') == mi or x.get('nombre') in plantilla] if mi else []
+    if gala and tuyos:
+        dc.setdefault('gala_premio_pendiente', []).append(
+            {'premio': p['premio'], 'fecha': p.get('fecha_entrega'), 'datos': datos, 'tuyos': tuyos})
+        if frenar:
+            estado['_parar_avance'] = True               # dias.continuar frena el día de la gala
+    return True
+
+
+def cerrar_temporada(estado: dict, primeras: dict, segundas: dict, temporada: int,
+                     campeones_copas: Optional[dict] = None) -> list:
+    """Cierre de temporada, con las tablas finales intactas: calcula los premios de `temporada` y los
+    deja pendientes hasta su gala. Lo que siguiera pendiente de la anterior se entrega ya, sin gala."""
+    pend = _pendientes(estado)
+    for p in list(pend):
+        try:
+            if isinstance(p, dict):
+                _entregar(estado, p, gala=False)
+        except Exception as e:
+            logger.error(f"No se pudo entregar un premio atrasado: {e}")
+    del pend[:]
+    campeones = campeones_copas or {}
+    datos_copas = (estado.get('datos_carrera') or {}).get('copas')
+    calculos = (
+        ('balon_oro', lambda: calcular_balon_de_oro(primeras, segundas, temporada,
+                                                   [c for c in campeones.values() if c], datos_copas=datos_copas)),
+        ('sudamericano', lambda: calcular_sudamericano(primeras, segundas, temporada,
+                                                       campeones.get('libertadores'), datos_copas)),
+    )
+    for premio, calcular in calculos:
+        try:
+            datos = calcular()
+            if datos:
+                pend.append({'premio': premio, 'fecha_entrega': fecha_entrega(estado, premio).isoformat(),
+                             'datos': datos})
+                logger.info(f"{PREMIOS[premio]['nombre']} T{temporada}: {datos['ganador']['nombre']} "
+                            f"({datos['ganador']['equipo']}), se entrega el {pend[-1]['fecha_entrega']}")
+        except Exception as e:
+            logger.error(f"Error calculando el {PREMIOS[premio]['nombre']}: {e}")
+    return pend
+
+
+def revisar_jornada(estado: dict, rng=None, frenar: bool = True) -> int:
+    """Entrega los premios cuya gala ya llegó. Idempotente y sin UI: se llama cada día (dias.revisar_dia)
+    y después de cada partido. Devuelve cuántos entregó. Con `frenar=False` (cierre de un partido) la gala
+    queda pendiente igual, pero sin la marca que frena a CONTINUAR: esa la consume el reloj del día y, puesta
+    fuera de él, frenaría el avance un día después."""
+    if estado.get('liga') is None or estado.get('mi_equipo') is None:
+        return 0
+    pend = _pendientes(estado)                           # un save dañado (no es lista) queda como lista vacía
+    if not pend:
+        return 0
+    from alpha_football import temporada as T
+    hoy = T.fecha(estado).isoformat()
+    vencen = [p for p in pend if not isinstance(p, dict) or str(p.get('fecha_entrega') or '') <= hoy]
+    entregados = 0
+    for p in vencen:
+        pend.remove(p)
+        try:
+            entregados += int(isinstance(p, dict) and _entregar(estado, p, frenar=frenar))
+        except Exception as e:
+            logger.error(f"No se pudo entregar un premio: {e}", exc_info=True)
+    return entregados

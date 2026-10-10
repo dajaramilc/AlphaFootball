@@ -226,6 +226,88 @@ R_VOLVER = pygame.Rect(SCREEN_W - 230, 22, 200, 48)
 R_TOTALES = pygame.Rect(30, 105, 360, 290)
 R_BALON_ORO = pygame.Rect(30, 410, 360, 286)
 R_TEMPORADAS = pygame.Rect(410, 105, SCREEN_W - 440, 591)
+# v0.4.23.0: logros del DT (overlay; botón a la izquierda de VOLVER, tecla L)
+R_LOGROS = pygame.Rect(SCREEN_W - 440, 22, 200, 48)
+R_PANEL_LOGROS = pygame.Rect(240, 100, 800, 540)
+FILAS_LOGROS = 8
+ALTO_FILA_LOGRO = 52
+_GRIS_LOGRO = (128, 134, 150)
+_velo_logros = None
+
+
+def filas_logros(estado: dict) -> list:
+    """Las filas del overlay: los logros obtenidos (el más reciente arriba) y después los pendientes."""
+    from alpha_football import logros
+    return logros.para_overlay(estado)
+
+
+def rect_fila_logro(i: int) -> pygame.Rect:
+    return pygame.Rect(R_PANEL_LOGROS.x + 16, R_PANEL_LOGROS.y + 62 + i * ALTO_FILA_LOGRO,
+                       R_PANEL_LOGROS.w - 32, ALTO_FILA_LOGRO - 4)
+
+
+def _manejar_logros(estado: dict, event) -> None:
+    """Con el overlay abierto consume todos los eventos: Esc, Retroceso, Enter, L o un clic fuera lo cierran."""
+    maximo = max(0, len(filas_logros(estado)) - FILAS_LOGROS)
+    paso = 0
+    if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+        if not R_PANEL_LOGROS.collidepoint(event.pos):
+            estado['career_logros'] = False
+    elif event.type == pygame.MOUSEWHEEL:
+        paso = -event.y
+    elif event.type == pygame.KEYDOWN:
+        if event.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE, pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_l):
+            estado['career_logros'] = False
+        elif event.key == pygame.K_UP:
+            paso = -1
+        elif event.key == pygame.K_DOWN:
+            paso = 1
+    if paso:
+        estado['career_logros_scroll'] = max(0, min(maximo, int(estado.get('career_logros_scroll', 0) or 0) + paso))
+
+
+def _dibujar_logros(screen: pygame.Surface, estado: dict) -> None:
+    """El panel de logros sobre toda la pantalla: ✓ dorado con "T3 · J12" los obtenidos, atenuados los pendientes."""
+    global _velo_logros
+    filas = filas_logros(estado)
+    scroll = max(0, min(max(0, len(filas) - FILAS_LOGROS), int(estado.get('career_logros_scroll', 0) or 0)))
+    estado['career_logros_scroll'] = scroll
+    if _velo_logros is None or _velo_logros.get_size() != (SCREEN_W, SCREEN_H):
+        _velo_logros = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
+        _velo_logros.fill((0, 0, 0, 170))
+    screen.blit(_velo_logros, (0, 0))
+    draw_panel(screen, R_PANEL_LOGROS)
+    obtenidos = sum(1 for f in filas if f['obtenido'])
+    draw_text(screen, "LOGROS DEL DT", (R_PANEL_LOGROS.x + 18, R_PANEL_LOGROS.y + 14), size='lg', color='dorado')
+    cuenta = f"{obtenidos} de {len(filas)}"
+    draw_text(screen, cuenta, (R_PANEL_LOGROS.right - 18 - get_font('md').size(cuenta)[0], R_PANEL_LOGROS.y + 20),
+              size='md', color='azul')
+    dorado = COLORS.get('dorado', (255, 215, 0))
+    for k, f in enumerate(filas[scroll:scroll + FILAS_LOGROS]):
+        r = rect_fila_logro(k)
+        pygame.draw.rect(screen, (28, 38, 66) if f['obtenido'] else (18, 22, 38), r, border_radius=6)
+        if f['obtenido']:
+            pygame.draw.rect(screen, dorado, r, width=1, border_radius=6)
+            pygame.draw.lines(screen, dorado, False, [(r.x + 14, r.centery), (r.x + 22, r.centery + 8),
+                                                      (r.x + 36, r.centery - 8)], 4)
+            draw_text(screen, f['titulo'], (r.x + 52, r.y + 4), size='md', color='dorado', shadow=False)
+            draw_text(screen, f['descripcion'], (r.x + 52, r.y + 26), size='sm', color='blanco', shadow=False)
+            cuando = f"T{f['temporada']} · J{f['jornada']}"
+            draw_text(screen, cuando, (r.right - 14 - get_font('sm').size(cuando)[0], r.y + 14), size='sm',
+                      color='azul', shadow=False)
+        else:
+            pygame.draw.circle(screen, _GRIS_LOGRO, (r.x + 25, r.centery), 9, 2)
+            screen.blit(get_font('md').render(f['titulo'], True, _GRIS_LOGRO), (r.x + 52, r.y + 4))
+            screen.blit(get_font('sm').render(f['descripcion'], True, _GRIS_LOGRO), (r.x + 52, r.y + 26))
+    draw_text(screen, "↑ ↓ o rueda: desplazar · Esc o clic fuera: cerrar",
+              (R_PANEL_LOGROS.x + 18, R_PANEL_LOGROS.bottom - 34), size='sm', color='azul', shadow=False)
+
+
+def palmares(estado: dict) -> list:
+    """v0.4.17.0: [(título, los 3 últimos ganadores, del más nuevo al más viejo)] de los dos premios."""
+    dc = estado.get('datos_carrera') or {}
+    return [(titulo, list(reversed(list(dc.get(clave) or [])[-3:])))
+            for titulo, clave in (("BALÓN DE ORO", 'balon_oro'), ("SUDAMERICANO DEL AÑO", 'sudamericano'))]
 
 
 def render(screen: pygame.Surface, estado: dict) -> str | None:
@@ -249,6 +331,9 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return "quit"
+            if estado.get('career_logros'):       # v0.4.23.0: el overlay de logros consume todo
+                _manejar_logros(estado, event)
+                continue
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 click_pos = event.pos
             elif event.type == pygame.MOUSEWHEEL:
@@ -261,6 +346,8 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     scroll_delta -= 1
                 elif event.key == pygame.K_DOWN:
                     scroll_delta += 1
+                elif event.key == pygame.K_l:
+                    estado['career_logros'], estado['career_logros_scroll'] = True, 0
 
         draw_gradient_bg(screen)
         draw_text(screen, "HISTORIAL DE CARRERA", (30, 18), size='xl', color='dorado')
@@ -268,6 +355,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                           f"Temporada actual {estado.get('temporada', 1)}", (32, 70), size='sm', color='azul')
         btn_volver = R_VOLVER
         draw_styled_button(screen, btn_volver, "VOLVER", btn_volver.collidepoint(mouse_pos), COLORS['verde'])
+        draw_styled_button(screen, R_LOGROS, "LOGROS (L)", R_LOGROS.collidepoint(mouse_pos), COLORS['dorado'])
 
         # --- Totales ---
         tot = _resumen_historial(historial)
@@ -288,22 +376,23 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             draw_text(screen, k, (caja_tot.x + 18, yy), size='sm', color='blanco')
             draw_text(screen, v, (caja_tot.x + 220, yy), size='sm', color=col)
 
-        # --- Balón de Oro (palmarés de todas las ligas) ---
-        balones = list(((estado.get('datos_carrera') or {}).get('balon_oro') or []))
+        # --- Premios (v0.4.17.0: Balón de Oro en octubre y Sudamericano del Año en enero) ---
         caja_bo = R_BALON_ORO
         draw_panel(screen, caja_bo)
-        draw_text(screen, "BALÓN DE ORO", (caja_bo.x + 18, caja_bo.y + 12), size='md', color='dorado')
-        if not balones:
-            draw_text(screen, "Se entrega al cerrar cada", (caja_bo.x + 18, caja_bo.y + 56), size='sm', color='blanco')
-            draw_text(screen, "temporada al mejor de las 10 ligas.", (caja_bo.x + 18, caja_bo.y + 80), size='sm', color='blanco')
-        for i, b in enumerate(reversed(balones[-6:])):
-            g = b.get('ganador') or {}
-            yy = caja_bo.y + 50 + i * 38
-            es_mio = g.get('equipo') == mi_equipo.nombre
-            draw_text(screen, f"T{b.get('temporada', '?')}  {str(g.get('nombre', '?'))[:22]}", (caja_bo.x + 18, yy),
-                      size='sm', color='verde' if es_mio else 'blanco')
-            draw_text(screen, f"{str(g.get('equipo', '?'))[:18]} · {g.get('goles', 0)} G · {g.get('nota', 0):.1f}",
-                      (caja_bo.x + 40, yy + 18), size='sm', color='azul', shadow=False)
+        for k, (titulo, ganadores) in enumerate(palmares(estado)):
+            y0 = caja_bo.y + 8 + k * 140
+            draw_text(screen, titulo, (caja_bo.x + 18, y0), size='md', color='dorado')
+            if not ganadores:
+                draw_text(screen, "Se entrega en octubre." if k == 0 else "Se entrega en enero.",
+                          (caja_bo.x + 18, y0 + 36), size='sm', color='blanco')
+            for i, b in enumerate(ganadores):
+                g = b.get('ganador') or {}
+                yy = y0 + 30 + i * 36
+                es_mio = g.get('equipo') == mi_equipo.nombre
+                draw_text(screen, f"T{b.get('temporada', '?')}  {str(g.get('nombre', '?'))[:22]}", (caja_bo.x + 18, yy),
+                          size='sm', color='verde' if es_mio else 'blanco')
+                draw_text(screen, f"{str(g.get('equipo', '?'))[:18]} · {g.get('goles', 0)} G · {g.get('nota', 0):.1f}",
+                          (caja_bo.x + 40, yy + 17), size='sm', color='azul', shadow=False)
 
         # --- Temporada por temporada ---
         caja_h = R_TEMPORADAS
@@ -347,6 +436,10 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
         if click_pos and btn_volver.collidepoint(click_pos):
             estado.pop('career_scroll_offset', None)
             return "volver"
+        if click_pos and R_LOGROS.collidepoint(click_pos):
+            estado['career_logros'], estado['career_logros_scroll'] = True, 0
+        if estado.get('career_logros'):
+            _dibujar_logros(screen, estado)
     except Exception as general_error:
         logger.error(f"Error en career_screen: {general_error}", exc_info=True)
         return "volver"

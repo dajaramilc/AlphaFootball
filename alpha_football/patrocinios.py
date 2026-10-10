@@ -259,10 +259,8 @@ def ingreso_anual(estado: dict) -> int:
 
 def _ventana(estado: dict) -> Optional[str]:
     """'inicio' | 'invierno' | 'cierre' si el mercado está abierto; None si no."""
-    from alpha_football.market import ventana_actual
-    liga = estado.get('liga')
-    v = ventana_actual(int(getattr(liga, 'jornada_actual', 1) or 1), int(getattr(liga, 'num_jornadas', 22) or 22))
-    return v[2] if v else None
+    from alpha_football import temporada as T      # v0.4.13.0: por fecha
+    return T.ventana_actual(estado) if estado.get('liga') is not None else None
 
 
 def ofertas_de(estado: dict, espacio: str) -> list:

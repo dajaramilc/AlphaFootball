@@ -40,18 +40,21 @@ def test_regreso_de_prestamos_sin_cierre():
 
 
 def test_prestamo_viejo_con_ventana_de_cierre():
-    assert PR._vuelve({'vuelve': [1, 20], 'ventana': 'cierre'}, 22) == [2, 1]
-    assert PR._vuelve({'vuelve': [1, 11], 'ventana': 'invierno'}, 22) == [1, 11]
-    assert PR._vuelve({'vuelve': [2, 1], 'ventana': 'inicio'}, 22) == [2, 1]
+    e = estado_carrera()                                                   # v0.4.13.0: las jornadas de cada ventana salen de las fechas (necesita la partida)
+    assert PR._vuelve({'vuelve': [1, 20], 'ventana': 'cierre'}, 22, e) == [2, 1]
+    assert PR._vuelve({'vuelve': [1, 11], 'ventana': 'invierno'}, 22, e) == [1, 11]
+    assert PR._vuelve({'vuelve': [2, 1], 'ventana': 'inicio'}, 22, e) == [2, 1]
 
 
 def test_texto_de_lo_acordado_tras_el_invierno():
     e = estado_carrera(); mi = e['mi_equipo']; e['liga'].jornada_actual = 8
     rival = e['liga'].equipos[1]
-    assert "en la jornada 11" in TP.diferir_venta(e, mi.jugadores[0], rival, 1_000_000)
+    from datetime import date                                              # v0.4.13.0: lo acordado dice la fecha en que abre el mercado
+    from alpha_football import calendario as CAL
+    assert CAL.texto_fecha(date(2027, 1, 1)) in TP.diferir_venta(e, mi.jugadores[0], rival, 1_000_000)
     e['liga'].jornada_actual = 16
     txt = TP.diferir_compra(e, rival.jugadores[0], rival, 1_000_000)
-    assert "al empezar la próxima temporada" in txt and "jornada 1," not in txt
+    assert CAL.texto_fecha(date(2027, 7, 1)) in txt and "jornada" not in txt
 
 
 def test_acordado_no_pierde_contrato_en_el_cierre():
@@ -119,24 +122,24 @@ def test_factor_salud_por_tramos():
 
 
 def test_el_sobrante_no_pasa_de_temporada():
-    p = F.presupuesto_temporada(100_000_000, 900_000_000, 'cumplido')
-    assert p['salud'] == 1.20 and p['objetivo'] == 1.10 and p['bonos'] == 0
-    assert 131_999_999 <= p['total'] <= 132_000_001
-    assert F.presupuesto_temporada(100_000_000, 50_000_000, 'superado')['total'] == 125_000_000
-    assert F.presupuesto_temporada(100_000_000, 50_000_000, 'fallado')['total'] == 85_000_000
+    p = F.presupuesto_temporada(100_000_000, 900_000_000, 'cumplido')              # v0.4.14.1: (0.40 + 0.55) × 1.20
+    assert p['salud'] == 1.20 and p['objetivo'] == 0.55 and p['bonos'] == 0
+    assert 113_999_999 <= p['total'] <= 114_000_001
+    assert F.presupuesto_temporada(100_000_000, 50_000_000, 'superado')['total'] == 120_000_000
+    assert F.presupuesto_temporada(100_000_000, 50_000_000, 'fallado')['total'] == 55_000_000
     assert F.presupuesto_temporada(100_000_000, 50_000_000, '')['total'] == 100_000_000   # sin dato: neutro
 
 
 def test_topes_del_multiplicador():
-    alto = F.presupuesto_temporada(100_000_000, 900_000_000, 'superado', True, True)   # 1.2 × 1.25 × 1.35
-    assert alto['mult'] == 1.75 and alto['total'] == 175_000_000
-    bajo = F.presupuesto_temporada(100_000_000, -1, 'fallado')                         # 0.8 × 0.85 = 0.68
-    assert abs(bajo['mult'] - 0.68) < 1e-9
+    alto = F.presupuesto_temporada(100_000_000, 900_000_000, 'superado', True, True)   # (0.40 + 0.80 + 0.45) × 1.20
+    assert abs(alto['mult'] - 1.98) < 1e-9 and 197_999_999 <= alto['total'] <= 198_000_001
+    bajo = F.presupuesto_temporada(100_000_000, -1, 'fallado')                         # (0.40 + 0.15) × 0.80
+    assert abs(bajo['mult'] - 0.44) < 1e-9
 
 
 def test_la_deuda_se_descuenta_con_piso():
-    p = F.presupuesto_temporada(100_000_000, -50_000_000, 'fallado')
-    assert p['deuda'] == 50_000_000 and 17_999_999 <= p['total'] <= 18_000_001
+    p = F.presupuesto_temporada(100_000_000, -20_000_000, 'fallado')               # v0.4.14.1: 44M − 20M de deuda
+    assert p['deuda'] == 20_000_000 and 23_999_999 <= p['total'] <= 24_000_001
     assert F.presupuesto_temporada(100_000_000, -500_000_000, 'fallado')['total'] == 10_000_000
 
 
@@ -160,12 +163,12 @@ def test_titulos_e_historial_ajeno():
     e['historial'] = [{'temporada': 1, 'equipo': mi.nombre, 'objetivo_resultado': 'superado', 'campeon_liga': mi.nombre}]
     e['datos_carrera']['campeones_copas'] = [{'temporada': 1, 'champions': mi.nombre, 'libertadores': 'Otro'}]
     info = F.aplicar_presupuesto_temporada(e)
-    assert info['objetivo'] == 1.25 and abs(info['bonos'] - 0.35) < 1e-9
+    assert info['objetivo'] == 0.80 and abs(info['bonos'] - 0.45) < 1e-9          # v0.4.14.1: liga 0.20 + copa 0.25
     e2 = estado_carrera(); e2['temporada'] = 2; e2['mi_equipo'].balance = 0
     e2['historial'] = [{'temporada': 1, 'equipo': 'Otro club', 'objetivo_resultado': 'superado'}]
-    assert F.aplicar_presupuesto_temporada(e2)['objetivo'] == 1.0          # ese registro no es de este club
+    assert F.aplicar_presupuesto_temporada(e2)['objetivo'] == F.PARTE_NEUTRA   # ese registro no es de este club
     e3 = estado_carrera(); e3['temporada'] = 2; e3['mi_equipo'].balance = 0
-    assert F.aplicar_presupuesto_temporada(e3)['objetivo'] == 1.0          # save viejo, sin historial
+    assert F.aplicar_presupuesto_temporada(e3)['objetivo'] == F.PARTE_NEUTRA   # save viejo, sin historial
 
 
 def test_en_rojo_sigue_la_sancion_y_descuenta_la_deuda():

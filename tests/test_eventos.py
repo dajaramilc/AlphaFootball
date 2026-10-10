@@ -49,7 +49,7 @@ def test_aplicar_efectos_basicos():
                             ('progreso', 'j2', 0.4), ('dinero', 'j', 0.02), ('confianza', None, -3),
                             ('texto', "Nada más.")], [a, b], random.Random(1))
     assert a.moral == 62 and b.moral == 72 and a.energia == 80.0
-    assert S.partidos_sancion(a, 'liga') == 2 and b.lesion_partidos == 1
+    assert S.partidos_sancion(a, 'liga') == 2 and b.lesion_dias == 7      # 1 = una semana
     assert a.notas_recientes[-1] == 5.0 and abs(b.progreso_desarrollo - 0.4) < 1e-9
     assert e['mi_equipo'].balance == saldo + int(a.salario * 0.02)
     assert len(lineas) == 10 and lineas[-1] == "Nada más."
@@ -205,7 +205,7 @@ def test_cada_opcion_de_cada_evento_funciona_y_deja_noticia():
             n = EV.noticias(e)
             assert len(n) == 1 and n[0]['evento'] == ev['id'] and '{' not in n[0]['titular'] + n[0]['cuerpo']
             for j in e['mi_equipo'].jugadores:
-                assert 0 <= j.moral <= 100 and 0 <= j.energia <= 100 and j.lesion_partidos >= 0
+                assert 0 <= j.moral <= 100 and 0 <= j.energia <= 100 and j.lesion_dias >= 0
 
 
 def test_promesas_minutos_y_aumento():

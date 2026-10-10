@@ -51,7 +51,7 @@ class Jugador:
     mental: int
     moral: int = 70
     rasgo: Optional[str] = None
-    lesion_partidos: int = 0
+    lesion_dias: int = 0
     id: int = 0                  # Identificador para mercado/guardado
     partidos_sancion: int = 0
     goles: int = 0
@@ -146,7 +146,7 @@ class Jugador:
     def disponible(self) -> bool:
         """Indica si el jugador puede ser alineado en el partido."""
         from alpha_football.sanciones import sancionado   # la sanción de la competición que se juega
-        return self.lesion_partidos == 0 and not sancionado(self)
+        return self.lesion_dias == 0 and not sancionado(self)
 
     def poder_ataque_efectivo(self, mult: float = 1.0) -> float:
         """Calcula la efectividad ofensiva modificada por moral y rasgos."""
@@ -220,9 +220,11 @@ class Jugador:
             rasgo = datos.get("rasgo")
             
             # Manejo de lesiones y sanciones
-            lesion_partidos = int(datos.get("lesion_partidos", 0))
-            if lesion_partidos == 0 and datos.get("lesionado", False):
-                lesion_partidos = 3
+            lesion_dias = int(datos.get("lesion_dias", 0))
+            if lesion_dias == 0 and int(datos.get("lesion_partidos", 0) or 0) > 0:
+                lesion_dias = int(datos["lesion_partidos"]) * 7      # v0.4.19.0: saves viejos (partidos) -> días
+            if lesion_dias == 0 and datos.get("lesionado", False):
+                lesion_dias = 21
                 
             partidos_sancion = int(datos.get("partidos_sancion", 0))
             goles = int(datos.get("goles", 0))
@@ -254,7 +256,7 @@ class Jugador:
                 mental=mental,
                 moral=moral,
                 rasgo=rasgo,
-                lesion_partidos=lesion_partidos,
+                lesion_dias=lesion_dias,
                 id=id_jug,
                 partidos_sancion=partidos_sancion,
                 goles=goles,
@@ -338,6 +340,9 @@ class Equipo:
     dt_nombre: str = ""      # v3.4.0: DT puesto a mano en el editor
     dt_estilo: str = ""      # v4.6.0: estilo del DT puesto en el editor ("" = el real / el del club)
     dt_calif: int = 0        # v4.6.0: calificación del DT puesta en el editor (0 = según estrellas)
+    dt_nacionalidad: str = ""   # v0.4.22.0: nacionalidad del DT puesta en el editor ("" = una al azar)
+    dt_edad: int = 0            # v0.4.22.0: edad del DT puesta en el editor (0 = una al azar)
+    dt_sin: bool = False        # v0.4.22.0: el editor dejó al club sin DT (la carrera le genera uno)
     # v4.9.2: patrocinios de la primera temporada puestos en el editor ({espacio: marca}; vacío = los reales)
     patrocinios: dict = field(default_factory=dict)
     sin_fichajes_hasta: int = 0   # v4.6.0: quebró: no ficha hasta terminar esa temporada
@@ -405,12 +410,6 @@ class Equipo:
             return 0.0
         return sum((j.tecnica + j.mental) / 2.0 for j in disponibles) / len(disponibles)
 
-    def tick_lesiones(self):
-        """Disminuye en 1 jornada el contador de lesiones de los jugadores."""
-        for j in self.jugadores:
-            if j.lesion_partidos > 0:
-                j.lesion_partidos -= 1
-
     def to_dict(self) -> dict[str, Any]:
         """Serializa a diccionario."""
         datos = asdict(self)
@@ -428,7 +427,7 @@ class Equipo:
             
             # Soporte de mapeo balance vs presupuesto (esquema Claude millones vs enteros)
             balance = int(datos.get("balance", datos.get("presupuesto", 10.0) * 1_000_000))
-            if balance < 1000: # Claude usaba presupuestos como 50 (millones)
+            if 0 < balance < 1000: # Claude usaba presupuestos como 50 (millones). v0.4.20.0: solo positivos (un rojo se multiplicaba por un millón en cada carga)
                 balance = int(balance * 1_000_000)
 
             return cls(
@@ -458,6 +457,9 @@ class Equipo:
                 dt_nombre=str(datos.get("dt_nombre", "") or ""),  # v3.4.0
                 dt_estilo=_normalizar_estilo(datos["dt_estilo"]) if datos.get("dt_estilo") else "",  # v4.6.0
                 dt_calif=int(datos.get("dt_calif", 0) or 0),
+                dt_nacionalidad=str(datos.get("dt_nacionalidad", "") or ""),   # v0.4.22.0
+                dt_edad=int(datos.get("dt_edad", 0) or 0),
+                dt_sin=bool(datos.get("dt_sin", False)),
                 patrocinios={str(k): str(v) for k, v in (datos.get("patrocinios") or {}).items() if v},  # v4.9.2
             )
         except Exception as e:

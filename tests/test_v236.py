@@ -71,7 +71,9 @@ def test_suerte_y_goleadas():
     grande.estilo_dt = chico.estilo_dt = 'anchelottismo'
     n, gana, dif7 = 600, 0, 0
     for _ in range(n):
-        r = engine.simular_partido(chico, grande)
+        # v0.4.23.0: sin físico: 600 partidos seguidos sin calendario dejaban a los dos planteles lesionados
+        # (lesiones por días, v0.4.19.0) y el favorito bajaba a ~0.50
+        r = engine.simular_partido(chico, grande, aplicar_fisico=False)
         gana += r.goles_visitante > r.goles_local
         dif7 += abs(r.goles_local - r.goles_visitante) >= 7
     # v4.5.0: la media real ronda 0.72 (medido con 3 semillas, con y sin acumulación de amarillas:
@@ -158,8 +160,16 @@ def test_temporada_completa_descensos_y_balon():
     movs = estado['promo_releg_data']['todos_paises']
     from alpha_football.paises import TIPOS_LIGA as _T   # v3.7.0: 8 países
     assert len(movs) == len(_T)
+    # v0.4.17.0: el Balón se calcula al cierre pero se entrega en octubre: queda pendiente
+    pend = {p['premio']: p for p in estado['datos_carrera']['premios_pendientes']}
+    assert set(pend) == {'balon_oro', 'sudamericano'} and 'balon_oro' not in estado['datos_carrera']
+    from alpha_football import premios as _PR
+    for p in pend.values():
+        p['fecha_entrega'] = "2000-01-01"
+    assert _PR.revisar_jornada(estado) == 2
     balon = (estado['datos_carrera'].get('balon_oro') or [None])[-1]
     assert balon and balon['ganador']['nombre'], balon
+    assert estado['datos_carrera']['sudamericano'][-1]['ganador']['nombre']
     ranking = estado['datos_carrera']['copa_ranking']
     from alpha_football.paises import TIPOS_LIGA   # v3.7.0: los 8 países
     assert set(ranking) == set(TIPOS_LIGA)

@@ -154,6 +154,19 @@ def armar_datos(estado: dict, modo: str, local, visitante, gl: int, gv: int, ctx
     estado['postpartido'] = datos
     estado['postpartido_tab'] = 'calificaciones'
     estado['postpartido_scroll'] = 0
+    try:   # v0.4.23.0: la tensión de la prensa se gasta con el partido oficial y se ofrece la conferencia posterior
+        if (modo or 'liga') != 'amistoso':
+            from alpha_football import prensa
+            prensa.consumir_tension(estado)
+            prensa.evaluar_post(estado, local, visitante, gl, gv, modo or 'liga', pos_antes=pos_antes)
+    except Exception as e:
+        logger.error(f"prensa del post-partido: {e}")
+    try:   # v0.4.23.0: logros del DT (partidos dirigidos, racha, clásicos, salvado en la última jornada)
+        if (modo or 'liga') in ('liga', 'copa'):
+            from alpha_football import logros
+            logros.registrar_partido(estado, local, visitante, gl, gv, modo or 'liga', pos_antes=pos_antes)
+    except Exception as e:
+        logger.error(f"logros del post-partido: {e}")
     return datos
 
 
@@ -361,6 +374,10 @@ def _dibujar_resultados(screen, estado: dict, datos: dict) -> None:
 def render(screen, estado: dict, mouse_pos, click_pos, teclas: list) -> Optional[str]:
     """Dibuja el post-partido. Devuelve 'continuar' con Enter/Espacio o CONTINUAR; None si sigue."""
     try:
+        from alpha_football.ui import prensa_overlay as _po      # v0.4.23.0: la conferencia es modal sobre esta vista
+        if _po.activo(estado, 'post'):
+            _po.manejar(estado, list(teclas or []), click_pos)
+            teclas, click_pos = [], None
         datos = estado.get('postpartido') or {}
         con_tabla = datos.get('modo') != 'amistoso'
         tab = estado.get('postpartido_tab', 'calificaciones')
@@ -407,6 +424,8 @@ def render(screen, estado: dict, mouse_pos, click_pos, teclas: list) -> Optional
         else:
             _dibujar_calificaciones(screen, datos, estado.get('postpartido_scroll', 0))
         draw_button(screen, R_CONTINUAR, "CONTINUAR", True)
+        if _po.activo(estado, 'post'):
+            _po.dibujar(screen, estado, mouse_pos)
         return None
     except Exception as e:
         logger.error(f"Error en el post-partido: {e}")

@@ -82,7 +82,7 @@ def filas(estado: dict) -> list:
         except Exception as e:
             logger.error(f"No se pudo calcular el detalle de la oferta de {o.get('club')}: {e}")
         out.append({'origen': 'banquillo', 'club': o['club'], 'liga': o.get('liga', ''), 'club_id': o['club_id'],
-                    'motivo': "Despidieron a su DT" + (f" ({o['motivo']})" if o.get('motivo') else ""),
+                    'motivo': o.get('causa') or "Despidieron a su DT" + (f" ({o['motivo']})" if o.get('motivo') else ""),
                     'plazo': int(o.get('jornadas', 0)), 'detalle': detalle})
     return out[:4]
 

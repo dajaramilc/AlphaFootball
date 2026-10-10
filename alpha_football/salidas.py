@@ -115,7 +115,7 @@ def _ventana_abierta(estado: dict) -> bool:
         return False
     from alpha_football.market import ventana_mercado_abierta
     return ventana_mercado_abierta(int(getattr(liga, 'jornada_actual', 1) or 1),
-                                   int(getattr(liga, 'num_jornadas', 22) or 22))
+                                   int(getattr(liga, 'num_jornadas', 22) or 22), estado=estado)
 
 
 def causa_principal(j) -> str:
@@ -157,7 +157,7 @@ def revisar_descontento(estado: dict, rng: Optional[random.Random] = None) -> li
                 acc = C.accion('plantilla_screen', "VER PLANTILLA")
             C.enviar(estado, 'jugador', f"{_nombre(j)} está descontento",
                      "Míster, " + TEXTOS_DESCONTENTO[causa][idx][0].lower() + TEXTOS_DESCONTENTO[causa][idx][1:]
-                     + " " + CIERRE_DESCONTENTO[causa] + f"\n{_nombre(j)}", acc)
+                     + " " + CIERRE_DESCONTENTO[causa] + f"\n{_nombre(j)}", acc, jugador=j)
             j.descontento_avisado = True
             avisados.append(j)
         except Exception as e:
@@ -186,9 +186,10 @@ def revisar_renovaciones(estado: dict, rng: Optional[random.Random] = None) -> l
     liga, mi = estado.get('liga'), estado.get('mi_equipo')
     if liga is None or mi is None:
         return []
-    if int(getattr(liga, 'jornada_actual', 1) or 1) <= int(getattr(liga, 'num_jornadas', 22) or 22) // 2:
+    from alpha_football import temporada as T      # v0.4.13.0: desde la mitad de la temporada (por fecha)
+    if not T.segunda_mitad(estado):
         return []
-    cand = [j for j in list(getattr(mi, 'jugadores', []) or [])
+    cand =[j for j in list(getattr(mi, 'jugadores', []) or [])
             if int(getattr(j, 'contrato_anios', 0) or 0) == 1 and int(j.moral) >= UMBRAL_QUIERE_RENOVAR
             and not j.pide_salir and not j.salida_forzada and not getattr(j, 'prestamo', None)
             and not getattr(j, 'renovacion_avisada', False)]
@@ -197,7 +198,7 @@ def revisar_renovaciones(estado: dict, rng: Optional[random.Random] = None) -> l
     j = max(cand, key=lambda x: x.overall)
     texto = TEXTOS_QUIERE_RENOVAR.get(j.personalidad, TEXTOS_QUIERE_RENOVAR['normal'])
     C.enviar(estado, 'jugador', f"{_nombre(j)} quiere renovar", f"{texto}\n{_nombre(j)}",
-             {'pantalla': 'negociacion_screen', 'texto': "RENOVAR", 'renovar': j.id})
+             {'pantalla': 'negociacion_screen', 'texto': "RENOVAR", 'renovar': j.id}, jugador=j)
     j.renovacion_avisada = True
     return [j]
 
@@ -214,7 +215,8 @@ def revisar_curados(estado: dict) -> list:
             try:
                 C.enviar(estado, 'jugador', f"{_nombre(j)} se queda contento",
                          f"Míster, quería decirle que ya estoy bien. Recuperé la confianza y ya no pido salir: "
-                         f"quiero seguir aquí y darlo todo.\n{_nombre(j)}", C.accion('plantilla_screen', "VER PLANTILLA"))
+                         f"quiero seguir aquí y darlo todo.\n{_nombre(j)}", C.accion('plantilla_screen', "VER PLANTILLA"),
+                         jugador=j)
             except Exception as e:
                 logger.error(f"No se pudo avisar que {j.nombre} se queda: {e}")
     return curados
@@ -245,7 +247,7 @@ def ofertas_garantizadas(estado: dict, rng: Optional[random.Random] = None) -> l
     if not _ventana_abierta(estado):
         return []
     from alpha_football import correo as C
-    from alpha_football.market import calcular_valor, factor_contrato, traspasado_en_ventana
+    from alpha_football.market import calcular_valor, cifra_cerrada, factor_contrato, traspasado_en_ventana
     azar = rng or random.Random()
     mi = estado.get('mi_equipo')
     pendientes = estado.setdefault('ofertas_recibidas', [])
@@ -257,14 +259,14 @@ def ofertas_garantizadas(estado: dict, rng: Optional[random.Random] = None) -> l
             continue
         try:
             valor = int(getattr(j, 'valor', 0) or 0) or calcular_valor(j)
-            monto = int(valor * azar.uniform(*MARGEN_OFERTA) * factor_contrato(j))
+            monto = cifra_cerrada(valor * azar.uniform(*MARGEN_OFERTA) * factor_contrato(j))   # v0.4.18.0: cifra cerrada
             clubes = _compradores(estado, j)
             pueden = [eq for eq in clubes if int(getattr(eq, 'balance', 0) or 0) >= monto]
             if pueden:
                 comprador = azar.choice(pueden)
             elif clubes:
                 comprador = max(clubes, key=lambda eq: int(getattr(eq, 'balance', 0) or 0))
-                remate = int(max(0, int(comprador.balance)) * 0.95)
+                remate = cifra_cerrada(max(0, int(comprador.balance)) * 0.95, abajo=True)   # v0.4.18.0: sin pasar el balance
                 if remate < monto * PISO_REMATE:
                     continue     # una oferta ridícula no sirve de salida: se espera a la próxima jornada
                 monto = remate
@@ -343,15 +345,21 @@ def cierre_jornada(estado: dict, rng: Optional[random.Random] = None) -> None:
     """Cierre de jornada de liga del user: cura, descontento, escalada por tiempo y ofertas."""
     try:
         revisar_curados(estado)
-        revisar_descontento(estado, rng)
-        revisar_renovaciones(estado, rng)       # v0.4.10.0
+        from alpha_football import dias as _dias      # v0.4.12.0: los avisos de jugadores llegan en días sueltos
+        with _dias.diferir_correos(estado):
+            revisar_descontento(estado, rng)
+            revisar_renovaciones(estado, rng)       # v0.4.10.0
         if _ventana_abierta(estado):
             mi = estado.get('mi_equipo')
             pendientes = estado.get('ofertas_recibidas') or []
             for j in list(getattr(mi, 'jugadores', []) or []):
                 if j.pide_salir and (int(j.escalon_salida or 0) > 0 or any(o.get('jugador') is j for o in pendientes)):
                     subir_escalon(estado, j, 1)
-            ofertas_garantizadas(estado, rng)
+            if _dias.activo(estado):        # v0.4.12.0: la oferta llega en un día del hueco
+                if any(getattr(j, 'pide_salir', False) for j in getattr(mi, 'jugadores', []) or []):
+                    _dias.programar(estado, 'garantizadas')
+            else:
+                ofertas_garantizadas(estado, rng)
     except Exception as e:
         logger.error(f"Error en el cierre de jornada de salidas: {e}")
 

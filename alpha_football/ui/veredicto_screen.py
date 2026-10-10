@@ -57,6 +57,35 @@ def _envolver(texto: str, ancho: int = 92) -> list:
     return lineas + ([linea] if linea else [])
 
 
+def lineas_veredicto(vp: dict) -> list:
+    """v0.4.17.0: [(texto, color)] bajo el título: por qué no está conforme la directiva (regaño o
+    despido), la sanción de la liga si la hay y las cifras de siempre."""
+    info = vp.get('info') or {}
+    lineas = []
+    if vp.get('tipo') in ('regano', 'despido'):
+        motivos = info.get('motivos')
+        if motivos is None:                      # saves viejos: el veredicto no los traía
+            from alpha_football.directiva import motivos_fallo
+            motivos = motivos_fallo(info)
+        lineas += [(f"Motivo: {t}", 'rojo') for t in list(motivos)[:3]]
+    s = info.get('sancion')
+    if s:
+        txt = f"Sanción de la liga: sin fichajes, libres ni préstamos en la temporada {s.get('temporada', '?')}"
+        if s.get('salud_mala'):
+            txt += f" y multa de ${int(s.get('multa', 0) or 0) / 1_000_000:.1f}M"
+        lineas.append((txt, 'dorado'))
+    m = int(info.get('monto', 0) or 0)
+    # con la liga fallada (regaño o despido), la posición y la meta ya salieron arriba, en el motivo
+    if not (vp.get('tipo') in ('regano', 'despido') and info.get('resultado') == 'fallado'):
+        lineas.append((f"Terminaste {info.get('posicion', '?')}º  ·  meta: {info.get('texto', '')}", 'blanco'))
+    if info.get('copa'):
+        lineas.append((f"Copa: {info['copa']['alcanzada']}  ·  meta: {info['copa']['texto']}", 'blanco'))
+    lineas.append((f"{'Premio' if m >= 0 else 'Multa'}: ${abs(m) / 1_000_000:.1f}M", 'blanco'))
+    lineas.append((f"Calificación de DT: {info.get('calif', '?')}  ·  confianza: {info.get('confianza', '?')}",
+                   'blanco'))
+    return lineas
+
+
 def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
     try:
         vp = estado.get('veredicto_pendiente')
@@ -81,7 +110,6 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             return _siguiente(estado)
 
         draw_gradient_bg(screen)
-        info = vp.get('info') or {}
         if paso == 0:
             draw_text(screen, "CORREO NUEVO", (16, 16), size='lg', color='azul')
             r = R_CORREO
@@ -95,14 +123,8 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             return None
         titulo, color = VEREDICTOS.get(vp.get('tipo'), ("TEMPORADA TERMINADA", 'blanco'))
         draw_text(screen, titulo, (SCREEN_W // 2 - get_font('xl').size(titulo)[0] // 2, 200), size='xl', color=color)
-        m = int(info.get('monto', 0) or 0)
-        lineas = [f"Terminaste {info.get('posicion', '?')}º  ·  meta: {info.get('texto', '')}",
-                  f"{'Premio' if m >= 0 else 'Multa'}: ${abs(m) / 1_000_000:.1f}M",
-                  f"Calificación de DT: {info.get('calif', '?')}  ·  confianza: {info.get('confianza', '?')}"]
-        if info.get('copa'):
-            lineas.insert(1, f"Copa: {info['copa']['alcanzada']}  ·  meta: {info['copa']['texto']}")
-        for i, t in enumerate(lineas):
-            draw_text(screen, t, (SCREEN_W // 2 - get_font('md').size(t)[0] // 2, 320 + i * 40), size='md', color='blanco')
+        for i, (t, col) in enumerate(lineas_veredicto(vp)):      # v0.4.17.0: motivos y sanción antes de las cifras
+            draw_text(screen, t, (SCREEN_W // 2 - get_font('md').size(t)[0] // 2, 300 + i * 40), size='md', color=col)
         draw_text(screen, "Enter para continuar", (16, 660), size='md', color='verde')
         return None
     except Exception as e:

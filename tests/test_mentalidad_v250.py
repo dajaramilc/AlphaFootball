@@ -21,7 +21,9 @@ def equipos():
 def promedio_goles(local, visitante, ment_l, ment_v, n=N):
     tot, recibidos_l = 0, 0
     for _ in range(n):
-        r = engine.simular_partido(local, visitante, ment_l=ment_l, ment_v=ment_v)
+        # v0.4.23.0: sin físico, como test_ia_vs_ia_ligas_reales: son 1500 partidos seguidos con los mismos
+        # jugadores y, desde las lesiones por días (v0.4.19.0), nadie se cura sin que pase el calendario
+        r = engine.simular_partido(local, visitante, ment_l=ment_l, ment_v=ment_v, aplicar_fisico=False)
         tot += r.goles_local + r.goles_visitante
         recibidos_l += r.goles_visitante
     return tot / n, recibidos_l / n
@@ -49,7 +51,7 @@ def _pct_goles_def(local, vis, ment):
     pos = {j.id: j.posicion for j in local.jugadores}
     defs = tot = 0
     for _ in range(N):
-        r = engine.simular_partido(local, vis, ment_l=ment, ment_v='normal')
+        r = engine.simular_partido(local, vis, ment_l=ment, ment_v='normal', aplicar_fisico=False)
         for e in r.eventos:
             if e.get('tipo') == 'gol' and e.get('equipo_id') == local.id:
                 tot += 1

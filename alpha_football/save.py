@@ -52,6 +52,11 @@ def campos_divisiones(estado: dict) -> dict:
     """v2.3.5: campos de 1ª/2ª división del estado en vivo, listos para EstadoJuego.from_dict.
     Lo usan los 3 puntos de guardado (salir, slots, fin de temporada)."""
     liga = estado.get('liga')
+    try:    # v0.4.21.0: la bolsa de agentes libres viaja en datos_carrera['libres']
+        from alpha_football.negociacion import guardar_libres
+        guardar_libres(estado)
+    except Exception as e_lib:
+        logger.error(f"No se pudo guardar la bolsa de agentes libres: {e_lib}")
     return {
         "liga_usuario_division": int(getattr(liga, 'division', estado.get('liga_usuario_division', 1)) or 1),
         "segunda_division": {t: l.to_dict() for t, l in (estado.get('segunda_division') or {}).items() if l},

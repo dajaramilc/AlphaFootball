@@ -220,17 +220,19 @@ días_por_jornada = (fecha de la última jornada − fecha de la primera) / (n �
 - `recuperar_todos(estado)` sin días conserva el comportamiento actual (tests y saves sin calendario).
 
 ### C4. Datos e interfaz
-`datos_carrera['calendario'] = {'temporada', 'n', 'liga': {jornada: 'AAAA-MM-DD'},
-'copa': {tipo: [fechas]}, 'cambios': [...]}`. Se genera al empezar la temporada y, en saves viejos,
-la primera vez que se consulta (`calendario.asegurar`); también si cambias de club o de liga.
+`datos_carrera['calendario'] = {'clave': [año, continente, jornadas, club], 'mov': {partido:
+'AAAA-MM-DD'}}`. Se arma la primera vez que se consulta (`calendario.asegurar`), también en saves
+viejos, y se rearma solo al cambiar de temporada, de liga o de club.
 
-- `fecha_liga`, `fecha_copa`, `hoy` (la fecha de tu último partido; el 31 durante el último día),
-  `proximo_evento`, `texto_fecha` ("sáb 16 ago 2025").
-- **Cabecera del hub:** "Jornada 3/22 · sáb 13 sep 2025". El botón JUGAR y el pre-partido muestran
-  la fecha del partido.
-- **Pantalla CALENDARIO** (tarjeta en OFICINA): mes en cuadrícula de 7 columnas con tus partidos
-  de liga (rival, L/V, resultado si ya se jugó), los de copa, los dos cierres de mercado y el día
-  de hoy resaltado. ← → cambia de mes, ESC vuelve. Con ayuda (H) y barra de atajos.
+- `fecha_liga`, `fecha_copa`, `hoy` (el día de tu próximo partido: donde estás parado antes de
+  jugar), `proximo_evento`, `texto_fecha` ("sáb 15 ago 2026").
+- **Fecha del partido:** arriba a la derecha del botón JUGAR y en el pre-partido. No va en la
+  cabecera del hub porque no tiene lugar (ya está al límite con la franja del mercado).
+- **Pantalla CALENDARIO** (tarjeta en DIRECCIÓN DE EQUIPO; OFICINA ya está llena con 8): mes en
+  cuadrícula de 7 columnas con tus partidos de liga (rival, L/V, resultado si ya se jugó), los de
+  copa, los dos cierres de mercado y el día de tu próximo partido resaltado. ← → cambia de mes,
+  ESC vuelve. Con ayuda (H) y barra de atajos.
+- Lo único que se guarda es lo reprogramado (`mov`): las fechas base salen de una semilla.
 
 ---
 

@@ -47,7 +47,6 @@ def rects_promo() -> dict:
     btn_w, btn_h = 360, 56
     return {
         'cabecera': pygame.Rect(40, 8, SCREEN_W - 80, 84),
-        'balon': pygame.Rect(40, 100, SCREEN_W - 80, 96),
         'ascienden': pygame.Rect(x_left, y_top, col_w, col_h),
         'descienden': pygame.Rect(x_left + col_w + gap, y_top, col_w, col_h),
         'paises': pygame.Rect(x_left, y_top + col_h + 14, col_w * 2 + gap, 230),
@@ -107,26 +106,6 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         elif user_des:
             sub = "Tu plantilla baja de nivel (−2 a −5) por el descenso"
         _centrado(sub, 64, 'sm', 'azul')
-
-        # v2.3.6: Balón de Oro de la temporada que terminó (mejor rendimiento de las 10 ligas)
-        balon = estado.get('balon_oro_ultimo')
-        caja_balon = _rp['balon']
-        draw_panel(screen, caja_balon)
-        pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), caja_balon, width=2, border_radius=8)
-        if balon and balon.get('ganador'):
-            g = balon['ganador']
-            draw_text(screen, f"BALÓN DE ORO T{balon.get('temporada', '?')}: {g['nombre'][:28]}",
-                      (caja_balon.x + 20, caja_balon.y + 10), size='lg', color='dorado')
-            draw_text(screen, f"{g['equipo'][:24]} · {g['liga'][:32]} · {g['posicion']} {g['ovr']} · "
-                              f"{g['goles']} goles · {g['asistencias']} asist. · nota {g['nota']:.2f}",
-                      (caja_balon.x + 20, caja_balon.y + 44), size='sm', color='blanco')
-            otros = balon.get('podio', [])[1:3]
-            if otros:
-                podio_txt = "   ".join(f"{i + 2}º {p['nombre'][:20]} ({p['equipo'][:16]})" for i, p in enumerate(otros))
-                draw_text(screen, podio_txt, (caja_balon.x + 20, caja_balon.y + 68), size='sm', color='azul')
-        else:
-            draw_text(screen, "BALÓN DE ORO: sin candidatos esta temporada", (caja_balon.x + 20, caja_balon.y + 34),
-                      size='md', color='azul')
 
         # Tu país: ascendidos (izq.) y descendidos (der.)
         col_w = 580
@@ -198,7 +177,6 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         if click_pos and btn_cont.collidepoint(click_pos):
             # Limpiar data para que no se re-muestre en otra ocasion
             estado.pop('promo_releg_data', None)
-            estado.pop('balon_oro_ultimo', None)
             # v2.3.5: la temporada YA avanzó antes de llegar aquí; volver al resumen
             # mostraba la tabla vacía y al pulsar de nuevo avanzaba OTRA temporada.
             return "league_screen"

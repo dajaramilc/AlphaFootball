@@ -307,6 +307,24 @@ def calcular_valor(jugador: Any) -> int:
 
 DESCUENTO_ULTIMO_ANIO = 0.75
 
+PASO_CIFRA_CERRADA = 10_000      # v0.4.18.0: unidades, decenas, centenas y unidad de mil en cero
+
+
+def cifra_cerrada(monto: Any, abajo: bool = False) -> int:
+    """v0.4.18.0: redondea un monto a múltiplo de 10.000. Un monto positivo no baja de 10.000
+    (salvo con `abajo=True`, que nunca sube: para lo que topa el balance del comprador)."""
+    try:
+        monto = int(monto or 0)
+    except (TypeError, ValueError) as e:
+        logger.error(f"Monto inválido al cerrar la cifra ({monto!r}): {e}")
+        return 0
+    if monto <= 0:
+        return 0
+    if abajo:
+        return monto // PASO_CIFRA_CERRADA * PASO_CIFRA_CERRADA
+    return max(PASO_CIFRA_CERRADA, (monto + PASO_CIFRA_CERRADA // 2) // PASO_CIFRA_CERRADA * PASO_CIFRA_CERRADA)
+
+
 
 def factor_contrato(jugador: Any) -> float:
     """v3.5.0: en el último año de contrato el jugador vale 25% menos (la cláusula no cambia)."""
@@ -572,19 +590,35 @@ def ventanas_mercado(num_jornadas: int) -> list:
     return ventanas
 
 
-def ventana_actual(jornada: int, num_jornadas: int) -> Optional[tuple]:
-    """La ventana abierta en esa jornada (primera, última, nombre) o None."""
+def _con_fechas(estado) -> bool:
+    """v0.4.13.0: con una partida que ya tiene liga las ventanas se deciden por fecha (temporada.py)."""
+    return isinstance(estado, dict) and estado.get('liga') is not None and estado.get('mi_equipo') is not None
+
+
+def ventana_actual(jornada: int, num_jornadas: int, estado: Any = None) -> Optional[tuple]:
+    """La ventana abierta en esa jornada (primera, última, nombre) o None. Con `estado`, por fecha."""
+    if _con_fechas(estado):
+        from alpha_football import temporada as T
+        nombre = T.ventana_actual(estado)
+        if nombre is None:
+            return None
+        primera, ultima = T.ventana_jornadas(estado, nombre)
+        return (primera, ultima, nombre)
     return next((v for v in ventanas_mercado(num_jornadas) if v[0] <= int(jornada) <= v[1]), None)
 
 
-def proxima_apertura(jornada: int, num_jornadas: int) -> int:
-    """Jornada en que abre la próxima ventana (1 = la de inicio de la temporada siguiente)."""
+def proxima_apertura(jornada: int, num_jornadas: int, estado: Any = None) -> int:
+    """Jornada en que abre la próxima ventana (1 = la de inicio de la temporada siguiente). Con `estado`, por fecha."""
+    if _con_fechas(estado):
+        from alpha_football import temporada as T
+        a = T.proxima_apertura(estado)
+        return 1 if a > T.fin(estado) else T.jornada_de(estado, a)
     return next((v[0] for v in ventanas_mercado(num_jornadas) if v[0] > int(jornada)), 1)
 
 
-def clave_ventana_traspaso(temporada: int, jornada: int, num_jornadas: int) -> str:
+def clave_ventana_traspaso(temporada: int, jornada: int, num_jornadas: int, estado: Any = None) -> str:
     """Ventana de traspasos en curso ('<T>-verano' = inicio, '<T>-invierno'). '' con el mercado cerrado."""
-    v = ventana_actual(jornada, num_jornadas)
+    v = ventana_actual(jornada, num_jornadas, estado)
     if v is None:
         return ''
     return f"{int(temporada)}-{'invierno' if v[2] == 'invierno' else 'verano'}"
@@ -599,16 +633,17 @@ def traspasado_en_ventana(estado: Any, jugador: Any) -> bool:
         liga = estado.get('liga')
         return marca == clave_ventana_traspaso(int(estado.get('temporada', 1) or 1),
                                                int(getattr(liga, 'jornada_actual', 1) or 1),
-                                               int(getattr(liga, 'num_jornadas', 22) or 22))
+                                               int(getattr(liga, 'num_jornadas', 22) or 22), estado)
     except Exception as e:
         logger.error(f"No se pudo revisar la ventana de traspaso: {e}")
         return False
 
 
-def ventana_mercado_abierta(jornada: int, num_jornadas: int) -> bool:
-    """El mercado está abierto en las jornadas 1-3 y en el invierno (mitad de temporada)."""
+def ventana_mercado_abierta(jornada: int, num_jornadas: int, estado: Any = None) -> bool:
+    """El mercado está abierto en las jornadas 1-3 y en el invierno (mitad de temporada). v0.4.13.0:
+    con `estado`, abierto en los días de las ventanas (temporada.py), no en las jornadas."""
     try:
-        return ventana_actual(jornada, num_jornadas) is not None
+        return ventana_actual(jornada, num_jornadas, estado) is not None
     except Exception:
         return False
 
@@ -628,7 +663,7 @@ def generar_ofertas_recibidas(
     azar = rng or random.Random()
     nuevas: list = []
     try:
-        if not ventana_mercado_abierta(jornada, num_jornadas):
+        if not ventana_mercado_abierta(jornada, num_jornadas, estado):
             return []
         if azar.random() > prob:
             return []
@@ -644,7 +679,7 @@ def generar_ofertas_recibidas(
 
         objetivo = azar.choice(plantilla)
         valor = _campo(objetivo, "valor", 0) or calcular_valor(objetivo)
-        monto = int(valor * azar.uniform(0.95, 1.5))
+        monto = cifra_cerrada(valor * azar.uniform(0.95, 1.5))      # v0.4.18.0: cifra cerrada
 
         # Oferente: un rival (IA) al azar con balance suficiente; si ninguno, el de más balance.
         rivales = [
@@ -672,8 +707,18 @@ def generar_ofertas_recibidas(
     return nuevas
 
 
+def prob_oferta_ia(mi_equipo: Any, prob: Optional[float] = None) -> float:
+    """v0.4.12.0: probabilidad de que la IA oferte esta jornada, la misma que usa crear_oferta_ui
+    (más alta si tienes transferibles o jugadores que piden salir)."""
+    base = PROB_OFERTA_POR_JORNADA if prob is None else prob
+    propios = [j for j in getattr(mi_equipo, "jugadores", []) or [] if not getattr(j, "prestamo", None)]
+    hay = any(getattr(j, "transferible", False) or getattr(j, "pide_salir", False) for j in propios)
+    return max(base, PROB_OFERTA_CON_TRANSFERIBLES) if hay else base
+
+
 def crear_oferta_ui(mi_equipo: Any, rivales: list, jornada: int, num_jornadas: int,
-                    rng: Optional[random.Random] = None, prob: float = PROB_OFERTA_POR_JORNADA) -> Optional[dict]:
+                    rng: Optional[random.Random] = None, prob: float = PROB_OFERTA_POR_JORNADA,
+                    estado: Any = None) -> Optional[dict]:
     """
     Variante para la UI en runtime (trabaja con OBJETOS directos, no con el modelo persistido).
     Con mercado abierto, 'prob' de que un rival oferte por un jugador nuestro.
@@ -682,7 +727,7 @@ def crear_oferta_ui(mi_equipo: Any, rivales: list, jornada: int, num_jornadas: i
     """
     azar = rng or random.Random()
     try:
-        if not ventana_mercado_abierta(jornada, num_jornadas):
+        if not ventana_mercado_abierta(jornada, num_jornadas, estado):
             return None
         # a préstamo: no reciben ofertas de traspaso (prestamos.py)
         propios = [j for j in getattr(mi_equipo, "jugadores", []) or [] if not getattr(j, "prestamo", None)]
@@ -720,7 +765,7 @@ def crear_oferta_ui(mi_equipo: Any, rivales: list, jornada: int, num_jornadas: i
             setattr(objetivo, "valor", valor)
         except Exception:
             pass
-        monto = int(valor * azar.uniform(0.95, 1.5) * factor_contrato(objetivo))   # v3.5.0
+        monto = cifra_cerrada(valor * azar.uniform(0.95, 1.5) * factor_contrato(objetivo))   # v3.5.0; v0.4.18.0: cifra cerrada
         from alpha_football.data.clasicos import es_clasico    # v3.5.0: el clásico solo paga cláusula
         if getattr(objetivo, 'moral', 70) >= 40:
             rivales = [r for r in rivales if not es_clasico(r, mi_equipo)]
@@ -924,7 +969,7 @@ def crear_oferta_exterior(mi_equipo: Any, estado: Any,
             setattr(objetivo, "valor", valor)
         except Exception:
             pass
-        monto = int(valor * azar.uniform(1.3, 2.2) * factor_contrato(objetivo))   # v3.5.0
+        monto = cifra_cerrada(valor * azar.uniform(1.3, 2.2) * factor_contrato(objetivo))   # v3.5.0; v0.4.18.0: cifra cerrada
         return {"jugador": objetivo, "comprador": comprador, "monto": monto, "exterior": True}
     except Exception as e:
         logger.error(f"Error al crear oferta del exterior: {e}")

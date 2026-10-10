@@ -127,7 +127,7 @@ from alpha_football.partido_ctx import (  # noqa: E402  v4.0.0
     aplicar_evento as _aplicar_evento, mult_bajas as _mult_bajas, MAX_CAMBIOS as _MAX_CAMBIOS,
     clave as _clave)
 from alpha_football.energia import (  # noqa: E402  v4.0.0
-    PROB_LESION_90, factor_lesion, DURACION_LESION, PESOS_LESION)
+    PROB_LESION_90, factor_lesion, duracion_lesion)
 
 # v4.0.0: incidencias dentro del partido (probabilidades por equipo y minuto).
 PROB_AMARILLA_MIN: float = 3.5 / 180
@@ -155,7 +155,7 @@ class Jugador:
     mental:   int
     moral:    int = 70
     rasgo:    Optional[str] = None
-    lesion_partidos: int = 0
+    lesion_dias: int = 0
 
     @property
     def nombre_completo(self) -> str:
@@ -209,7 +209,7 @@ class Equipo:
                 for idx in titulares_indices:
                     if 0 <= idx < len(self.jugadores):
                         j = self.jugadores[idx]
-                        if j.lesion_partidos == 0:
+                        if j.lesion_dias == 0:
                             disp.append(j)
                 if disp:
                     return disp
@@ -217,7 +217,7 @@ class Equipo:
             # Resiliencia: si hay error con alineacion_activa, usamos el flujo por defecto
             pass
 
-        disp = [j for j in self.jugadores if j.lesion_partidos == 0]
+        disp = [j for j in self.jugadores if j.lesion_dias == 0]
         return disp if disp else self.jugadores
 
     def promedio_ataque(self, mult: float = 1.0) -> float:
@@ -239,11 +239,6 @@ class Equipo:
         if not self.jugadores:
             return 0
         return sum(j.overall for j in self.jugadores) // len(self.jugadores)
-
-    def tick_lesiones(self) -> None:
-        for j in self.jugadores:
-            if j.lesion_partidos > 0:
-                j.lesion_partidos -= 1
 
 
 @dataclass
@@ -465,14 +460,14 @@ def _once_titular(equipo: Equipo) -> list:
             for idx in alin.titulares:
                 if 0 <= idx < len(jugadores) and idx not in usados:
                     j = jugadores[idx]
-                    if getattr(j, "lesion_partidos", 0) == 0 and not _sancionado(j):
+                    if getattr(j, "lesion_dias", 0) == 0 and not _sancionado(j):
                         disp.append(j)
                         usados.add(idx)
                         if len(disp) == 11:
                             return disp
             # Si faltan titulares por lesión, completar con los mejores no lesionados
             if len(disp) < 11:
-                candidatos = [j for j in jugadores if j not in disp and getattr(j, "lesion_partidos", 0) == 0 and not _sancionado(j)]
+                candidatos = [j for j in jugadores if j not in disp and getattr(j, "lesion_dias", 0) == 0 and not _sancionado(j)]
                 candidatos.sort(key=lambda x: getattr(x, "overall", 0), reverse=True)
                 for j in candidatos:
                     if len(disp) >= 11:
@@ -483,7 +478,7 @@ def _once_titular(equipo: Equipo) -> list:
         # Fallback (equipos de la IA sin alineación): v2.3.6 el mejor 4-3-3 disponible.
         # Antes eran "los primeros 11 de la lista", y como las plantillas vienen
         # ordenadas por posición la IA jugaba con 2 porteros, 7 defensas y 0 delanteros.
-        no_lesionados = [j for j in jugadores if getattr(j, "lesion_partidos", 0) == 0 and not _sancionado(j)]
+        no_lesionados = [j for j in jugadores if getattr(j, "lesion_dias", 0) == 0 and not _sancionado(j)]
         if len(no_lesionados) >= 11:
             try:
                 from alpha_football.formaciones import mejor_once
@@ -914,6 +909,7 @@ def simular_partido(
     ctx: Any = None,
     auto_l: bool = True,
     auto_v: bool = True,
+    factor_tarjetas: float = 1.0,     # v0.4.23.0: tono agresivo en la prensa (se copia al ctx que se crea aquí)
     **kwargs
 ) -> Resultado:
     """
@@ -941,6 +937,8 @@ def simular_partido(
     if ctx is None:   # v4.0.0: estado vivo del partido (tarjetas, lesiones, cambios, notas)
         from alpha_football.partido_ctx import nuevo_estado
         ctx = nuevo_estado(local, visitante, jl, jv, auto_l, auto_v)
+    if factor_tarjetas != 1.0:
+        ctx.factor_tarjetas = factor_tarjetas
     # v0.7: sinergia formación/táctica/familiaridad sobre el ataque de cada equipo.
     syn_l = synergy_equipo(local)
     syn_v = synergy_equipo(visitante)
@@ -1002,7 +1000,7 @@ def suplentes_disponibles(ctx, lado: str, equipo) -> list:
     base = [jugadores[i] for i in convocados if 0 <= i < len(jugadores)] if convocados else jugadores
     return [j for j in base
             if clave(j) not in ctx.entrada
-            and getattr(j, "lesion_partidos", 0) == 0 and not _sancionado(j)]
+            and getattr(j, "lesion_dias", 0) == 0 and not _sancionado(j)]
 
 
 def _energia_hoy(ctx, j, minuto: int) -> float:
@@ -1046,6 +1044,12 @@ _C_PENAL = _C_LESION + PROB_PENAL_FALLADO
 _C_FALTA = _C_PENAL + PROB_FALTA_MIN
 
 
+def _remapear_sorteo_tarjetas(r: float, k: float) -> float:
+    """v0.4.23.0: tono agresivo en la prensa. Ensancha solo el tramo de tarjetas [0, _C_ROJA) por `k`; el resto
+    del sorteo (lesiones, penales, faltas) conserva su masa. k = 1 es la identidad y el mapa es monótono."""
+    return r / k if r < k * _C_ROJA else r - (k - 1.0) * _C_ROJA
+
+
 def _incidencias_minuto(m: int, local, visitante, ctx, eventos: list) -> None:
     """
     v4.0.0: tarjetas, lesiones, penales fallados, faltas y cambios de la IA de un minuto.
@@ -1063,6 +1067,9 @@ def _incidencias_minuto(m: int, local, visitante, ctx, eventos: list) -> None:
         if not cancha:
             continue
         r = random.random()
+        k_tarj = getattr(ctx, "factor_tarjetas", 1.0)
+        if k_tarj != 1.0:     # v0.4.23.0: tono agresivo en la prensa: más tarjetas para los dos equipos
+            r = _remapear_sorteo_tarjetas(r, k_tarj)
         if r < _C_FALTA:
             base = {"minuto": m, "equipo_id": ctx.ids_equipo.get(lado), "lado": lado}
             campo = [j for j in cancha if getattr(j, "posicion", "") != "POR"] or cancha
@@ -1086,7 +1093,7 @@ def _incidencias_minuto(m: int, local, visitante, ctx, eventos: list) -> None:
                 if random.random() < acepta:
                     j = random.choices(cancha, weights=[factor_lesion(e) for e in energias])[0]
                     emitir({**base, "tipo": "lesion", "jugador": j, "jugador_id": j.id,
-                            "partidos": random.choices(DURACION_LESION, weights=PESOS_LESION)[0],
+                            "dias": duracion_lesion(),
                             "detalle": random.choice(_LESION).format(j=j.nombre_completo)})
                     if ctx.auto_cambios.get(lado) and ctx.cambios.get(lado, 0) < _MAX_CAMBIOS:
                         par = elegir_cambio_ia(ctx, lado, eq, m, sale=j)

@@ -24,39 +24,8 @@ PROB_RETIRO = {35: 0.35, 36: 0.50, 37: 0.65, 38: 0.80, 39: 0.90}
 PROB_RETIRO_40_MAS = 0.97
 NOTA_SIGUE_JUGANDO = 7.3   # con una gran temporada la probabilidad se reduce a la mitad
 
-# Nombres genéricos por país (no parodias).
-NOMBRES_POR_PAIS = {
-    'Colombia': (
-        ["Juan", "Andrés", "Carlos", "Santiago", "Sebastián", "Camilo", "Felipe", "Jhon", "Luis", "Daniel",
-         "Kevin", "Brayan", "Juan David", "Jhonatan", "Mateo", "Samuel", "Cristian", "Óscar", "Duván", "Yeison"],
-        ["Rodríguez", "Gómez", "Martínez", "Hernández", "López", "García", "Moreno", "Mosquera", "Ramírez",
-         "Valencia", "Palacios", "Castaño", "Rentería", "Cuesta", "Arboleda", "Quiñones", "Murillo", "Zapata",
-         "Ospina", "Cardona", "Restrepo", "Giraldo", "Bedoya", "Cuadrado"]),
-    'Brasil': (
-        ["João", "Pedro", "Lucas", "Gabriel", "Matheus", "Rafael", "Gustavo", "Felipe", "Vinícius", "Thiago",
-         "Bruno", "Caio", "Rodrigo", "Diego", "Igor", "Luan", "Wesley", "Kaique", "Davi", "Everton"],
-        ["Silva", "Santos", "Oliveira", "Souza", "Lima", "Pereira", "Costa", "Ferreira", "Almeida", "Carvalho",
-         "Ribeiro", "Gomes", "Martins", "Rocha", "Barbosa", "Araújo", "Nascimento", "Moura", "Cardoso",
-         "Teixeira", "Correia", "Dias"]),
-    'Argentina': (
-        ["Juan", "Matías", "Lautaro", "Nicolás", "Facundo", "Santiago", "Tomás", "Agustín", "Franco", "Gonzalo",
-         "Ezequiel", "Julián", "Thiago", "Valentín", "Leandro", "Maximiliano", "Joaquín", "Bruno", "Lucas", "Enzo"],
-        ["González", "Fernández", "Rodríguez", "López", "Martínez", "Pérez", "Gómez", "Díaz", "Romero", "Sosa",
-         "Álvarez", "Benítez", "Acosta", "Medina", "Herrera", "Suárez", "Aguirre", "Giménez", "Ledesma",
-         "Paredes", "Molina", "Correa"]),
-    'España': (
-        ["Pablo", "Álvaro", "Sergio", "Javier", "Adrián", "Hugo", "Marcos", "Iker", "Unai", "Raúl",
-         "Alejandro", "Daniel", "Mario", "Rubén", "Iván", "Aitor", "Jorge", "Manuel", "Gonzalo", "Nacho"],
-        ["García", "Fernández", "González", "Rodríguez", "López", "Martínez", "Sánchez", "Pérez", "Gómez",
-         "Martín", "Jiménez", "Ruiz", "Hernández", "Díaz", "Moreno", "Muñoz", "Álvarez", "Romero", "Navarro",
-         "Torres", "Domínguez", "Vázquez"]),
-    'Inglaterra': (
-        ["Jack", "Harry", "Oliver", "George", "James", "Charlie", "Thomas", "Jacob", "Alfie", "Oscar",
-         "William", "Joshua", "Ethan", "Callum", "Mason", "Lewis", "Ryan", "Connor", "Jordan", "Tyler"],
-        ["Smith", "Jones", "Taylor", "Brown", "Williams", "Wilson", "Johnson", "Davies", "Robinson", "Wright",
-         "Thompson", "Evans", "Walker", "White", "Roberts", "Green", "Hall", "Wood", "Jackson", "Clarke",
-         "Harris", "Lewis"]),
-}
+# Nombres genéricos por país (no parodias): v0.4.22.0, 8 países con 100+ nombres y apellidos cada uno.
+from alpha_football.data.nombres_genericos import NOMBRES_POR_PAIS   # noqa: E402
 
 # Reparto de atributos por posición (desvío respecto de la media); se ajusta a la media exacta.
 _PERFIL = {
@@ -161,7 +130,7 @@ def _reacomodar_once_usuario(equipo: Any, indices_retirados: list) -> None:
             continue
         candidatos = [i for i, j in enumerate(js)
                       if i not in alin.titulares and i not in indices_retirados
-                      and j.posicion == js[idx].posicion and getattr(j, 'lesion_partidos', 0) == 0]
+                      and j.posicion == js[idx].posicion and getattr(j, 'lesion_dias', 0) == 0]
         if candidatos:
             alin.titulares[k] = max(candidatos, key=lambda i: js[i].overall)
     try:
@@ -232,6 +201,7 @@ def procesar_retiros(estado: dict, rng: Optional[random.Random] = None) -> list[
                         'nombre': j.nombre_completo, 'edad': j.edad, 'ovr': j.overall, 'equipo': eq.nombre,
                         'regen': regen.nombre_completo, 'regen_edad': regen.edad, 'regen_pot': regen.potencial,
                         'posicion': j.posicion, 'es_user': eq is mi_equipo,
+                        'nacionalidad': getattr(j, 'nacionalidad', '') or '',
                     })
                     p = getattr(j, 'prestamo', None)
                     if p and p.get('dueno') and p.get('dueno') != eq.nombre:
@@ -270,6 +240,11 @@ def procesar_retiros(estado: dict, rng: Optional[random.Random] = None) -> list[
             r['equipo'], r['es_user'] = dueno.nombre, dueno is mi_equipo
         except Exception as e_du:
             logger.error(f"No se pudo pasar el regen {getattr(regen, 'nombre', '?')} a {nombre_dueno}: {e_du}")
+    try:    # v0.4.22.0: algunas figuras retiradas se hacen entrenadores y entran al banco de técnicos
+        from alpha_football.entrenadores import retirados_a_banco
+        retirados_a_banco(estado, retiros, azar)
+    except Exception as e_dt:
+        logger.error(f"No se pudieron pasar los retirados al banco de técnicos: {e_dt}")
     datos['regen_id'] = siguiente_id
     estado['retiros_ultimos'] = retiros
     if retiros:

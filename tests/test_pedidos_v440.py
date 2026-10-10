@@ -74,7 +74,7 @@ def test_fichaje_avisa_llegada():
     e = estado_carrera(); mi = e['mi_equipo']; mi.balance = 10 ** 10
     club = e['liga'].equipos[2]; j = sorted(club.jugadores, key=lambda x: x.overall)[0]
     ok, _ = N.fichar(e, j, club, precio=1000)
-    assert ok and "acomodarlo en su plantilla" in C.bandeja(e)[0]['cuerpo']
+    assert ok and "acomodarlo en su formación" in C.bandeja(e)[0]['cuerpo']
 
 
 def test_contrato_en_analisis_renovacion_y_fichaje():

@@ -95,7 +95,7 @@ def _render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         liga = estado.get('liga')
         try:
             from alpha_football.market import ventana_mercado_abierta
-            abierta = ventana_mercado_abierta(liga.jornada_actual, liga.num_jornadas)
+            abierta = ventana_mercado_abierta(liga.jornada_actual, liga.num_jornadas, estado=estado)
         except Exception:
             abierta = True
         temporada, ventana = N._clave_ventana(estado)

@@ -38,20 +38,77 @@ def dinero_exacto(v) -> str:
 
 def precio_fichaje(jugador) -> int:
     try:
-        from alpha_football.market import precio_compra, factor_contrato, calcular_valor
+        from alpha_football.market import precio_compra, factor_contrato, calcular_valor, cifra_cerrada
         if getattr(jugador, 'remate', False):   # v4.6.0: club en quiebra: 60% del valor
             from alpha_football.mercado_ia import PRECIO_REMATE
-            return int((int(getattr(jugador, 'valor', 0) or 0) or calcular_valor(jugador)) * PRECIO_REMATE)
+            return cifra_cerrada((int(getattr(jugador, 'valor', 0) or 0) or calcular_valor(jugador)) * PRECIO_REMATE)   # v0.4.18.0
         return int(int(precio_compra(jugador)) * factor_contrato(jugador))   # v3.5.0: último año −25%
     except Exception:
         return int(getattr(jugador, 'valor', 0) or 0)
 
 
+MIN_LIBRES = 10        # v0.4.21.0: con menos libres que esto, se completa con veteranos de relleno
+LIBRES_PASE = "Libre"  # origen en el historial de pases de un agente libre que firma con un club
+
+
+def liberar(estado: dict, jugador, desde: Optional[int] = None) -> None:
+    """v0.4.21.0: el jugador entra a la bolsa real de agentes libres (se guarda con la partida).
+    `desde`: temporada desde la que está sin club (por defecto, la actual)."""
+    jugador.fin_de_contrato = True       # libre de verdad: no se regenera al cambiar de jornada
+    jugador.libre_desde = int(desde if desde is not None else estado.get('temporada', 1) or 1)
+    jugador.transferible = jugador.pide_salir = False
+    jugador.remate = jugador.salida_forzada = False
+    estado.setdefault('free_agents_list', []).append(jugador)
+
+
+def libres_reales(estado: dict) -> list:
+    """Los agentes libres de verdad (los que soltó un club), sin el relleno ni los del editor."""
+    return [j for j in estado.get('free_agents_list') or [] if getattr(j, 'fin_de_contrato', False)]
+
+
+def guardar_libres(estado: dict) -> None:
+    """v0.4.21.0: copia la bolsa real a datos_carrera['libres'] para que viaje con el guardado. Si la
+    partida todavía no armó la lista (recién cargada), no toca lo que ya estaba guardado."""
+    if 'free_agents_list' not in estado:
+        return
+    temporada = int(estado.get('temporada', 1) or 1)
+    estado.setdefault('datos_carrera', {})['libres'] = [
+        dict(j.to_dict(), libre_desde=int(getattr(j, 'libre_desde', temporada) or temporada))
+        for j in libres_reales(estado)]
+
+
+def cargar_libres(estado: dict) -> None:
+    """v0.4.21.0: al cargar la partida, rearma la bolsa real desde datos_carrera['libres']."""
+    from alpha_football.models import Jugador
+    temporada = int(estado.get('temporada', 1) or 1)
+    lista = []
+    for d in (estado.get('datos_carrera') or {}).get('libres') or []:
+        try:
+            j = Jugador.from_dict(d)
+            j.fin_de_contrato = True
+            j.libre_desde = int(d.get('libre_desde', temporada) or temporada)
+            lista.append(j)
+        except Exception as e:
+            logger.error(f"Agente libre guardado inválido {d.get('nombre', '?') if isinstance(d, dict) else '?'}: {e}")
+    estado['free_agents_list'] = lista
+    estado['free_agents_clave'] = None        # la lista de la jornada (editor y relleno) se arma al abrirla
+
+
+def retirar_libres(estado: dict, temporada_cerrada: int) -> list:
+    """v0.4.21.0: al cierre de la temporada, el que lleva una temporada entera sin club se retira."""
+    idos = [j for j in libres_reales(estado)
+            if int(getattr(j, 'libre_desde', temporada_cerrada) or temporada_cerrada) < int(temporada_cerrada)]
+    if idos:
+        estado['free_agents_list'] = [j for j in estado['free_agents_list'] if j not in idos]
+    return idos
+
+
 def asegurar_agentes_libres(estado: dict) -> list:
     """
     Agentes libres de la jornada (antes los generaba la pantalla vieja del mercado). La lista dura
-    toda la jornada; al cambiar de jornada se conservan los que se fueron libres de tu club y los
-    que están analizando tu propuesta de contrato.
+    toda la jornada; al cambiar de jornada se conservan los libres de verdad (los que soltó un club, v0.4.21.0)
+    y los que están analizando tu propuesta de contrato. El relleno de parodias solo aparece si hay menos de
+    MIN_LIBRES y es el mismo toda la temporada.
     """
     liga = estado.get('liga')
     clave = [int(estado.get('temporada', 1) or 1), int(getattr(liga, 'jornada_actual', 1) or 1)]
@@ -63,10 +120,12 @@ def asegurar_agentes_libres(estado: dict) -> list:
     conservar = [j for j in estado.get('free_agents_list') or []
                  if getattr(j, 'fin_de_contrato', False) or (str(j.id), j.nombre_completo) in en_analisis]
     try:
-        from alpha_football.data.free_agents import get_free_agents, libres_editor
+        from alpha_football.data.free_agents import relleno_libres, libres_editor
         ya = {(str(j.id), j.nombre_completo) for j in conservar}      # v4.6.0: + los libres del editor
         del_editor = [j for j in libres_editor(estado) if (str(j.id), j.nombre_completo) not in ya]
-        estado['free_agents_list'] = conservar + del_editor + list(get_free_agents(clave[1]) or [])
+        base = conservar + del_editor
+        estado['free_agents_list'] = base + relleno_libres(clave[0], MIN_LIBRES - len(base),
+                                                           {j.nombre_completo for j in base})
     except Exception as e:
         logger.error(f"No se pudieron generar los agentes libres: {e}")
         estado['free_agents_list'] = conservar
@@ -226,15 +285,71 @@ def mejores(pool: list, n: int = N_MEJORES) -> list:
     return ordenar(pool, 'ovr', True)[:n]
 
 
-def registrar_pase(estado: dict, jugador, de: str, a: str, monto: int, propio: bool) -> None:
-    """Agrega un pase al historial persistente (datos_carrera['historial_pases'])."""
+MAX_FICHAJES_IA_JORNADA = 4     # noticias de fichajes entre clubes de la IA por jornada: quedan las de más puntaje
+BONO_TU_LIGA = 3                # puntaje = media + esto si participa un club de tu liga (tus rivales pesan más)
+
+
+def _noticia_fichaje(estado: dict, jugador, de: str, a: str, monto: int, propio: bool, confirmado: bool) -> None:
+    """v0.4.23.0: un traspaso relevante es noticia.
+    Tuyo (compra o venta): siempre; media >= 85 → importancia 5, >= 80 → 4, resto → 3.
+    Entre clubes de la IA: desde media 80 (76 si participa un club de tu liga); >= 90 → 5, >= 85 → 4, resto → 3;
+    y como la IA mueve cientos de jugadores, solo quedan los MAX_FICHAJES_IA_JORNADA de más puntaje de cada jornada.
+    `confirmado` (lo había adelantado un rumor): se publica siempre y no cuenta para ese tope."""
+    from alpha_football import noticias
+    from alpha_football.mercado_ia import ligas_de_la_partida
+    from alpha_football.salidas import _clave_jornada
+    media = int(getattr(jugador, 'overall', 0) or 0)
+    tuyas = {c.nombre for c in getattr(estado.get('liga'), 'equipos', None) or []}
+    de_tu_liga = str(a) in tuyas or str(de) in tuyas
+    puntaje = media + (BONO_TU_LIGA if de_tu_liga else 0)
+    if propio:
+        importancia = 5 if media >= 85 else 4 if media >= 80 else 3
+    else:
+        if not confirmado and media < (76 if de_tu_liga else 80):
+            return
+        importancia = 5 if media >= 90 else 4 if media >= 85 else 3
+    if not propio and not confirmado:
+        ahora = tuple(_clave_jornada(estado))
+        hoy = [n for n in noticias.lista(estado) if n['tipo'] == 'fichaje' and not n.get('propio')
+               and not n.get('confirmado') and (n['temporada'], n['jornada']) == ahora]
+        if len(hoy) >= MAX_FICHAJES_IA_JORNADA:
+            flojo = min(hoy, key=lambda n: (n.get('puntaje', 0), n['id']))
+            if puntaje <= flojo.get('puntaje', 0):
+                return
+            noticias.retirar(estado, flojo['id'])
+    nombre = f"{jugador.nombre} {jugador.apellido}"
+    libre = str(de).startswith('Libre')
+    pre = "Confirmado: " if confirmado else ""
+    formas = [f"{pre}{nombre} ficha por {a}", f"{pre}{a} ficha a {nombre}", f"{pre}{nombre} cambia de club"]
+    if not libre:
+        formas.insert(0, f"{pre}{nombre} deja {de} y ficha por {a}")
+    clubes = {c.nombre: c for liga, _t, _d in ligas_de_la_partida(estado) for c in liga.equipos}
+    noticias.publicar(estado, 'fichaje', noticias.titular(*formas),
+                      f"{a} cerró el fichaje de {nombre} ({getattr(jugador, 'posicion', '')}, media {media}), "
+                      + ("que llega libre." if libre else f"que llega desde {de} por {dinero_exacto(monto)}."),
+                      importancia=importancia, equipos=[clubes[n] for n in (str(a), str(de)) if n in clubes],
+                      jugadores=[jugador], media=media, propio=bool(propio), confirmado=bool(confirmado),
+                      puntaje=puntaje)
+
+
+def registrar_pase(estado: dict, jugador, de: str, a: str, monto: int, propio: bool,
+                   confirmado: bool = False) -> None:
+    """Agrega un pase al historial persistente (datos_carrera['historial_pases']) y, si es relevante y no
+    es una liberación, publica la noticia del fichaje (`confirmado`: el titular empieza por "Confirmado:")."""
+    if not str(a).startswith('Libre'):
+        try:
+            _noticia_fichaje(estado, jugador, de, a, monto, propio, confirmado)
+        except Exception as e:
+            logger.error(f"No se pudo publicar la noticia del fichaje: {e}")
     try:
         liga = estado.get('liga')
         hist = estado.setdefault('datos_carrera', {}).setdefault('historial_pases', [])
         jugador.remate = False               # v4.6.0: cambió de club: se terminó el remate
+        from alpha_football.correo import _hoy_iso
         hist.append({
             'temporada': int(estado.get('temporada', 1) or 1),
             'jornada': int(getattr(liga, 'jornada_actual', 1) or 1),
+            'fecha': _hoy_iso(estado),       # v0.4.18.0: fecha real ('AAAA-MM-DD'); los registros viejos no la tienen
             'jugador': f"{jugador.nombre} {jugador.apellido}",
             'posicion': getattr(jugador, 'posicion', ''),
             'media': int(getattr(jugador, 'overall', 0) or 0),
@@ -244,7 +359,7 @@ def registrar_pase(estado: dict, jugador, de: str, a: str, monto: int, propio: b
             from alpha_football.market import clave_ventana_traspaso
             jugador.ventana_traspaso = clave_ventana_traspaso(
                 int(estado.get('temporada', 1) or 1), int(getattr(liga, 'jornada_actual', 1) or 1),
-                int(getattr(liga, 'num_jornadas', 22) or 22))
+                int(getattr(liga, 'num_jornadas', 22) or 22), estado=estado)
         # v2.9.1: el tope solo recorta pases ajenos (la IA hace cientos por temporada y
         # borraba los tuyos de la pestaña PROPIO).
         exceso = sum(1 for h in hist if not h.get('propio')) - MAX_HISTORIAL
@@ -290,6 +405,10 @@ def fichar(estado: dict, jugador, club, precio: Optional[int] = None) -> tuple[b
     mi = estado.get('mi_equipo')
     if mi is None:
         return False, "No hay equipo."
+    from alpha_football import sancion_liga as SL       # v0.4.17.0: sancionado por la liga no ficha (ni libres)
+    bloqueo = SL.motivo_bloqueo(estado)
+    if bloqueo:
+        return False, bloqueo
     if getattr(jugador, 'prestamo', None):   # préstamos: no se compra a uno que está a préstamo
         return False, f"{jugador.nombre_completo} está a préstamo: no se puede fichar."
     from alpha_football.market import traspasado_en_ventana
@@ -306,8 +425,9 @@ def fichar(estado: dict, jugador, club, precio: Optional[int] = None) -> tuple[b
         return False, motivo
     from alpha_football import traspasos_pendientes as TP
     if TP.pendiente_de(estado, jugador) is not None:
-        return False, f"Ya está acordado: llega en la jornada {TP.jornada_apertura(estado)}."
-    if not TP.mercado_abierto(estado):
+        return False, f"Ya está acordado: llega {TP.texto_apertura(estado)}."
+    from alpha_football import dia_final as DF      # v0.4.14.0: el último día, un fichaje cuesta 3 horas
+    if not TP.puede_concretar(estado, DF.HORAS_FICHAJE):
         return _fichar_diferido(estado, jugador, club, precio)
     try:
         if club is not None:
@@ -321,6 +441,11 @@ def fichar(estado: dict, jugador, club, precio: Optional[int] = None) -> tuple[b
                 estado.setdefault('datos_carrera', {}).setdefault('fichados_intl', []).append(
                     [club.nombre, jugador.nombre_completo])
             club.balance = int(getattr(club, 'balance', 0) or 0) + precio
+            try:    # v0.4.20.0: si le pagaste la cláusula estando en el mínimo, sube juveniles
+                from alpha_football.mercado_ia import asegurar_minimo_ia
+                asegurar_minimo_ia(estado)
+            except Exception as e_min:
+                logger.error(f"No se pudo completar la plantilla de {club.nombre}: {e_min}")
         elif jugador in (estado.get('free_agents_list') or []):
             estado['free_agents_list'].remove(jugador)
             from alpha_football.data.free_agents import quitar_libre_editor   # v4.6.0
@@ -378,7 +503,7 @@ def _fichar_diferido(estado: dict, jugador, club, precio: int) -> tuple[bool, st
         C.enviar(estado, 'club', f"Fichaje acordado: {jugador.nombre_completo}",
                  f"Se han pagado {dinero_exacto(precio)} a {de}. {aviso}")
         quitar_favorito(estado, jugador)
-        return True, f"¡Acuerdo cerrado! {jugador.nombre_completo} llega en la jornada {TP.jornada_apertura(estado)}."
+        return True, f"¡Acuerdo cerrado! {jugador.nombre_completo} llega {TP.texto_apertura(estado)}."
     except Exception as e:
         logger.error(f"Error al fichar con el mercado cerrado: {e}")
         return False, "No se pudo completar el fichaje."
@@ -387,15 +512,9 @@ def _fichar_diferido(estado: dict, jugador, club, precio: int) -> tuple[bool, st
 # --- Ojeador ──────────────────────────────────────────────────────────────────
 
 def _clave_ventana(estado: dict) -> tuple:
-    """Ventana de mercado actual o la próxima: (temporada, 'inicio'|'invierno')."""
-    from alpha_football.market import ventanas_mercado
-    liga = estado.get('liga')
-    j = int(getattr(liga, 'jornada_actual', 1) or 1)
-    temporada = int(estado.get('temporada', 1) or 1)
-    nombre = next((v[2] for v in ventanas_mercado(getattr(liga, 'num_jornadas', 22)) if j <= v[1]), None)
-    if nombre is None:                 # v0.4.11.0: pasado el invierno, la próxima es el inicio siguiente
-        return (temporada + 1, 'inicio')
-    return (temporada, nombre)
+    """Ventana de mercado actual o la próxima: (temporada, 'inicio'|'invierno'). v0.4.13.0: por fecha."""
+    from alpha_football import temporada as T
+    return T.siguiente_ventana(estado)
 
 
 def necesidades(mi_equipo) -> dict:
@@ -532,11 +651,24 @@ def buscar_en_club(estado: dict, club_id, jugador_id) -> tuple:
     return None, None
 
 
+def plantilla_corta(estado: dict, club) -> bool:
+    """v0.4.20.0: el club (de liga o del banco internacional) que ya no vende sin quedar bajo
+    PLANTILLA_MIN_IA; cuenta las compras que ya le acordaste y esperan la ventana."""
+    from alpha_football.mercado_ia import PLANTILLA_MIN_IA
+    salen = sum(1 for p in (estado.get('datos_carrera') or {}).get('traspasos_pendientes') or []
+                if p.get('tipo') == 'compra' and p.get('origen') == club.nombre)
+    return len(club.jugadores) - salen <= PLANTILLA_MIN_IA
+
+
 def evaluar_compra(estado: dict, jugador, club, monto: int) -> tuple:
     """v3.5.0: ('acepta'|'analiza'|'rechaza', mensaje, contraoferta) para una oferta del user."""
     from alpha_football.finanzas import asegurar_contrato
     asegurar_contrato(jugador)
     monto = int(monto or 0)
+    from alpha_football import sancion_liga as SL       # v0.4.17.0: se sabe en la primera oferta
+    bloqueo = SL.motivo_bloqueo(estado)
+    if bloqueo:
+        return 'rechaza', bloqueo, 0
     p_pr = getattr(jugador, 'prestamo', None)
     if p_pr:   # préstamos: no se vende a uno que está a préstamo (ni tu propio cedido)
         mi = estado.get('mi_equipo')
@@ -551,6 +683,8 @@ def evaluar_compra(estado: dict, jugador, club, monto: int) -> tuple:
     clausula = int(jugador.clausula or 0)
     if monto >= clausula > 0:
         return 'acepta', f"Pagas la cláusula: {club.nombre} no puede negarse.", 0
+    if plantilla_corta(estado, club) and not getattr(jugador, 'remate', False):     # v0.4.20.0 (v0.4.21.0: un remate no se frena)
+        return 'rechaza', f"{club.nombre} tiene la plantilla corta: solo por la cláusula de {dinero_exacto(clausula)}.", clausula
     from alpha_football.data.clasicos import es_clasico
     if es_clasico(club, estado.get('mi_equipo')) and int(getattr(jugador, 'moral', 70)) >= MORAL_BAJA:
         return 'rechaza', f"Es tu clásico: solo por la cláusula de {dinero_exacto(clausula)}.", clausula
@@ -558,14 +692,20 @@ def evaluar_compra(estado: dict, jugador, club, monto: int) -> tuple:
     if monto >= minimo:
         return 'acepta', f"{club.nombre} acepta {dinero_exacto(monto)}.", 0
     if monto >= int(minimo * UMBRAL_ANALISIS):
+        from alpha_football import dia_final as DF      # v0.4.14.0
+        ok, hora = DF.analisis(estado)
+        if not ok:
+            return 'rechaza', f"{club.nombre}: no hay tiempo para analizarlo hoy.", minimo
         dc = estado.setdefault('datos_carrera', {})
         pend = [a for a in dc.get('analisis_compras', []) if a.get('jugador_id') != jugador.id]
         pend.append({'jugador_id': jugador.id, 'club_id': club.id, 'club': club.nombre,
                      'jugador': jugador.nombre_completo, 'monto': monto,
                      'jornada': int(getattr(estado.get('liga'), 'jornada_actual', 1) or 1),
                      'temporada': int(estado.get('temporada', 1) or 1)})
+        if hora is not None:
+            pend[-1]['hora_resp'] = hora
         dc['analisis_compras'] = pend
-        return 'analiza', f"{club.nombre}: \"Lo analizamos\". Te responden por correo en la próxima jornada.", 0
+        return 'analiza', f"{club.nombre}: \"Lo analizamos\". {DF.texto_respuesta(hora)}", 0
     return 'rechaza', f"{club.nombre} rechaza. Pide {dinero_exacto(minimo)}.", minimo
 
 
@@ -577,10 +717,12 @@ def reanudar_compra(estado: dict, compra: dict) -> Optional[str]:
     motivo = None
     if int(compra.get('temporada', -1)) != int(estado.get('temporada', 1) or 1):
         motivo = "El acuerdo era de otra temporada."
-    elif liga is None or not ventana_mercado_abierta(liga.jornada_actual, liga.num_jornadas):
+    elif liga is None or not ventana_mercado_abierta(liga.jornada_actual, liga.num_jornadas, estado=estado):
         motivo = "La ventana de fichajes está cerrada."
     elif j is None:
         motivo = "El jugador ya no está en ese club."
+    from alpha_football import sancion_liga as SL       # v0.4.17.0: el corto (el correo recorta el aviso a 60)
+    motivo = SL.motivo_bloqueo(estado, corto=True) or motivo
     if motivo:
         estado['correo_aviso'] = motivo
         return None
@@ -624,6 +766,10 @@ def analizar_contrato(estado: dict, neg: dict) -> Optional[str]:
         return None
     if not 1 <= anios <= 5 or (j.edad >= EDAD_CONTRATO_CORTO and anios > ANIOS_MAX_VETERANO):
         return None
+    from alpha_football import dia_final as DF          # v0.4.14.0: sin 3 horas no hay análisis (rechazo normal)
+    ok, hora = DF.analisis(estado)
+    if not ok:
+        return None
     club = neg.get('club')
     dc = estado.setdefault('datos_carrera', {})
     pend = [a for a in dc.get('analisis_contratos', []) if a.get('jugador_id') != j.id]
@@ -633,8 +779,10 @@ def analizar_contrato(estado: dict, neg: dict) -> Optional[str]:
                  'clausula_mult': float(neg['clausula_mult']),
                  'jornada': int(getattr(estado.get('liga'), 'jornada_actual', 1) or 1),
                  'temporada': int(estado.get('temporada', 1) or 1)})
+    if hora is not None:
+        pend[-1]['hora_resp'] = hora
     dc['analisis_contratos'] = pend
-    return f"{j.nombre_completo}: \"Lo analizo\". Te responde por correo en la próxima jornada."
+    return f"{j.nombre_completo}: \"Lo analizo\". {DF.texto_respuesta(hora, uno=True)}"
 
 
 def _fijar_contrato(jugador, salario: int, anios: int, clausula_mult: float) -> None:
@@ -682,4 +830,9 @@ def iniciar_negociacion(estado: dict, jugador, club, modo: str, volver: str) -> 
     }
     if modo == 'prestamo':
         estado['neg'].update({'meses': 6, 'pct': 50})    # duración y % del sueldo que pagas tú
+    if modo in ('fichaje', 'prestamo'):                 # v0.4.17.0: sancionado por la liga: se ve al abrir
+        from alpha_football import sancion_liga as SL
+        bloqueo = SL.motivo_bloqueo(estado)
+        if bloqueo:
+            estado['neg']['msg'] = (bloqueo, 'rojo')
     return 'negociacion_screen'

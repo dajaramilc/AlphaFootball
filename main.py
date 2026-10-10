@@ -145,6 +145,7 @@ MODULOS_PANTALLA = {
     'otras_ligas_screen': 'alpha_football.ui.otras_ligas_screen',
     'plantilla_screen': 'alpha_football.ui.plantilla_screen',
     'cantera_screen': 'alpha_football.ui.cantera_screen',              # v4.8.0
+    'calendario_screen': 'alpha_football.ui.calendario_screen',        # v0.4.11.0
     'buscador_screen': 'alpha_football.ui.buscador_screen',
     'favoritos_screen': 'alpha_football.ui.favoritos_screen',
     'historial_pases_screen': 'alpha_football.ui.historial_pases_screen',
@@ -152,12 +153,14 @@ MODULOS_PANTALLA = {
     'objetivos_screen': 'alpha_football.ui.objetivos_screen',
     'correo_screen': 'alpha_football.ui.correo_screen',
     'notificaciones_screen': 'alpha_football.ui.notificaciones_screen',      # v0.4.10.0
+    'noticias_screen': 'alpha_football.ui.noticias_screen',                  # v0.4.23.0
     'despido_screen': 'alpha_football.ui.despido_screen',
     'finanzas_screen': 'alpha_football.ui.finanzas_screen',
     'patrocinios_screen': 'alpha_football.ui.patrocinios_screen',      # v4.9.0
     'negociacion_screen': 'alpha_football.ui.negociacion_screen',
     'contrato_dt_screen': 'alpha_football.ui.contrato_dt_screen',      # v3.2.0
     'veredicto_screen': 'alpha_football.ui.veredicto_screen',
+    'gala_balon_screen': 'alpha_football.ui.gala_balon_screen',        # v0.4.17.0
     'ofertas_dt_screen': 'alpha_football.ui.ofertas_dt_screen',        # v3.4.0
 }
 
@@ -318,7 +321,7 @@ def filtrar_eventos_ayuda(estado: dict, eventos_frame: list) -> list:
 SIN_ATAJOS_GLOBALES = {'menu', 'match_screen', 'prepartido_screen', 'options_screen', 'edit_screen',
                        'buscador_screen', 'despido_screen', 'veredicto_screen', 'contrato_dt_screen',
                        'resumen_temporada_screen', 'promo_releg_screen', 'save_slots_screen',
-                       'negociacion_screen'}
+                       'negociacion_screen', 'gala_balon_screen'}
 
 
 def procesar_atajos_globales(estado: dict, eventos_frame: list) -> list:
@@ -537,8 +540,21 @@ def main():
             logger.warning(f"Modo SCALED no disponible, se usa ventana normal: {e_modo}")
             screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
             pantalla_completa = False
-        pygame.display.set_caption("Alpha Football v0.4.10.0")
+        from alpha_football import TITULO
+        pygame.display.set_caption(TITULO)       # v0.4.15.0: la versión sale del archivo VERSION
         clock = pygame.time.Clock()
+
+        # v0.4.15.0: auto-actualización (una vez, con la ventana creada y antes del menú)
+        aviso_version = ''
+        try:
+            from alpha_football import actualizador
+            resultado_act = actualizador.al_iniciar()
+            if resultado_act.get('reiniciar'):
+                pygame.quit()
+                actualizador.reiniciar()
+            aviso_version = resultado_act.get('aviso') or ''
+        except Exception as e_act:
+            logger.error(f"No se pudo revisar si hay una versión nueva: {e_act}")
         
         # Estado inicial vacío de la sesión
         estado = {
@@ -555,6 +571,7 @@ def main():
             'audio_activado': True,
             'volumen': 0.5
         }
+        estado['aviso_version'] = aviso_version      # v0.4.15.0: el menú lo muestra si hay versión nueva sin instalar
         
         # Inicializar música de fondo
         try:
@@ -716,6 +733,14 @@ def main():
                     _dibujar_oferta_toast(screen, estado)
             except Exception as e_toast:
                 logger.debug(f"No se pudo mostrar el aviso de oferta: {e_toast}")
+
+            # v0.4.18.0: el último día de fichajes, las horas que cuesta un fichaje o una venta corren a la vista
+            try:
+                if estado.get('anim_horas') and not estado.get('ayuda_abierta'):
+                    from alpha_football.ui import horas_anim
+                    horas_anim.dibujar(screen, estado)
+            except Exception as e_horas:
+                logger.debug(f"No se pudo mostrar la animación de las horas: {e_horas}")
 
             pygame.display.flip()
             clock.tick(FPS)

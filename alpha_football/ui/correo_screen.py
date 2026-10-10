@@ -107,6 +107,12 @@ def _ir(estado: dict, msg: dict) -> Optional[str]:
     estado['volver_notif'] = destino            # v0.4.11.0: VOLVER/ESC regresa a este mensaje
     if destino == 'league_screen':              # el destino es una pestaña del hub
         estado['volver_notif_tab'] = estado.get('hub_tab')
+    if destino == 'plantilla_screen':           # v0.4.14.1: la plantilla abre con el jugador del mensaje elegido
+        j = C.jugador_de(estado, msg)
+        plantel = getattr(estado.get('mi_equipo'), 'jugadores', []) or []
+        idx = next((i for i, x in enumerate(plantel) if x is j), None) if j is not None else None
+        if idx is not None:
+            estado['plantilla_sel'], estado['plantilla_centrar'] = idx, True
     return destino
 
 
@@ -200,13 +206,20 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             if inicio + i == sel:
                 pygame.draw.rect(screen, (40, 60, 95), r, border_radius=6)
             col = 'dorado' if not m.get('leido') else 'blanco'
-            draw_text(screen, f"{C.REMITENTES.get(m['remitente'], m['remitente'])}  ·  T{m['temporada']} J{m['jornada']}",
+            draw_text(screen, f"{C.REMITENTES.get(m['remitente'], m['remitente'])}  ·  {C.texto_fecha(m)}",   # v0.4.14.1
                       (r.x + 8, r.y + 2), size='sm', color='azul', shadow=False)
             draw_text(screen, m['asunto'][:52], (r.x + 8, r.y + 20), size='sm', color=col, shadow=False)
         m = mensajes[sel]
         x, y = R_MSG.x + 20, R_MSG.y + 16
-        draw_text(screen, C.REMITENTES.get(m['remitente'], m['remitente']), (x, y), size='sm', color='azul')
-        for k, linea in enumerate(_envolver(m['asunto'], R_MSG.width - 40, 'md')[:2]):
+        draw_text(screen, f"{C.REMITENTES.get(m['remitente'], m['remitente'])}  ·  {C.texto_fecha(m)}", (x, y),
+                  size='sm', color='azul')
+        ancho_ficha = 0                 # v0.4.14.1: el que escribe, con su posición y su media de hoy
+        j_msg = C.jugador_de(estado, m) if m.get('remitente') == 'jugador' else None
+        if j_msg is not None:
+            ficha = f"{j_msg.posicion} · {j_msg.overall}"
+            ancho_ficha = get_font('md').size(ficha)[0] + 16
+            draw_text(screen, ficha, (R_MSG.right - 4 - ancho_ficha, y), size='md', color='verde')
+        for k, linea in enumerate(_envolver(m['asunto'], R_MSG.width - 40 - ancho_ficha, 'md')[:2]):
             draw_text(screen, linea, (x, y + 26 + k * 30), size='md', color='dorado')
         for k, linea in enumerate(_envolver(C.formatear(estado, m), R_MSG.width - 40)[:LINEAS_CUERPO - (6 if m.get('evento') else 0)]):
             draw_text(screen, linea, (x, y + 96 + k * 23), size='sm', color='blanco')

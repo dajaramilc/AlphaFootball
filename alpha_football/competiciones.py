@@ -591,8 +591,60 @@ def _pool(estado: dict, tipo: str) -> dict:
     if fichados:   # los que el user les fichó (el pool se rehace desde los datos del juego)
         for eq in equipos.values():
             eq.jugadores = [j for j in eq.jugadores if (eq.nombre, j.nombre_completo) not in fichados]
+    for eq in equipos.values():   # v0.4.20.0: ninguno con menos de 16
+        try:
+            completar_club_intl(estado, eq)
+        except Exception as e_min:
+            logger.error(f"competiciones: no se pudo completar la plantilla de {eq.nombre}: {e_min}")
     cache[tipo] = {'_temporada': temporada, 'equipos': equipos}
     return equipos
+
+
+def completar_club_intl(estado: dict, eq) -> int:
+    """
+    v0.4.20.0: ningún club del banco internacional queda con menos de PLANTILLA_MIN_IA: se completa con
+    juveniles. Salen de una semilla (club, temporada, hueco): son los mismos cada vez que se rearma el
+    banco, y el que ya le fichaste no vuelve. Retorna cuántos subió.
+    """
+    from alpha_football.mercado_ia import PLANTILLA_MIN_IA
+    if len(eq.jugadores) >= PLANTILLA_MIN_IA or not eq.jugadores:
+        return 0
+    from alpha_football.models import Jugador
+    from alpha_football.cantera import PESOS_POSICION
+    from alpha_football.market import calcular_valor
+    from alpha_football.nombres import _pools
+    from alpha_football.retiros import _atributos_para, NOMBRES_POR_PAIS
+    from alpha_football.data.nacionalidades import PAIS_CLUB
+    from alpha_football.data.internacional import RELLENO_LIBERTADORES
+    temporada = int(estado.get('temporada', 1) or 1)
+    fichados = {tuple(x) for x in (estado.get('datos_carrera') or {}).get('fichados_intl', []) if len(x) == 2}
+    pais = PAIS_CLUB.get(eq.nombre, '')
+    hispano = pais not in NOMBRES_POR_PAIS and eq.nombre in RELLENO_LIBERTADORES   # Chile, Perú...: nombres en español
+    piso = int(40 + float(getattr(eq, 'estrellas', 3.0) or 3.0) * 5)       # como finanzas.generar_reemplazo
+    id_base = (int(getattr(eq.jugadores[0], 'id', 0) or 0) // 60) * 60 + 40    # cada club del banco tiene 60 ids
+    subidos = 0
+    for hueco in range(20):
+        if len(eq.jugadores) >= PLANTILLA_MIN_IA:
+            break
+        rng = random.Random(f"relleno-{eq.nombre}-{temporada}-{hueco}")
+        nombres, apellidos = _pools(rng.choice(('Argentina', 'Colombia')) if hispano else pais, rng)
+        nombre, apellido = rng.choice(nombres), rng.choice(apellidos)
+        posicion = rng.choices([p for p, _ in PESOS_POSICION], weights=[w for _, w in PESOS_POSICION])[0]
+        ovr = piso + rng.randint(0, 8)
+        potencial, edad = min(99, ovr + rng.randint(10, 20)), rng.randint(16, 18)
+        ataque, defensa, fisico, tecnica, mental = _atributos_para(posicion, ovr, rng)
+        completo = f"{nombre} {apellido}"
+        if (eq.nombre, completo) in fichados or any(j.nombre_completo == completo for j in eq.jugadores):
+            continue
+        j = Jugador(nombre=nombre, apellido=apellido, posicion=posicion,
+                    ataque=ataque, defensa=defensa, fisico=fisico, tecnica=tecnica, mental=mental,
+                    id=id_base + hueco, edad=edad, potencial=potencial, nacionalidad=pais)
+        j.valor = calcular_valor(j)
+        eq.jugadores.append(j)
+        subidos += 1
+    if subidos:
+        eq.alineacion_activa = None
+    return subidos
 
 
 def _nombre_pais(liga_id: str) -> str:
@@ -714,6 +766,49 @@ def _num_jornadas(estado: dict) -> int:
     return j if j >= 2 else 22
 
 
+# v0.4.16.0: con los continentes desfasados (temporadas.py) cada copa pertenece a su continente
+CONTINENTE_COPA = {'champions': 'europa', 'libertadores': 'sudamerica'}
+
+
+def _desfase(estado: dict) -> bool:
+    try:
+        from alpha_football import temporadas
+        return temporadas.activo(estado)
+    except Exception as e_d:
+        logger.error(f"competiciones: no se pudo leer el desfase: {e_d}")
+        return False
+
+
+def _vigente(estado: dict, c, tipo: str) -> bool:
+    """¿Esa copa es la de la temporada en curso? Con desfase vale por el año de su continente
+    (c['anio']); sin él, por tu temporada, como siempre."""
+    if not isinstance(c, dict):
+        return False
+    if _desfase(estado):
+        from alpha_football import temporadas
+        return c.get('anio') == temporadas.anio(estado, CONTINENTE_COPA.get(tipo, 'europa'))
+    return c.get('temporada') == int(estado.get('temporada', 1) or 1)
+
+
+def _jornada_copa(estado: dict, tipo: str) -> int:
+    """Jornada de liga que marca el ritmo de esa copa: la tuya; con desfase, la copa del otro continente
+    sigue la jornada de las ligas de 1ª de su continente."""
+    if not _desfase(estado):
+        return _jornada_actual(estado)
+    from alpha_football import temporadas, calendario as CAL
+    cont = CONTINENTE_COPA.get(tipo, 'europa')
+    if cont == CAL.continente(estado):
+        return _jornada_actual(estado)
+    jornadas = []
+    for liga, _t, division in temporadas.ligas(estado, temporadas.paises_de(cont)):
+        if int(division or 1) != 1:
+            continue
+        cal = getattr(liga, 'calendario', None) or []
+        j = int(getattr(liga, 'jornada_actual', 1) or 1)
+        jornadas.append(int(getattr(liga, 'num_jornadas', j) or j) + 1 if cal and all(p.jugado for p in cal) else j)
+    return min(jornadas) if jornadas else _jornada_actual(estado)
+
+
 def _agregar_partido(c: dict, fecha: int, fase: str, local: str, visitante: str, **extra) -> dict:
     k = sum(1 for p in c['partidos'] if p['fecha'] == fecha)
     p = {'id': f"{c['tipo']}-{fecha}-{k}", 'fecha': int(fecha), 'fase': fase, 'local': local,
@@ -731,6 +826,9 @@ def _nueva_copa(estado: dict, tipo: str, rng) -> dict:
          'num_jornadas': jornadas, 'fechas_jornada': [jornada_de_fecha(i, n, jornadas) for i in range(n)],
          'partidos': [], 'llaves': [], 'fase_actual': ETAPAS[tipo][0][0], 'campeon': None,
          'mejor_fase': {x['nombre']: FASES[tipo][0] for x in clubes}, 'ranking': {}, 'stats': {}}
+    if _desfase(estado):                                 # v0.4.16.0: la copa es de la temporada de su continente
+        from alpha_football import temporadas
+        c['anio'] = temporadas.anio(estado, CONTINENTE_COPA.get(tipo, 'europa'))
     etiqueta = ETAPAS[tipo][0][0]
     if tipo == 'champions':
         for p in sorteo_fase_liga(clubes, rng):
@@ -742,22 +840,25 @@ def _nueva_copa(estado: dict, tipo: str, rng) -> dict:
     return c
 
 
-def iniciar_temporada(estado: dict, rng=None, forzar: bool = False) -> None:
+def iniciar_temporada(estado: dict, rng=None, forzar: bool = False, tipos=None) -> None:
     """
     v3.8.0: crea datos_carrera['copas'] = {'champions': {...}, 'libertadores': {...}} para la
     temporada actual. Idempotente: si ya están las de esta temporada no hace nada (salvo `forzar`).
+    v0.4.16.0: `tipos` limita qué copas se rehacen (cada continente sortea la suya al empezar su
+    temporada); las demás se conservan tal cual.
     """
     dc = estado.get('datos_carrera')
     if not isinstance(dc, dict):
         dc = estado['datos_carrera'] = {}
-    temporada = int(estado.get('temporada', 1) or 1)
-    actuales = dc.get('copas') or {}
-    if not forzar and all(isinstance(actuales.get(t), dict) and actuales[t].get('temporada') == temporada
-                          for t in N_FECHAS):
+    actuales = dc.get('copas') if isinstance(dc.get('copas'), dict) else {}
+    pedidos = ('champions', 'libertadores') if tipos is None else tuple(tipos)
+    rehacer = [t for t in ('champions', 'libertadores')
+               if t in pedidos and (forzar or not _vigente(estado, actuales.get(t), t))]
+    if not rehacer:
         return
     rng = rng or random.Random()
-    copas = {}
-    for tipo in ('champions', 'libertadores'):
+    copas = {t: c for t, c in actuales.items() if t not in rehacer}
+    for tipo in rehacer:
         try:
             copas[tipo] = _nueva_copa(estado, tipo, rng)
         except Exception as e_c:
@@ -769,10 +870,9 @@ def iniciar_temporada(estado: dict, rng=None, forzar: bool = False) -> None:
 def _asegurar(estado: dict, rng=None) -> None:
     """Crea las copas si faltan o si son de otra temporada (save viejo / cambio de temporada)."""
     try:
-        temporada = int(estado.get('temporada', 1) or 1)
         copas = (estado.get('datos_carrera') or {}).get('copas') or {}
-        if any(not isinstance(copas.get(t), dict) or copas[t].get('temporada') != temporada for t in N_FECHAS):
-            iniciar_temporada(estado, rng, forzar=True)
+        if any(not _vigente(estado, copas.get(t), t) for t in N_FECHAS):
+            iniciar_temporada(estado, rng)               # v0.4.16.0: solo rehace las que ya no valen
     except Exception as e_a:
         logger.error(f"competiciones: no se pudieron asegurar las copas: {e_a}")
 
@@ -1061,19 +1161,19 @@ def avanzar(estado: dict, rng=None) -> None:
     """v3.8.0: tras cada jornada de liga del user: juega las fechas vencidas de ambas copas."""
     _asegurar(estado, rng)
     rng = rng or random.Random()
-    jornada = _jornada_actual(estado)
     for t in ('champions', 'libertadores'):
         try:
-            _avanzar_copa(estado, copa(estado, t), rng, jornada, jugar_user=False)
+            _avanzar_copa(estado, copa(estado, t), rng, _jornada_copa(estado, t), jugar_user=False)
         except Exception as e_av:
             logger.error(f"competiciones: error avanzando la {t}: {e_av}")
 
 
-def simular_todo(estado: dict, rng=None) -> None:
-    """v3.8.0: termina ambas copas (fin de temporada), incluido el partido del user si no lo jugó."""
+def simular_todo(estado: dict, rng=None, tipos=None) -> None:
+    """v3.8.0: termina ambas copas (fin de temporada), incluido el partido del user si no lo jugó.
+    v0.4.16.0: con `tipos`, solo esas (el cierre de un continente termina la suya)."""
     _asegurar(estado, rng)
     rng = rng or random.Random()
-    for t in ('champions', 'libertadores'):
+    for t in (('champions', 'libertadores') if tipos is None else tuple(tipos)):
         try:
             _avanzar_copa(estado, copa(estado, t), rng, None, jugar_user=True)
         except Exception as e_st:

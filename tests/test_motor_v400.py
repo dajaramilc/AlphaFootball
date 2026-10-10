@@ -79,9 +79,9 @@ def test_notas_desde_eventos():
 def test_copia_independiente():
     a, b, ctx = ctx_basico(); c2 = ctx.copia(); j = ctx.en_cancha['l'][2]
     PC.aplicar_evento(c2, {'minuto': 5, 'tipo': 'lesion', 'equipo_id': a.id, 'lado': 'l', 'jugador': j,
-                           'partidos': 2, 'detalle': ''})
+                           'dias': 14, 'detalle': ''})
     assert j in ctx.en_cancha['l'] and j not in c2.en_cancha['l'] and K(j) not in ctx.fuera
-    assert j.lesion_partidos == 0          # la lesión se escribe al cierre, no durante el partido
+    assert j.lesion_dias == 0          # la lesión se escribe al cierre, no durante el partido
     print("  test_copia_independiente: OK")
 
 
@@ -210,10 +210,10 @@ def test_desarrollo_sin_stats_compat():
 
 def test_incidencias_del_partido_se_aplican():
     from alpha_football.energia import cerrar_partido
-    liga, a, b = dos_equipos(); j = _once_titular(a)[0]; j.lesion_partidos = 0
+    liga, a, b = dos_equipos(); j = _once_titular(a)[0]; j.lesion_dias = 0
     inc = cerrar_partido(a, {x.id: 90 for x in _once_titular(a)},
-                         incidencias=[{'tipo': 'lesion', 'jugador': j, 'jugador_id': K(j), 'partidos': 3}])
-    assert j.lesion_partidos == 3 and inc[0]['jugador'] is j and inc[0]['tipo'] == 'lesion'
+                         incidencias=[{'tipo': 'lesion', 'jugador': j, 'jugador_id': K(j), 'dias': 21}])
+    assert j.lesion_dias == 21 and inc[0]['jugador'] is j and inc[0]['tipo'] == 'lesion'
     otros = [x for x in a.jugadores if x is not j]
     random.seed(0)
     for _ in range(50):
@@ -228,13 +228,13 @@ def test_partido_ia_con_fisico():
     liga, a, b = dos_equipos(); random.seed(2)
     for eq in (a, b):
         for j in eq.jugadores:
-            j.lesion_partidos = 0; j.partidos_sancion = 0
+            j.lesion_dias = 0; j.partidos_sancion = 0
     for _ in range(40):
         r = simular_partido(a, b)
         les = [i for i in r.ctx.incidencias if i['tipo'] == 'lesion']
         if les:
             break
-    assert les and all(r.ctx.jugadores[i['jugador_id']].lesion_partidos >= 1 for i in les)
+    assert les and all(r.ctx.jugadores[i['jugador_id']].lesion_dias >= 1 for i in les)
     print("  test_partido_ia_con_fisico: OK")
 
 

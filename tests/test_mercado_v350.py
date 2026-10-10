@@ -59,7 +59,7 @@ def test_oferta_ia_con_descuento_contrato():
     rivales = [x for x in e['liga'].equipos if x is not mi]
     for r in rivales: r.balance = 10**10
     of = M.crear_oferta_ui(mi, rivales, 1, 10, rng=RngFijo(0.0))
-    assert of and of['monto'] == int(of['jugador'].valor * 0.95 * 0.75)
+    assert of and of['monto'] == M.cifra_cerrada(of['jugador'].valor * 0.95 * 0.75)    # v0.4.18.0: cifra cerrada
     print("  test_oferta_ia_con_descuento_contrato: OK")
 
 

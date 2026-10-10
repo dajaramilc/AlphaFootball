@@ -86,39 +86,44 @@ def regreso(estado: dict, meses: int) -> list:
 
 
 def _regreso(estado: dict, meses: int) -> tuple:
-    """(temporada, nombre de la ventana, jornada) del regreso."""
-    from alpha_football.market import ventanas_mercado
-    t, j, n = _momento(estado)
-    vs = ventanas_mercado(n)
-    if _abierto(estado):
-        k = next(i for i, v in enumerate(vs) if v[0] <= j <= v[1])
-    else:
-        k = next((i for i, v in enumerate(vs) if v[0] > j), None)
-        if k is None:
-            k, t = 0, t + 1
+    """(temporada, nombre de la ventana, jornada) del regreso: el primer día de la ventana que
+    corresponde a la duración (v0.4.13.0: las ventanas son fechas, temporada.py)."""
+    from alpha_football import temporada as T
+    t, nombre = T.siguiente_ventana(estado)               # la abierta hoy o, si está cerrado, la próxima
     if int(meses) >= 12:
-        return t + 1, vs[k][2], vs[k][0]
-    k += 1
-    if k >= len(vs):
-        # v0.4.11.0 (sin ventana de cierre): desde el invierno, 6 meses = el inicio de la siguiente
-        k, t = 0, t + 1
-    return t, vs[k][2], vs[k][0]
+        t += 1
+    else:
+        k = T.ORDEN.index(nombre) + 1
+        if k >= len(T.ORDEN):                              # desde el invierno, 6 meses = el inicio de la siguiente
+            t, nombre = t + 1, T.ORDEN[0]
+        else:
+            nombre = T.ORDEN[k]
+    abre = T.ventanas(estado, t)[nombre][0]
+    return t, nombre, T.jornada_de(estado, abre, t)
 
 
-def _vuelve(p: dict, n: int) -> list:
-    """Regreso con la jornada recalculada por su ventana (la liga pudo cambiar de tamaño). La ventana
-    se guarda por nombre; si la liga ya no tiene invierno, vale el cierre. Índices = saves de antes."""
-    from alpha_football.market import ventanas_mercado
+def _fecha_regreso(estado: dict, t: int, nombre: str) -> str:
+    """Primer día de la ventana de regreso (ISO), para los textos."""
+    from alpha_football import temporada as T
+    return T.ventanas(estado, t)[nombre][0].isoformat()
+
+
+def _vuelve(p: dict, n: int, estado: Optional[dict] = None) -> list:
+    """Regreso con la jornada recalculada por su ventana (la liga pudo cambiar de tamaño; v0.4.13.0: o las
+    ventanas pasaron a fechas). La ventana se guarda por nombre; 'cierre' (saves de antes) vale el inicio
+    de la temporada siguiente; los índices son saves aún más viejos."""
+    from alpha_football import temporada as T
     v = list(p.get('vuelve') or [0, 0])
     k = p.get('ventana')
-    vs = ventanas_mercado(n)
-    if k == 'cierre':                  # v0.4.11.0: save de antes; esa ventana ya no existe
-        return [int(v[0]) + 1, vs[0][0]]
-    if isinstance(k, str):
-        w = next((x for x in vs if x[2] == k), vs[-1])
-        v[1] = w[0]
-    elif isinstance(k, int) and 0 <= k < len(vs):
-        v[1] = vs[k][0]
+    if estado is None:
+        return v
+    if k == 'cierre':
+        t = int(v[0]) + 1
+        return [t, T.jornada_de(estado, T.ventanas(estado, t)['inicio'][0], t)]
+    nombre = k if k in T.ORDEN else (T.ORDEN[k] if isinstance(k, int) and 0 <= k < len(T.ORDEN) else None)
+    if nombre is not None:
+        t = int(v[0])
+        v[1] = T.jornada_de(estado, T.ventanas(estado, t)[nombre][0], t)
     return v
 
 
@@ -175,16 +180,30 @@ def _afecta_al_user(estado: dict, *clubes) -> bool:
     return mi is not None and mi in clubes
 
 
-def _texto_regreso(vuelve: list) -> str:
+def _texto_regreso(vuelve: list, fecha: Optional[str] = None) -> str:
+    if fecha:                                        # v0.4.13.0: la fecha manda
+        from datetime import date as _d
+        from alpha_football import calendario as CAL
+        return f"el {CAL.texto_fecha(_d.fromisoformat(fecha))}"
     return f"la jornada {vuelve[1]} de la temporada {vuelve[0]}"
 
 
+def _cuando_acordado(p: dict) -> str:
+    """'el vie 1 ene 2027' o, en saves viejos, 'en la jornada N'."""
+    if p.get('desde_fecha'):
+        from datetime import date as _d
+        from alpha_football import calendario as CAL
+        return f"el {CAL.texto_fecha(_d.fromisoformat(p['desde_fecha']))}"
+    return f"en la jornada {(p.get('desde') or ['?', '?'])[1]}"
+
+
 def _periodo(p: dict) -> str:
-    """'Periodo: 6 meses (desde J3 T1 hasta J11 T1).'"""
+    """'Periodo: 6 meses (desde J3 T1 hasta J11 T1).' (con fecha de regreso: '… hasta el vie 1 ene 2027.')"""
     d, v = p.get('desde'), p.get('vuelve') or ['?', '?']
     dur = "1 año" if int(p.get('meses', 6) or 6) >= 12 else "6 meses"
     desde = f"desde J{d[1]} T{d[0]} " if d else ""          # préstamos de saves previos no la tienen
-    return f"Periodo: {dur} ({desde}hasta J{v[1]} T{v[0]})."
+    hasta = _texto_regreso(v, p.get('vuelve_fecha')) if p.get('vuelve_fecha') else f"J{v[1]} T{v[0]}"
+    return f"Periodo: {dur} ({desde}hasta {hasta})."
 
 
 def _sueldo(estado: dict, p: dict) -> str:
@@ -207,11 +226,11 @@ def _correo_prestamo(estado: dict, jugador_o_nombre, p: dict, evento: str, motiv
         if evento == 'acordado':
             asunto = f"Préstamo acordado: {nombre}"
             cuerpo = (f"{nombre} {'llegará desde ' + str(p.get('dueno')) if llega else 'se irá a ' + str(p.get('club'))} "
-                      f"a préstamo en la jornada {(p.get('desde') or ['?', '?'])[1]}, en cuanto se abra el mercado.")
+                      f"a préstamo {_cuando_acordado(p)}, en cuanto se abra el mercado.")
         elif evento == 'ida':
             asunto = f"{nombre} {'llegó a préstamo' if llega else 'se fue cedido'}"
             cuerpo = (f"{nombre} {'llegó desde ' + str(p.get('dueno')) if llega else 'se fue a ' + str(p.get('club'))} "
-                      f"a préstamo hasta {_texto_regreso(p.get('vuelve') or ['?', '?'])}.")
+                      f"a préstamo hasta {_texto_regreso(p.get('vuelve') or ['?', '?'], p.get('vuelve_fecha'))}.")
         else:
             inicio = f"{(motivo or 'terminó el préstamo').capitalize()}: {nombre} dejó {p.get('club', 'el club')}"
             if salida == 'libre':
@@ -240,7 +259,7 @@ def _mover_ida(estado: dict, jugador, dueno, destino, reg: dict) -> None:
     if destino is not _mi(estado):
         destino.alineacion_activa = None
     t, jor, _n = _momento(estado)
-    jugador.prestamo = {k: reg[k] for k in ('dueno', 'club', 'pct_dueno', 'vuelve', 'meses', 'ventana') if k in reg}
+    jugador.prestamo = {k: reg[k] for k in ('dueno', 'club', 'pct_dueno', 'vuelve', 'meses', 'ventana', 'vuelve_fecha') if k in reg}
     jugador.prestamo['desde'] = [t, jor]
     _invalidar()
     jugador.transferible = False
@@ -258,6 +277,12 @@ def _mover_vuelta(estado: dict, jugador, motivo: str = "terminó el préstamo") 
     p = dict(jugador.prestamo or {})
     t, jor, _n = _momento(estado)
     p['vuelve'] = [t, jor]                 # para el correo: la fecha real (CONCLUIR, fin de contrato)
+    if p.get('vuelve_fecha'):              # v0.4.13.0: lo mismo con la fecha: la real (hoy), salvo que ya se hubiera llegado a la prevista
+        try:
+            from alpha_football import temporada as _T
+            p['vuelve_fecha'] = min(str(p['vuelve_fecha']), _T.fecha(estado).isoformat())
+        except Exception as e_fv:
+            logger.error(f"No se pudo fijar la fecha real de la vuelta: {e_fv}")
     club = next((eq for eq in _equipos(estado) if jugador in eq.jugadores), None)
     dueno = _club(estado, p.get('dueno'))
     if club is not None:
@@ -280,20 +305,25 @@ def _mover_vuelta(estado: dict, jugador, motivo: str = "terminó el préstamo") 
 
 def iniciar(estado: dict, jugador, dueno, destino, meses: int, pct_dueno: int) -> str:
     """Préstamo acordado. Con el mercado abierto se mueve ya; si no, espera la ventana. Texto para el correo/UI."""
-    from alpha_football.traspasos_pendientes import jornada_apertura
+    from alpha_football.traspasos_pendientes import jornada_apertura, fecha_apertura, texto_apertura
     t, k, jv = _regreso(estado, meses)
     reg = {'jugador': _nombre(jugador), 'jugador_id': getattr(jugador, 'id', None),
            'dueno': dueno.nombre, 'club': destino.nombre, 'pct_dueno': int(pct_dueno),
-           'vuelve': [t, jv], 'ventana': k, 'meses': int(meses)}
-    if _abierto(estado):
+           'vuelve': [t, jv], 'ventana': k, 'meses': int(meses),
+           'vuelve_fecha': _fecha_regreso(estado, t, k)}
+    from alpha_football import dia_final as DF      # v0.4.14.0: llega a tu club = 3 horas; sale cedido = 2
+    from alpha_football.traspasos_pendientes import puede_concretar
+    if puede_concretar(estado, DF.HORAS_FICHAJE if destino is _mi(estado) else DF.HORAS_VENTA):
         _mover_ida(estado, jugador, dueno, destino, reg)
-        return f"{_nombre(jugador)} juega en {destino.nombre} a préstamo hasta {_texto_regreso(reg['vuelve'])}."
+        return (f"{_nombre(jugador)} juega en {destino.nombre} a préstamo hasta "
+                f"{_texto_regreso(reg['vuelve'], reg.get('vuelve_fecha'))}.")
     ap = jornada_apertura(estado)
     t_hoy, jor_hoy, _n = _momento(estado)
     reg['desde'] = [t_hoy if ap > jor_hoy else t_hoy + 1, ap]
+    reg['desde_fecha'] = fecha_apertura(estado).isoformat()
     _pendientes(estado).append(dict(reg, tipo='inicio'))
     _correo_prestamo(estado, jugador, reg, 'acordado')
-    return (f"{_nombre(jugador)} se irá a {destino.nombre} a préstamo en la jornada {ap}, "
+    return (f"{_nombre(jugador)} se irá a {destino.nombre} a préstamo {texto_apertura(estado)}, "
             "en cuanto se abra el mercado.")
 
 
@@ -303,7 +333,7 @@ def pendiente_de(estado: dict, jugador) -> Optional[dict]:
 
 def terminar(estado: dict, jugador) -> str:
     """CONCLUIR PRÉSTAMO: vuelve ya con el mercado abierto; si no, en la próxima ventana."""
-    from alpha_football.traspasos_pendientes import jornada_apertura
+    from alpha_football.traspasos_pendientes import texto_apertura
     if not getattr(jugador, 'prestamo', None):
         return "Ese jugador no está a préstamo."
     if _abierto(estado):
@@ -311,7 +341,7 @@ def terminar(estado: dict, jugador) -> str:
         return f"{_nombre(jugador)} volvió a su club."
     if not any(p.get('tipo') == 'fin' and p.get('jugador') == _nombre(jugador) for p in _pendientes(estado)):
         _pendientes(estado).append({'tipo': 'fin', 'jugador': _nombre(jugador)})
-    return f"{_nombre(jugador)} vuelve a su club en la jornada {jornada_apertura(estado)}, cuando se abra el mercado."
+    return f"{_nombre(jugador)} vuelve a su club {texto_apertura(estado)}, cuando se abra el mercado."
 
 
 def cancelar_pendiente(estado: dict, p: dict) -> str:
@@ -358,7 +388,7 @@ def _vencidos(estado: dict) -> None:
             p = getattr(j, 'prestamo', None)
             if not p:
                 continue
-            p['vuelve'] = _vuelve(p, n)
+            p['vuelve'] = _vuelve(p, n, estado)
             if [t, jor] >= p['vuelve']:
                 _mover_vuelta(estado, j)
 
@@ -422,6 +452,10 @@ def evaluar_pedido(estado: dict, jugador, club, meses: int, pct_user: int) -> tu
     """('acepta'|'analiza'|'rechaza', mensaje) del club dueño ante tu pedido de préstamo."""
     mi = _mi(estado)
     pct_user = max(0, min(100, int(pct_user)))
+    from alpha_football import sancion_liga as SL       # v0.4.17.0: sancionado por la liga tampoco pide préstamos
+    bloqueo = SL.motivo_bloqueo(estado)
+    if bloqueo:
+        return 'rechaza', bloqueo
     if getattr(jugador, 'prestamo', None) or pendiente_de(estado, jugador) is not None:
         return 'rechaza', f"{_nombre(jugador)} ya está a préstamo: no se vuelve a prestar."
     if _es_internacional(club):
@@ -444,13 +478,19 @@ def evaluar_pedido(estado: dict, jugador, club, meses: int, pct_user: int) -> tu
     if pct_user >= minimo:
         return 'acepta', f"{club.nombre} acepta: pagas el {pct_user}% del sueldo."
     if pct_user >= minimo - MARGEN_ANALISIS_PEDIDO:
+        from alpha_football import dia_final as DF      # v0.4.14.0
+        ok, hora = DF.analisis(estado)
+        if not ok:
+            return 'rechaza', f"{club.nombre}: no hay tiempo para analizarlo hoy."
         t, jor, _n = _momento(estado)
         # un solo análisis por jugador: el nuevo pedido reemplaza al anterior
         pend = [a for a in _dc(estado).get('analisis_prestamos', []) if a.get('jugador') != _nombre(jugador)]
         pend.append({'jugador': _nombre(jugador), 'club': club.nombre, 'meses': int(meses), 'pct': pct_user,
                      'jornada': jor, 'temporada': t, 'destino': getattr(mi, 'nombre', None)})
+        if hora is not None:
+            pend[-1]['hora_resp'] = hora
         _dc(estado)['analisis_prestamos'] = pend
-        return 'analiza', f"{club.nombre}: \"Lo analizamos\". Te responden por correo en la próxima jornada."
+        return 'analiza', f"{club.nombre}: \"Lo analizamos\". {DF.texto_respuesta(hora)}"
     return 'rechaza', f"{club.nombre} rechaza: quiere que pagues al menos el {minimo}% del sueldo."
 
 
@@ -471,6 +511,10 @@ def cerrar_pedido(estado: dict, jugador, club, meses: int, pct_user: int) -> tup
     """Acuerdo con club y jugador: arranca el préstamo (ya o en la próxima ventana)."""
     from alpha_football.market import PLANTILLA_MAXIMA
     mi = _mi(estado)
+    from alpha_football import sancion_liga as SL       # v0.4.17.0
+    bloqueo = SL.motivo_bloqueo(estado)
+    if bloqueo:
+        return False, bloqueo
     if len(mi.jugadores) + _llegan_a(estado, mi.nombre) >= PLANTILLA_MAXIMA:   # cuenta los que ya vienen
         return False, f"Plantilla llena ({PLANTILLA_MAXIMA}): libera un lugar antes de pedir a préstamo."
     if pendiente_de(estado, jugador) is not None or getattr(jugador, 'prestamo', None):
@@ -481,10 +525,11 @@ def cerrar_pedido(estado: dict, jugador, club, meses: int, pct_user: int) -> tup
 def resolver_analisis(estado: dict, azar) -> None:
     """Respuesta (50/50) a los pedidos en análisis de jornadas anteriores; si el club acepta y el
     jugador también, el préstamo arranca solo."""
+    from alpha_football import dia_final as DF      # v0.4.14.0: vence por jornada (como siempre) o por hora
     t, jor, _n = _momento(estado)
     pend = _dc(estado).setdefault('analisis_prestamos', [])
     for a in list(pend):
-        if int(a.get('temporada', t)) == t and jor <= int(a.get('jornada', 0)):
+        if not DF.vencido(estado, a):
             continue
         pend.remove(a)
         try:
@@ -581,19 +626,27 @@ def contraofertar(estado: dict, of: dict, pct_pedido: int) -> tuple:
         of['prestamo']['pct_ellos'] = pct_pedido
         return 'aceptada', f"{comp} acepta pagar el {pct_pedido}%. " + aceptar_oferta(estado, of)
     if pct_pedido <= tope + MARGEN_ANALISIS_CONTRA:
+        from alpha_football import dia_final as DF      # v0.4.14.0
+        ok, hora = DF.analisis(estado)
+        if not ok:
+            estado['ofertas_recibidas'] = [o for o in estado.get('ofertas_recibidas') or [] if o is not of]
+            return 'rechazada', f"{comp}: no hay tiempo para analizarlo hoy y retira la oferta."
         _t, jor, _n = _momento(estado)
         of['contra'] = {'pedido': pct_pedido, 'estado': 'analizando', 'jornada': jor}
-        return 'analizando', f"{comp}: \"Lo analizamos\". Te responden por correo en la próxima jornada."
+        if hora is not None:
+            of['contra']['hora_resp'] = hora
+        return 'analizando', f"{comp}: \"Lo analizamos\". {DF.texto_respuesta(hora)}"
     estado['ofertas_recibidas'] = [o for o in estado.get('ofertas_recibidas') or [] if o is not of]
     return 'rechazada', f"{comp} considera excesivo el {pct_pedido}% y retira la oferta."
 
 
 def _resolver_contras(estado: dict, azar) -> None:
     """Respuesta (50/50) a las contraofertas de préstamo en análisis de jornadas anteriores."""
+    from alpha_football import dia_final as DF      # v0.4.14.0
     _t, jor, _n = _momento(estado)
     for of in list(estado.get('ofertas_recibidas') or []):
         c = of.get('contra') or {}
-        if not of.get('prestamo') or c.get('estado') != 'analizando' or jor <= int(c.get('jornada', 0)):
+        if not of.get('prestamo') or c.get('estado') != 'analizando' or not DF.vencido(estado, c):
             continue
         try:
             comp = getattr(of.get('comprador'), 'nombre', 'El club')

@@ -21,8 +21,33 @@ UMBRAL_ROJO = 55            # v4.4.0: desde aquí cae el doble de rápido (barra
 BONUS_RASGO_RES = {'pulmon_de_hierro': 15, 'rustico': 8, 'regateador': -5}
 PROB_LESION_90 = 0.012
 PROB_ROJA_90 = 0.004
-DURACION_LESION = (1, 2, 3, 4)
-PESOS_LESION = (50, 25, 15, 10)
+# v0.4.19.0: la lesión dura DÍAS (se cura con el calendario): (mínimo, máximo, peso) por gravedad.
+# Leve 3-10 días, moderada 2-4 semanas, grave 1-2 meses, muy grave 3-6 meses.
+DURACION_LESION = ((3, 10, 50), (14, 28, 27), (30, 60, 17), (90, 180, 6))
+
+
+def duracion_lesion(azar=None) -> int:
+    """Días de baja de una lesión nueva (sorteo por gravedad). Gasta UN solo número aleatorio (como antes), para no
+    mover la corriente de los tests calibrados con semilla: elige la gravedad y, con lo que sobra, el día."""
+    azar = azar or random
+    u = azar.random() * sum(t[2] for t in DURACION_LESION)
+    for minimo, maximo, peso in DURACION_LESION:
+        if u < peso:
+            return minimo + min(maximo - minimo, int(u / peso * (maximo - minimo + 1)))
+        u -= peso
+    return DURACION_LESION[-1][1]
+
+
+def texto_lesion(dias, corto: bool = False) -> str:
+    """Los días de baja como los dice un médico: "5 días", "3 semanas", "2 meses" (corto: "5 d", "3 sem", "2 m")."""
+    d = max(0, int(dias or 0))
+    if d < 14:
+        return f"{d} d" if corto else f"{d} día{'s' if d != 1 else ''}"
+    if d < 56:
+        n = round(d / 7)
+        return f"{n} sem" if corto else f"{n} semanas"
+    n = max(2, round(d / 30))
+    return f"{n} m" if corto else f"{n} meses"
 
 
 def _edad(j) -> int:
@@ -80,12 +105,29 @@ def recuperacion(j) -> float:
     return r - 3 if _edad(j) > 30 else r
 
 
-def recuperar(j) -> None:
-    j.energia = min(100.0, float(getattr(j, 'energia', 100.0)) + recuperacion(j))
+def recuperar(j, factor: float = 1.0) -> None:
+    """v0.4.11.0: `factor` = parte de una jornada de descanso (días / días por jornada)."""
+    j.energia = min(100.0, float(getattr(j, 'energia', 100.0)) + recuperacion(j) * factor)
 
 
-def recuperar_todos(estado: dict) -> None:
-    """Cierre de jornada de liga: recuperan todos los clubes de las 10 ligas y los de la copa."""
+def recuperar_todos(estado: dict, dias: Optional[float] = None) -> list:
+    """Cierre de jornada de liga: recuperan todos los clubes de las 10 ligas y los de la copa.
+    v0.4.11.0: con `dias` la recuperación es proporcional a los días de descanso (calendario.py);
+    sin `dias`, la fija de siempre.
+    v0.4.19.0: también pasan esos días para las lesiones (sin `dias`, los de una jornada). Devuelve los
+    jugadores de tu club que se recuperaron y avisa al DT por correo (Cuerpo médico)."""
+    factor = 1.0
+    dias_lesion = 7.0                                 # sin calendario: una semana por jornada
+    try:
+        from alpha_football.calendario import dias_por_jornada
+        por_jornada = dias_por_jornada(estado)
+        dias_lesion = por_jornada if dias is None else max(0.0, float(dias))
+        if dias is not None:
+            factor = max(0.0, float(dias)) / por_jornada
+    except Exception as e:
+        logger.error(f"No se pudo calcular el descanso por días: {e}")
+        if dias is not None:
+            dias_lesion = max(0.0, float(dias))
     equipos = []
     for clave in ('primera_division', 'segunda_division'):
         for liga in (estado.get(clave) or {}).values():
@@ -95,22 +137,45 @@ def recuperar_todos(estado: dict) -> None:
         equipos += list((cache or {}).get('equipos', {}).values())
     equipos += list((estado.get('_copas_generados') or {}).values())
     vistos = set()
+    mi = estado.get('mi_equipo')
+    altas = []
+    n_lesion = int(round(dias_lesion))
     for eq in equipos:
         if id(eq) in vistos:
             continue
         vistos.add(id(eq))
         for j in getattr(eq, 'jugadores', []) or []:
-            recuperar(j)
+            recuperar(j, factor)
+            if n_lesion > 0 and int(getattr(j, 'lesion_dias', 0) or 0) > 0:
+                j.lesion_dias = max(0, int(j.lesion_dias) - n_lesion)
+                if j.lesion_dias == 0 and eq is mi:
+                    altas.append(j)
+    _avisar_altas(estado, altas)
+    return altas
+
+
+def _avisar_altas(estado: dict, altas: list) -> None:
+    """v0.4.19.0: un correo del Cuerpo médico por cada jugador tuyo que termina su lesión."""
+    if not altas:
+        return
+    try:
+        from alpha_football import correo as C
+        for j in altas:
+            C.enviar(estado, 'medico', f"Alta médica: {j.nombre} {j.apellido}",
+                     f"{j.nombre} {j.apellido} terminó su recuperación y ya está a su disposición para entrenar y "
+                     "jugar.", C.accion('team_screen', "VER DIRECCIÓN DE EQUIPO"), jugador=j)
+    except Exception as e:
+        logger.error(f"No se pudo avisar el alta médica: {e}")
 
 
 def cerrar_partido(equipo, minutos: dict, rng: Optional[random.Random] = None,
                    incidencias: Optional[list] = None) -> list:
     """
     Cierre físico de un partido de `equipo`. `minutos` = {jugador.id: minutos jugados}.
-    Gasta energía de los que jugaron, descuenta 1 a lesionados/sancionados que no jugaron
-    y sortea lesiones y rojas. Retorna las incidencias nuevas.
-    v4.0.0: con `incidencias` (las del partido: {'tipo','jugador','partidos'}) NO se sortea:
-    se aplican esas (lesión → lesion_partidos, sanción → partidos_sancion).
+    Gasta energía de los que jugaron, descuenta 1 a los sancionados que no jugaron
+    y sortea lesiones y rojas (las lesiones se curan con los días, no con los partidos). Retorna las incidencias nuevas.
+    v4.0.0: con `incidencias` (las del partido: {'tipo','jugador','partidos'|'dias'}) NO se sortea:
+    se aplican esas (lesión → lesion_dias, sanción → partidos_sancion).
     """
     from alpha_football import sanciones as S
     propios = {id(j) for j in getattr(equipo, 'jugadores', []) or []}
@@ -124,8 +189,6 @@ def cerrar_partido(equipo, minutos: dict, rng: Optional[random.Random] = None,
             j.energia_vivo = None
             m = int(minutos.get(getattr(j, 'id', None), 0) or 0)
             if m <= 0:
-                if j.lesion_partidos > 0:
-                    j.lesion_partidos -= 1
                 S.descontar(j)          # cumple una fecha de la competición que se jugó
                 continue
             antes = float(getattr(j, 'energia', 100.0))
@@ -134,8 +197,8 @@ def cerrar_partido(equipo, minutos: dict, rng: Optional[random.Random] = None,
             if incidencias is not None:
                 continue
             if azar.random() < PROB_LESION_90 * m / 90 * factor_lesion(media):
-                j.lesion_partidos = azar.choices(DURACION_LESION, weights=PESOS_LESION)[0]
-                lista.append({'tipo': 'lesion', 'jugador': j, 'partidos': j.lesion_partidos})
+                j.lesion_dias = duracion_lesion(azar)
+                lista.append({'tipo': 'lesion', 'jugador': j, 'dias': j.lesion_dias})
             elif azar.random() < PROB_ROJA_90 * m / 90:
                 S.sumar_sancion(j, 2 if azar.random() < 0.2 else 1)
                 lista.append({'tipo': 'sancion', 'jugador': j, 'partidos': S.partidos_sancion(j),
@@ -149,7 +212,7 @@ def cerrar_partido(equipo, minutos: dict, rng: Optional[random.Random] = None,
 
 def aplicar_incidencias(incidencias: list) -> list:
     """v4.0.0: escribe en los jugadores las lesiones/sanciones del partido; devuelve
-    [{'tipo', 'jugador', 'partidos'}] (el formato que usa el vestuario para el correo).
+    [{'tipo', 'jugador', 'partidos'|'dias'}] (el formato que usa el vestuario para el correo).
     Las sanciones van a la competición que se jugó (sanciones.py). Las amarillas se acumulan:
     al llegar al límite devuelve una 'sancion' con motivo 'acumulacion'; a una del límite, un
     'aviso_amarillas'."""
@@ -161,6 +224,11 @@ def aplicar_incidencias(incidencias: list) -> list:
             j = inc.get('jugador')
             if j is None:
                 continue
+            if inc.get('tipo') == 'lesion':      # v0.4.19.0: las lesiones van en días
+                n = int(inc.get('dias', 1) or 1)
+                j.lesion_dias = max(int(getattr(j, 'lesion_dias', 0) or 0), n)
+                out.append({'tipo': 'lesion', 'jugador': j, 'dias': n, 'competicion': comp})
+                continue
             n = int(inc.get('partidos', 1) or 1)
             if inc.get('tipo') == 'amarilla':
                 r = S.sumar_amarilla(j)
@@ -170,10 +238,7 @@ def aplicar_incidencias(incidencias: list) -> list:
                 elif r == 'aviso':
                     out.append({'tipo': 'aviso_amarillas', 'jugador': j, 'partidos': 0, 'competicion': comp})
                 continue
-            if inc.get('tipo') == 'lesion':
-                j.lesion_partidos = max(int(getattr(j, 'lesion_partidos', 0) or 0), n)
-            else:
-                S.sumar_sancion(j, n)
+            S.sumar_sancion(j, n)
             out.append({'tipo': inc.get('tipo'), 'jugador': j, 'partidos': n, 'competicion': comp})
         except Exception as e:
             logger.error(f"aplicar_incidencias: incidencia inválida {inc}: {e}")

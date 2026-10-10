@@ -356,6 +356,7 @@ _TEXTO_TARJETA = {
     'team_screen': "Elige el once, el banco, la formación, el estilo y la mentalidad.",
     'plantilla_screen': "Lista de tus jugadores: ficha, orden por columnas, transferibles y renovaciones.",
     'cantera_screen': "Juveniles del club: se renuevan cada 6 meses. Súbelos al primer equipo o libéralos.",
+    'calendario_screen': "Tus partidos de liga y copa con su fecha real. Dos partidos necesitan 3 días entre sí: si chocan, se reprograma uno.",   # v0.4.11.0
     'buscador_screen': "Busca jugadores de todas las ligas por nombre, posición y rangos, y negocia su fichaje.",
     'favoritos_screen': "Tu lista de jugadores seguidos: búscalos y negocia su fichaje cuando quieras.",
     'ofertas_screen': "Ofertas que otros clubes hacen por tus jugadores: acepta, rechaza o contraoferta.",
@@ -363,6 +364,7 @@ _TEXTO_TARJETA = {
     'ojeador_screen': "Tres fichajes recomendados por tu ojeador en cada ventana de pases.",
     'correo_screen': "Mensajes de la directiva, jugadores y otros clubes. El número rojo son los no leídos.",
     'notificaciones_screen': "Mensajes de jugadores y presidente a la izquierda; correo del club a la derecha. Últimos 5 de cada uno.",   # v0.4.10.0
+    'noticias_screen': "Titulares vigentes: elige uno y lee su detalle. El punto dorado marca las no leídas.",   # v0.4.23.0
     'stats_screen': "Goleadores, asistidores, vallas invictas y mejores notas de la liga y tu equipo.",
     'copa_screen': "Tu copa internacional: fase de liga o grupos, llaves y estadísticas.",
     'career_screen': "Tus temporadas anteriores, títulos y récords como DT.",
@@ -378,7 +380,7 @@ _TEXTO_PESTANA = {
     'inicio': "Tablero principal: tabla, JUGAR, jornada y tu club.",
     'direccion': "Formación, plantilla y cantera.",
     'negociaciones': "Fichajes, ofertas recibidas, historial de pases y ojeador.",
-    'oficina': "Correo, estadísticas, copa, carrera, otras ligas, objetivos y tu contrato.",
+    'oficina': "Notificaciones, noticias, estadísticas, copa, carrera, otras ligas, objetivos y tu contrato.",
     'finanzas': "Resumen económico, contratos y patrocinios.",
     'opciones': "Volumen, música y GUARDAR PARTIDA (tecla O desde cualquier pantalla).",
 }
@@ -406,11 +408,15 @@ def _ayuda_hub(estado: dict) -> list:
         its += [
             (_union(barra), "Barra de menú", "Pestañas del hub: ← → para moverte, Enter para abrir. OPCIONES (tecla O) trae GUARDAR."),
             (L.R_SOBRE, "Correo", "El número rojo son los mensajes sin leer. Clic o tecla M para abrir el correo."),
-            (L.R_TABLA, "Tabla", "Posiciones de tu liga; tu club resaltado. Las pestañas LIGA / COPA cambian la tabla."),
+            (L.R_TABLA, "Tabla", "Posiciones de tu liga; tu club resaltado. Las pestañas NOTICIAS / LIGA / COPA cambian el panel."),
             (_union([L.rect_tab_tabla('liga'), L.rect_tab_tabla('copa')]), "LIGA / COPA",
              "Alterna entre la tabla de la liga y la de tu copa internacional."),
+            (L.rect_tab_tabla('noticias'), "NOTICIAS", "Titulares destacados, uno cada 5 s (tecla N). Clic en la tarjeta abre OFICINA > NOTICIAS."),
             (L.R_HIST, "Historial", "Tus partidos jugados. Rueda del mouse o ▲ ▼ para desplazarte."),
-            (L.R_JUGAR, "JUGAR", "Juega la próxima fecha (liga o copa). Tecla J o Enter con el foco aquí."),
+            (L.R_JUGAR, "JUGAR", "Juega el partido del día. Sin partido es CONTINUAR: los días pasan hasta tu partido, una oferta o un evento."),   # v0.4.14.1
+            (L.R_DIA, "+1 DÍA", "Avanza un solo día (tecla D). Solo aparece cuando hoy no hay partido."),
+            (L.R_HORA, "AVANZAR 1 HORA", "Solo el último día de fichajes: pasa una hora (Enter). El panel dice cuántas quedan."),
+            (L.R_CERRAR, "CERRAR MERCADO", "Cierra el mercado antes de las 0 horas (tecla C); pide confirmación."),
             (R(L.R_JUGAR.x, L.Y_AVISOS, L.R_JUGAR.width, L.R_JORNADA.y - L.Y_AVISOS - 6), "Avisos",
              "Tu situación en la copa y alertas: lesiones, contratos, ofertas y correo."),
             (L.R_JORNADA, "Jornada", "Partidos de la jornada. < > cambian de fecha; R abre los resultados."),
@@ -439,8 +445,9 @@ def _ayuda_carrera(estado: dict) -> list:
     from alpha_football.ui import career_screen as C
     return [
         (C.R_VOLVER, "Volver", "Regresa al hub (también ESC, Retroceso o Enter)."),
+        (C.R_LOGROS, "Logros", "Hitos del DT: los obtenidos con su temporada y jornada, y los que faltan (tecla L)."),
         (C.R_TOTALES, "Totales", "Resumen de toda tu carrera: temporadas, títulos, puntos, goles y récord."),
-        (C.R_BALON_ORO, "Balón de Oro", "Ganadores de cada temporada entre las 10 ligas; en verde si es de tu club."),
+        (C.R_BALON_ORO, "Premios", "Balón de Oro y Sudamericano del Año de cada temporada; en verde si es de tu club."),
         (C.R_TEMPORADAS, "Temporada por temporada", "Posición, puntos, goles y campeones de cada año. ↑ ↓ o rueda para desplazar."),
     ]
 
@@ -646,7 +653,6 @@ def _ayuda_promo(estado: dict) -> list:
     r = P.rects_promo()
     return [
         (r['cabecera'], "Tu resultado", "Si tu club subió, bajó o se mantiene, y el premio o castigo de media."),
-        (r['balon'], "Balón de Oro", "Mejor jugador de la temporada entre las 10 ligas y su podio."),
         (_union([r['ascienden'], r['descienden']]), "Tu país", "Clubes que suben a 1ª y bajan a 2ª en tu país."),
         (r['paises'], "Todas las ligas", "Ascensos y descensos del resto de los países."),
         (r['retiros'], "Retiros", "Jugadores que se retiran (los de tu club primero) y el juvenil que los reemplaza."),
@@ -778,6 +784,18 @@ def _ayuda_cantera(estado: dict) -> list:
     ]
 
 
+# ---------------------------------------------------------------- calendario (v0.4.11.0)
+def _ayuda_calendario(estado: dict) -> list:
+    from alpha_football.ui import calendario_screen as KS
+    r = KS._rects()
+    return [
+        (KS.R_GRILLA, "Mes", "Clic en un día futuro simula hasta ahí. Franja verde: mercado abierto; rojo: cierre; dorado: hoy."),
+        (r['prev'], "Mes anterior", "También con la flecha izquierda."),
+        (r['next'], "Mes siguiente", "También con la flecha derecha."),
+        (r['volver'], "Volver", "Regresa al hub (también ESC)."),
+    ]
+
+
 # ---------------------------------------------------------------- patrocinios (v4.9.0)
 def _ayuda_patrocinios(estado: dict) -> list:
     from alpha_football.ui import patrocinios_screen as PS
@@ -852,6 +870,14 @@ def _ayuda_notificaciones(estado: dict) -> list:     # v0.4.10.0
             (NS._volver(), "Volver", "Regresa al hub (también ESC).")]
 
 
+def _ayuda_noticias(estado: dict) -> list:     # v0.4.23.0
+    from alpha_football.ui import noticias_screen as NS
+    return [(NS.R_LISTA, "Lista", "Noticias vigentes: primero las más importantes. Punto dorado = sin leer. Rueda o ↑ ↓."),
+            (NS.R_DETALLE, "Detalle", "Imagen, titular, jornada y cuerpo de la noticia elegida. Al verla queda leída."),
+            (NS.R_ACCION, "Botón", "Algunas noticias traen un atajo (por ejemplo ver los remates): clic o Enter."),
+            (NS._volver(), "Volver", "Regresa al hub (también ESC).")]
+
+
 # ---------------------------------------------------------------- despido / fin de contrato
 def _ayuda_despido(estado: dict) -> list:
     from alpha_football.ui import despido_screen as D
@@ -868,11 +894,13 @@ def _ayuda_despido(estado: dict) -> list:
 
 AYUDA['historial_pases_screen'] = _ayuda_historial_pases
 AYUDA['cantera_screen'] = _ayuda_cantera
+AYUDA['calendario_screen'] = _ayuda_calendario
 AYUDA['patrocinios_screen'] = _ayuda_patrocinios
 AYUDA['ojeador_screen'] = _ayuda_ojeador
 AYUDA['objetivos_screen'] = _ayuda_objetivos
 AYUDA['correo_screen'] = _ayuda_correo
 AYUDA['notificaciones_screen'] = _ayuda_notificaciones
+AYUDA['noticias_screen'] = _ayuda_noticias
 AYUDA['despido_screen'] = _ayuda_despido
 
 
@@ -983,6 +1011,20 @@ AYUDA['negociacion_screen'] = _ayuda_negociacion
 AYUDA['contrato_dt_screen'] = _ayuda_contrato_dt
 AYUDA['veredicto_screen'] = _ayuda_veredicto
 AYUDA['ofertas_dt_screen'] = _ayuda_ofertas_dt
+
+
+# ---------------------------------------------------------------- gala de premios (v0.4.17.0)
+def _ayuda_gala(estado: dict) -> list:
+    from alpha_football.ui import gala_balon_screen as G
+    return [
+        (G.R_PREMIO, "Premio", "Qué premio se entrega, de qué temporada y la fecha de la gala."),
+        (G.R_GANADOR, "Ganador", "El ganador con su club, su liga y sus números; en verde si juega en tu club."),
+        (G.R_PODIO, "Podio", "Segundo y tercer puesto; en verde los de tu club."),
+        (R(12, 652, 300, 36), "Continuar", "Enter, Espacio o clic para seguir."),
+    ]
+
+
+AYUDA['gala_balon_screen'] = _ayuda_gala
 
 
 # ---------------------------------------------------------------- dirección de equipo (normal / en vivo / rival)

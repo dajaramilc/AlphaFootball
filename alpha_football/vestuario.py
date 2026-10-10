@@ -15,6 +15,31 @@ logger = logging.getLogger(__name__)
 PERSONALIDADES = ('normal', 'lider', 'profesional', 'polemico', 'mercenario')
 PESOS_PERSONALIDAD = (70, 8, 10, 7, 5)
 
+# v0.4.18.0: el presidente felicita solo al llegar a estas victorias seguidas, cada vez más asombrado
+FELICITACIONES_RACHA = {
+    3: ("Tres victorias seguidas",
+        "Míster, tres seguidas. Así da gusto ir al palco. Siga así, que la gente ya se ilusiona."),
+    5: ("Cinco victorias seguidas",
+        "Míster, ¡cinco seguidas! En la ciudad no se habla de otra cosa y la grada ya canta su nombre. "
+        "Que no se le suba a nadie a la cabeza, pero esto es de equipo grande."),
+    10: ("¡Diez victorias seguidas!",
+         "¡Diez victorias seguidas, míster! No me lo puedo creer. Los socios me paran por la calle para "
+         "darle las gracias y en el palco no se habla de otra cosa. Esto ya es historia del club."),
+    15: ("¡Quince victorias seguidas!",
+         "¡Quince seguidas! Míster, esto ya no es una racha, es un fenómeno. Los medios hablan de nosotros "
+         "en todo el continente y yo no paro de recibir llamadas. ¡Qué orgullo de equipo!"),
+    20: ("¡¡Veinte victorias seguidas!!",
+         "¡¡Veinte victorias seguidas!! Míster, no tengo palabras. Nadie en la historia del club había llegado "
+         "tan lejos. Los hinchas ya hablan de usted como de una leyenda. ¡Increíble, de verdad increíble!"),
+    25: ("¡¡¡Veinticinco victorias seguidas!!!",
+         "¡¡¡Veinticinco victorias seguidas!!! Míster, esto es de otro planeta. Los rivales nos miran con miedo, "
+         "la prensa del mundo entero se ha rendido y yo sigo sin despertar del sueño. ¡Nunca vi algo igual!"),
+    30: ("¡¡¡TREINTA victorias seguidas!!!",
+         "¡¡¡TREINTA VICTORIAS SEGUIDAS!!! Míster, ¡esto es una locura! Ya no encuentro cómo agradecérselo: "
+         "usted ha escrito la página más grande de la historia de este club y de todo el fútbol. "
+         "¡Que nadie nos despierte, por favor, que nadie nos despierte!"),
+}
+
 
 def personalidad_inicial(rasgo: Optional[str], semilla: str) -> str:
     if rasgo == 'lider':
@@ -161,8 +186,8 @@ def post_partido_user(estado: dict, user_eq, rival, gf: int, gc: int, reporte: l
             de_comp = "de copa" if comp == 'copa' else "de liga"
             if inc['tipo'] == 'lesion':
                 C.enviar(estado, 'medico', f"Lesión: {j.nombre} {j.apellido}",
-                         f"Tras la revisión médica, el jugador estará de baja {inc['partidos']} partido(s). Le "
-                         "mantendremos informado de su evolución.", C.accion('team_screen', "VER DIRECCIÓN DE EQUIPO"))
+                         f"Tras la revisión médica, el jugador estará de baja por {E.texto_lesion(inc['dias'])}. Le "
+                         "avisaremos cuando reciba el alta.", C.accion('team_screen', "VER DIRECCIÓN DE EQUIPO"))
             elif inc['tipo'] == 'aviso_amarillas':
                 C.enviar(estado, 'club', f"En riesgo: {j.nombre} {j.apellido} tiene {S.amarillas(j, comp)} amarillas",
                          f"El jugador acumula {S.amarillas(j, comp)} amarillas {de_comp}: si ve otra, se perderá el "
@@ -184,12 +209,12 @@ def post_partido_user(estado: dict, user_eq, rival, gf: int, gc: int, reporte: l
             C.enviar(estado, 'jugador', f"{j.nombre} {j.apellido} está molesto",
                      f"Míster, no estoy bien (moral {j.moral}). Entre los minutos, el contrato y cómo me estoy "
                      f"sintiendo, algo no está funcionando. Me gustaría hablarlo con usted.\n{j.nombre} {j.apellido}",
-                     C.accion('plantilla_screen', "VER PLANTILLA"))
+                     C.accion('plantilla_screen', "VER PLANTILLA"), jugador=j)
         for j in res['pide_salir']:
             C.enviar(estado, 'jugador', f"{j.nombre} {j.apellido} quiere irse",
                      f"Míster, llevo semanas sin estar a gusto y creo que lo mejor es que salga del club. "
                      f"Le pido que escuche las ofertas que lleguen por mí.\n{j.nombre} {j.apellido}",
-                     C.accion('plantilla_screen', "VER PLANTILLA"))
+                     C.accion('plantilla_screen', "VER PLANTILLA"), jugador=j)
         dc = estado.setdefault('datos_carrera', {})
         if clasico:
             dc['confianza'] = max(0, min(100, D.confianza(estado) + (6 if gf > gc else -6 if gf < gc else 0)))
@@ -206,11 +231,12 @@ def post_partido_user(estado: dict, user_eq, rival, gf: int, gc: int, reporte: l
         dc['racha'] = racha
         # v0.4.10.0: últimos 3 resultados SIN reiniciar (racha se vacía al avisar): eventos.va_mal
         dc['ult_res'] = (list(dc.get('ult_res', [])) + ['G' if gf > gc else 'P' if gf < gc else 'E'])[-3:]
-        if racha == ['G'] * 3:
-            C.enviar(estado, 'presidente', "Tres victorias seguidas",
-                     "Míster, tres seguidas. Así da gusto ir al palco. Siga así, que la gente ya se ilusiona.")
-            dc['racha'] = []
-        elif racha == ['P'] * 3:
+        # v0.4.18.0: victorias seguidas contadas aparte (racha_g): felicita solo en los hitos de HITOS_RACHA
+        dc['racha_g'] = int(dc.get('racha_g', 0) or 0) + 1 if gf > gc else 0
+        if dc['racha_g'] in FELICITACIONES_RACHA:
+            asunto, cuerpo = FELICITACIONES_RACHA[dc['racha_g']]
+            C.enviar(estado, 'presidente', asunto, cuerpo)
+        if racha == ['P'] * 3:
             C.enviar(estado, 'presidente', "Tres derrotas seguidas: tenemos que hablar",
                      "Míster, tres derrotas al hilo. Me paran en la calle para preguntarme qué pasa y ya no sé "
                      "qué contestar. Necesito una reacción ya.",

@@ -381,7 +381,7 @@ def get_liga() -> Liga:
                 jugadores.append(Jugador(
                     nombre=pnombre, apellido=papellido, posicion=pos,
                     ataque=atk, defensa=dfs, fisico=fis, tecnica=tec, mental=men,
-                    moral=70, rasgo=rasgo, lesion_partidos=0, id=id_counter, edad=edad,
+                    moral=70, rasgo=rasgo, lesion_dias=0, id=id_counter, edad=edad,
                 ))
             equipos.append(Equipo(
                 nombre=nombre_equipo,

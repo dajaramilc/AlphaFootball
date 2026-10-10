@@ -63,7 +63,8 @@ def test_ir_desde_un_mensaje_deja_la_marca():
 def test_esc_en_la_pestana_abierta_desde_un_mensaje_vuelve_al_correo():
     from alpha_football.ui import league_screen as L
     e = estado_carrera()
-    e['datos_carrera']['aviso_mercado_visto'] = [1, 1]     # sin cartel de mercado
+    from alpha_football import dias as _D                  # v0.4.13.0: el cartel es por fecha y solo con reloj
+    e['datos_carrera']['aviso_mercado_visto'] = [1, _D.hoy(e).isoformat()]     # sin cartel de mercado
     e.update(hub_tab='negociaciones', volver_notif='league_screen', volver_notif_tab='negociaciones')
     pygame.event.clear(); L.render(screen, e)              # primer cuadro: inicializa el hub
     key(pygame.K_ESCAPE)
@@ -74,7 +75,8 @@ def test_esc_en_la_pestana_abierta_desde_un_mensaje_vuelve_al_correo():
 def test_cambiar_de_pestana_borra_la_marca_del_hub():
     from alpha_football.ui import league_screen as L
     e = estado_carrera()
-    e['datos_carrera']['aviso_mercado_visto'] = [1, 1]
+    from alpha_football import dias as _D                  # v0.4.13.0: el cartel es por fecha y solo con reloj
+    e['datos_carrera']['aviso_mercado_visto'] = [1, _D.hoy(e).isoformat()]
     e.update(hub_tab='oficina', volver_notif='league_screen', volver_notif_tab='negociaciones')
     pygame.event.clear(); L.render(screen, e)
     assert 'volver_notif' not in e
@@ -183,10 +185,10 @@ def test_factor_canterano():
     j.edad = 19
     assert DS.factor_canterano(j, mi) == 1.0                    # no es canterano
     j.canterano = mi.nombre
-    assert DS.factor_canterano(j, mi) == DS.BOOST_CANTERANO == 1.5
+    assert DS.factor_canterano(j, mi) == DS.BOOST_CANTERANO == 1.35     # v0.4.18.0: antes 1.5
     assert DS.factor_canterano(j, otro) == 1.0                  # vendido o cedido: se apaga
     j.edad = DS.EDAD_BOOST_CANTERANO
-    assert DS.factor_canterano(j, mi) == 1.5
+    assert DS.factor_canterano(j, mi) == 1.35
     j.edad = DS.EDAD_BOOST_CANTERANO + 1
     assert DS.factor_canterano(j, mi) == 1.0
 

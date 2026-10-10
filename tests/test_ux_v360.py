@@ -35,7 +35,7 @@ def estado_carrera(tipo='premier', idx=0):
     return {'liga': liga, 'mi_equipo': mi, 'equipos': liga.equipos, 'temporada': 1,
             'alineacion_activa': mi.alineacion_activa, 'primera_division': primeras,
             'segunda_division': segunda, 'historial': [],
-            'datos_carrera': {'aviso_mercado_visto': [1, 1]}}   # v4.4.0: sin cartel de mercado en J1
+            'datos_carrera': {'aviso_mercado_visto': [1, '2026-07-01']}}   # v0.4.13.0: sin cartel de mercado (por fecha: el reloj nace el 1 jul)
 
 
 # ---------------------------------------------------------------- Task 1: orden por columnas

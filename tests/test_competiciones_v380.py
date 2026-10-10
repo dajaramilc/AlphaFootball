@@ -331,6 +331,8 @@ def test_jugar_lleva_a_copa_cuando_toca():
     assert rival_copa_pendiente(e)[0] is not None
     # JUGAR en el hub → prepartido con el partido de copa preparado
     from alpha_football.ui import league_screen as L
+    from alpha_football import dias as D                  # v0.4.12.0: el hub ahora corre los días hasta el partido
+    L.inicializar_calendario_liga(e['liga']); D.hoy(e); D.hasta_el_partido(e)
     e['hub_tab'], e['hub_foco'] = 'inicio', 0
     pygame.event.clear()
     pygame.event.post(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_j, mod=0, unicode='j'))
@@ -443,9 +445,15 @@ def test_fin_de_temporada_copas_y_balon():
     assert hist['libertadores'] in CP.FASES['champions'], hist['libertadores']
     assert e['temporada'] == 2
     for t in ('champions', 'libertadores'):
-        assert CP.copa(e, t)['temporada'] == 2 and not any(p['jugado'] for p in CP.copa(e, t)['partidos'])
-    balon = e['datos_carrera']['balon_oro'][-1]
+        assert CP.copa(e, t)['temporada'] == 2 and not CP.copa(e, t).get('campeon')
+    assert not any(p['jugado'] for p in CP.copa(e, 'champions')['partidos'])     # tu copa (carrera europea) arranca de cero
+    # v0.4.16.0 (F6): tras el cierre, el save viejo se desfasa: Sudamérica ya va por la mitad de su 2027 y su copa también
+    assert CP.copa(e, 'champions')['anio'] == 2027 and CP.copa(e, 'libertadores')['anio'] == 2027
+    assert any(p['jugado'] for p in CP.copa(e, 'libertadores')['partidos'])
+    # v0.4.17.0: el Balón queda pendiente hasta octubre (premios.revisar_jornada lo entrega)
+    balon = next(p['datos'] for p in e['datos_carrera']['premios_pendientes'] if p['premio'] == 'balon_oro')
     assert balon['temporada'] == 1 and 'goles_copa' in balon['ganador']
+    assert 'balon_oro' not in e['datos_carrera']
     assert 'campeones_copas' in e['datos_carrera'] and e['datos_carrera']['campeones_copas'][-1]['temporada'] == 1
     assert 'copa_bracket' not in e and 'copa_fase_actual' not in e
     print("  test_fin_de_temporada_copas_y_balon: OK")
@@ -490,7 +498,7 @@ def test_copa_screen_simular_resto():
 def test_hub_tabla_copa():
     from alpha_football.ui import league_screen as L
     e = estado_carrera(); CP.iniciar_temporada(e, random.Random(5)); e['hub_tab'] = 'inicio'
-    e.setdefault('datos_carrera', {})['aviso_mercado_visto'] = [1, e['liga'].jornada_actual]   # v4.4.0: sin cartel
+    e.setdefault('datos_carrera', {})['aviso_mercado_visto'] = [1, '2026-07-01']   # v0.4.13.0: sin cartel (es por fecha: el reloj nace el 1 jul)
     click(L.rect_tab_tabla('copa').center); L.render(screen, e)
     assert e['hub_tabla_tab'] == 'copa'
     pygame.event.clear(); assert L.render(screen, e) is None

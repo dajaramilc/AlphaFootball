@@ -32,7 +32,16 @@ def mercado_abierto(estado: dict) -> bool:
         return True
     from alpha_football.market import ventana_mercado_abierta
     return ventana_mercado_abierta(int(getattr(liga, 'jornada_actual', 1) or 1),
-                                   int(getattr(liga, 'num_jornadas', 22) or 22))
+                                   int(getattr(liga, 'num_jornadas', 22) or 22), estado=estado)
+
+
+def puede_concretar(estado: dict, horas: int) -> bool:
+    """v0.4.14.0: ¿se puede inscribir/concretar esto ya? Mercado abierto y, el último día, con horas
+    suficientes (las gasta). Es la única puerta de las operaciones del user."""
+    if not mercado_abierto(estado):
+        return False
+    from alpha_football import dia_final as DF
+    return DF.gastar(estado, horas)
 
 
 def jornada_apertura(estado: dict) -> int:
@@ -40,14 +49,25 @@ def jornada_apertura(estado: dict) -> int:
     from alpha_football.market import proxima_apertura
     liga = estado.get('liga')
     return proxima_apertura(int(getattr(liga, 'jornada_actual', 1) or 1),
-                            int(getattr(liga, 'num_jornadas', 22) or 22))
+                            int(getattr(liga, 'num_jornadas', 22) or 22), estado=estado)
+
+
+def fecha_apertura(estado: dict):
+    """v0.4.13.0: el día en que vuelve a abrir el mercado."""
+    from alpha_football import temporada as T
+    return T.proxima_apertura(estado)
+
+
+def texto_apertura(estado: dict, corto: bool = False) -> str:
+    """'el vie 1 ene 2027' (o 'vie 1 ene' si `corto`)."""
+    from alpha_football import calendario as CAL
+    f = fecha_apertura(estado)
+    return CAL.texto_fecha(f, False) if corto else f"el {CAL.texto_fecha(f)}"
 
 
 def _cuando(estado: dict, j_ap: int) -> str:
-    """v0.4.11.0: 'en la jornada N' o, si la próxima ventana ya es la de la temporada siguiente, eso."""
-    if int(j_ap) > int(getattr(estado.get('liga'), 'jornada_actual', 1) or 1):
-        return f"en la jornada {j_ap}, en cuanto se abra el mercado"
-    return "al empezar la próxima temporada, en cuanto se abra el mercado"
+    """v0.4.13.0: 'el vie 1 ene 2027, en cuanto se abra el mercado' (la fecha manda; `j_ap` queda por compatibilidad)."""
+    return f"{texto_apertura(estado)}, en cuanto se abra el mercado"
 
 
 def pendiente_de(estado: dict, jugador) -> Optional[dict]:
@@ -64,7 +84,8 @@ def diferir_venta(estado: dict, jugador, comprador, monto: int) -> str:
     _pendientes(estado).append({
         'tipo': 'venta', 'jugador': _nombre(jugador), 'jugador_id': getattr(jugador, 'id', None),
         'origen': getattr(mi, 'nombre', ''), 'destino': getattr(comprador, 'nombre', ''),
-        'monto': int(monto or 0), 'jornada': j_ap, 'temporada': int(estado.get('temporada', 1) or 1)})
+        'monto': int(monto or 0), 'jornada': j_ap, 'fecha': fecha_apertura(estado).isoformat(),
+        'temporada': int(estado.get('temporada', 1) or 1)})
     try:   # ya está vendido: deja de pedir salir (no sigue la escalada con la directiva)
         from alpha_football.salidas import limpiar
         limpiar(jugador)
@@ -81,7 +102,8 @@ def diferir_compra(estado: dict, jugador, club, monto: int) -> str:
     mi = estado.get('mi_equipo')
     reg = {'tipo': 'compra', 'jugador': _nombre(jugador), 'jugador_id': getattr(jugador, 'id', None),
            'origen': getattr(club, 'nombre', None), 'destino': getattr(mi, 'nombre', ''),
-           'monto': int(monto or 0), 'jornada': j_ap, 'temporada': int(estado.get('temporada', 1) or 1)}
+           'monto': int(monto or 0), 'jornada': j_ap, 'fecha': fecha_apertura(estado).isoformat(),
+           'temporada': int(estado.get('temporada', 1) or 1)}
     if club is None:
         # agente libre: no está en ningún club, se guarda entero (la lista de libres no se guarda)
         reg['datos'] = jugador.to_dict()

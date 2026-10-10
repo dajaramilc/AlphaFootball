@@ -32,7 +32,7 @@ def estado_carrera():
     return {'liga': liga, 'mi_equipo': mi, 'equipos': liga.equipos, 'temporada': 1,
             'alineacion_activa': alin, 'primera_division': primeras, 'segunda_division': segunda,
             'team_contexto': 'carrera',
-            'datos_carrera': {'aviso_mercado_visto': [1, 1]}}   # v4.4.0: sin cartel de mercado en J1
+            'datos_carrera': {'aviso_mercado_visto': [1, '2026-07-01']}}   # v0.4.13.0: sin cartel de mercado (por fecha: el reloj nace el 1 jul)
 
 
 def estado_copa():
@@ -47,7 +47,7 @@ def estado_copa():
     e['datos_carrera'] = {}
     CP.iniciar_temporada(e, random.Random(5))
     e['liga'].jornada_actual = CP.copa(e, 'champions')['fechas_jornada'][0] + 1
-    e['datos_carrera']['aviso_mercado_visto'] = [1, e['liga'].jornada_actual]   # v4.4.0: sin cartel
+    e['datos_carrera']['aviso_mercado_visto'] = [1, '2026-07-01']   # v0.4.13.0: sin cartel (por fecha: el reloj nace el 1 jul)
     copa_screen.sincronizar_copa_user(e)
     assert e['copa_user_en_copa'] is True
     return e
@@ -166,10 +166,10 @@ def test_retornos_de_copa():
 
 
 def test_pestanas_y_tarjetas_llevan_a_cada_pantalla():
-    esperado = {'direccion': ['team_screen', 'plantilla_screen', 'cantera_screen'],     # v4.8.0: CANTERA
+    esperado = {'direccion': ['team_screen', 'plantilla_screen', 'cantera_screen', 'calendario_screen'],     # v4.8.0: CANTERA; v0.4.11.0: CALENDARIO
                 'negociaciones': ['buscador_screen', 'favoritos_screen', 'ofertas_screen', 'historial_pases_screen',
                                   'ojeador_screen'],
-                'oficina': ['notificaciones_screen', 'stats_screen', 'copa_screen', 'career_screen', 'otras_ligas_screen', 'objetivos_screen',
+                'oficina': ['notificaciones_screen', 'noticias_screen', 'stats_screen', 'copa_screen', 'career_screen', 'otras_ligas_screen', 'objetivos_screen',
                             'contrato_dt_screen', 'ofertas_dt_screen'],      # v3.2.0: MI CONTRATO · v3.4.0: OFERTAS DT
                 'finanzas': ['finanzas_screen', 'plantilla_screen', 'patrocinios_screen']}     # v4.9.0
     rects = league_screen._rects_barra()
@@ -232,14 +232,18 @@ def test_panel_jornada_teclado_y_reinicio():
 
 
 def test_jugar_liga_y_copa():
+    from alpha_football import dias as D                  # v0.4.12.0: el hub ahora corre los días hasta el partido
     e = estado_carrera()
+    league_screen.inicializar_calendario_liga(e['liga']); D.hoy(e); D.hasta_el_partido(e)   # el calendario existe antes que el reloj
     click(league_screen.R_JUGAR.center)
     assert league_screen.render(screen, e) == 'prepartido_screen'
     assert e['match_mode'] == 'liga' and e['partido_actual'].jornada == 1
     e = estado_copa()
+    league_screen.inicializar_calendario_liga(e['liga']); D.hoy(e); D.hasta_el_partido(e)   # el calendario existe antes que el reloj
     click(league_screen.R_JUGAR.center)
     assert league_screen.render(screen, e) == 'prepartido_screen' and e['match_mode'] == 'copa'
     e = estado_copa()
+    league_screen.inicializar_calendario_liga(e['liga']); D.hoy(e); D.hasta_el_partido(e)   # el calendario existe antes que el reloj
     e['hub_tab'] = 'oficina'
     key(pygame.K_j)                                      # J juega desde cualquier pestaña
     assert league_screen.render(screen, e) == 'prepartido_screen' and e['match_mode'] == 'copa'
@@ -262,7 +266,7 @@ def test_alertas_inicio():
     e = estado_carrera()
     mi = e['mi_equipo']
     t0 = mi.jugadores[e['alineacion_activa'].titulares[0]]
-    t0.lesion_partidos = 2
+    t0.lesion_dias = 2
     e['ofertas_recibidas'] = [{}, {}]
     avisos = league_screen._alertas_inicio(e, mi)
     assert any(t0.apellido in texto for texto, _ in avisos)
@@ -324,7 +328,9 @@ def test_linea_copa_campeon_sin_copa_campeon():
 
 
 def test_enter_no_reabre_guardar_al_volver():
+    from alpha_football import dias as D                  # v0.4.12.0: el hub ahora corre los días hasta el partido
     e = estado_carrera()
+    league_screen.inicializar_calendario_liga(e['liga']); D.hoy(e); D.hasta_el_partido(e)   # el calendario existe antes que el reloj
     e['hub_tab'], e['hub_bar_foco'], e['hub_foco'] = 'inicio', 5, 0   # volvió de GUARDAR
     key(pygame.K_RETURN)
     assert league_screen.render(screen, e) == 'prepartido_screen'

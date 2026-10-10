@@ -356,7 +356,7 @@ def test_escalada_por_rechazo_y_por_jornada():
     assert j.escalon_salida == 2 and D.confianza(e) == 65
     correos = [m for m in e['datos_carrera']['correo'] if j.apellido in m['asunto']]
     assert len(correos) == 1                                        # un correo por jornada
-    e['liga'].jornada_actual = 3
+    e['liga'].jornada_actual = 2                                     # v0.4.13.0: la J3 (5 sep) ya está cerrada por fecha: J2 (abierta)
     S.cierre_jornada(e, rng=random.Random(3))                       # jornada sin vender: escalón 3
     assert j.escalon_salida == 3 and D.confianza(e) == 60 and D.calif_dt(e) == calif0 - 2
     e['liga'].jornada_actual = 12                                   # v0.4.11.0: ventana de invierno (ya no hay cierre)
@@ -455,18 +455,21 @@ def test_ia_vende_salidas_forzadas():
 
 # ---------------------------------------------------------------- Task 7: aviso de mercado
 def test_eventos_ventana():
-    from alpha_football.ui import aviso_mercado as AM
-    # v4.5.0: mercado de invierno a mitad de temporada
-    # v0.4.11.0: sin ventana de cierre
-    assert AM.eventos_ventana(22) == {1: 'abre', 4: 'cierra', 11: 'abre', 14: 'cierra'}
-    assert AM.eventos_ventana(14) == {1: 'abre', 4: 'cierra', 7: 'abre', 10: 'cierra'}
+    from datetime import date
+    from alpha_football import temporada as T
+    e = estado_carrera()
+    # v4.5.0: mercado de invierno a mitad de temporada; v0.4.11.0: sin ventana de cierre
+    # v0.4.13.0: los hitos del cartel son fechas: abre el 1 jul y el 1 ene; v0.4.14.0: el 31 ago / 31 ene es el último día
+    assert [T.hito_del_dia(e, date(*d)) for d in ((2026, 7, 1), (2026, 8, 31), (2027, 1, 1), (2027, 1, 31), (2026, 8, 15))] == [
+        'abre', 'ultimo', 'abre', 'ultimo', None]
     print("  test_eventos_ventana: OK")
 
 
 def test_cartel_una_vez_y_teclas():
     from alpha_football.ui import aviso_mercado as AM
-    e = estado_carrera(); e['liga'].jornada_actual = 1
-    assert AM.evento_pendiente(e) == ('abre', 1)
+    from alpha_football import dias as _D, calendario as _CAL         # v0.4.13.0: el cartel es por fecha y solo con reloj
+    e = estado_carrera(); _D.hoy(e)
+    assert AM.evento_pendiente(e) == ('abre', '2026-07-01')
     dest, keys, click = AM.manejar(e, [], None)
     assert e.get('aviso_mercado_activo') and dest is None and AM.evento_pendiente(e) is None
     assert any("abrió el mercado" in m['asunto'] for m in e['datos_carrera']['correo'])
@@ -475,8 +478,12 @@ def test_cartel_una_vez_y_teclas():
     assert dest is None and keys == [] and click is None and not e.get('aviso_mercado_activo')
     AM.manejar(e, [], None)
     assert not e.get('aviso_mercado_activo')                       # no se repite
-    e['liga'].jornada_actual = 4
+    _CAL.asegurar(e)['dia'] = '2026-08-31'                           # v0.4.14.0: el 31 sale el cartel del último día (20 horas)
     AM.manejar(e, [], None)
+    assert e['aviso_mercado_activo']['tipo'] == 'ultimo'
+    e['aviso_mercado_activo'] = None
+    from alpha_football import dia_final as _DF                      # el cartel de cierre lo muestra dia_final.cerrar
+    _DF.abrir(e); _DF.cerrar(e)
     assert e['aviso_mercado_activo']['tipo'] == 'cierra'
     enter = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN, mod=0, unicode='')
     dest, _k, _c = AM.manejar(e, [enter], None)                     # cerrado: foco inicial = CONTINUAR
@@ -486,10 +493,11 @@ def test_cartel_una_vez_y_teclas():
 
 def test_cartel_espera_a_la_ayuda():
     from alpha_football.ui import aviso_mercado as AM
-    e = estado_carrera(); e['liga'].jornada_actual = 1
+    from alpha_football import dias as _D                            # v0.4.13.0: el cartel es por fecha y solo con reloj
+    e = estado_carrera(); _D.hoy(e)
     e['ayuda_abierta'] = True
     AM.manejar(e, [], None)
-    assert not e.get('aviso_mercado_activo') and AM.evento_pendiente(e) == ('abre', 1)
+    assert not e.get('aviso_mercado_activo') and AM.evento_pendiente(e) == ('abre', '2026-07-01')
     e['ayuda_abierta'] = False
     AM.manejar(e, [], None, bloqueado=True)                         # diálogo de salida abierto
     assert not e.get('aviso_mercado_activo')

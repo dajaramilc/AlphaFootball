@@ -39,12 +39,12 @@ def _factor_progreso_edad(edad: int) -> float:
     return 0.08
 
 
-BOOST_CANTERANO = 1.5          # v0.4.11.0
+BOOST_CANTERANO = 1.35         # v0.4.11.0 (1.5); v0.4.18.0: baja a 1.35, sigue por encima de un jugador normal
 EDAD_BOOST_CANTERANO = 23
 
 
 def factor_canterano(j: Any, equipo: Any) -> float:
-    """v0.4.11.0: el canterano (hasta 23 años) progresa ×1.5 mientras siga en el club que lo formó."""
+    """v0.4.11.0: el canterano (hasta 23 años) progresa ×BOOST_CANTERANO mientras siga en el club que lo formó."""
     origen = getattr(j, 'canterano', '') or ''
     if origen and origen == getattr(equipo, 'nombre', None) \
             and int(getattr(j, 'edad', 25) or 25) <= EDAD_BOOST_CANTERANO:

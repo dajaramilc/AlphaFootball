@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import random
 import logging
+from typing import Optional
 from alpha_football.models import Jugador
 from alpha_football.market import calcular_valor
 from alpha_football.desarrollo import calcular_potencial
@@ -54,32 +55,37 @@ POSICIONES = ["POR", "DEF", "MED", "DEL"]
 RASGOS = ["regateador", "lider", "rustico", "pulmon_de_hierro"]
 
 
-def get_free_agents(jornada: int) -> list[Jugador]:
+def get_free_agents(jornada: int, rng: Optional[random.Random] = None,
+                    cantidad: Optional[int] = None) -> list[Jugador]:
     """
     Retorna una lista de 6 a 9 agentes libres cada jornada (antes solo en pares).
     Los jugadores se generan con datos coherentes:
       - edad 28–35 (los agentes libres suelen ser veteranos)
       - atributos repartidos por posición
       - `valor` y `potencial` poblados desde el inicio (cero "Valor $0")
+    v0.4.21.0: con `rng` (y `cantidad`) el lote sale de esa semilla y conserva los nombres de parodia
+    (relleno_libres descarta después los que ya están en uso).
     """
     try:
+        azar = rng or random
         # v0.8.x: eliminamos el gate `if jornada % 2 != 0: return []` — ahora
         # SIEMPRE hay agentes libres. Esto resuelve el bug de que la pestaña
         # "Libres" se cacheaba vacía en jornadas impares (en la vieja pantalla del mercado).
-        num_jugadores = random.randint(6, 9)
-        seleccionados = random.sample(NOMBRES_LIBRES, min(num_jugadores, len(NOMBRES_LIBRES)))
+        num_jugadores = cantidad or azar.randint(6, 9)
+        seleccionados = azar.sample(NOMBRES_LIBRES, min(num_jugadores, len(NOMBRES_LIBRES)))
         # v4.4.0: si ese nombre ya lo tiene alguien en la carrera (p. ej. uno que fichaste), otro
         from alpha_football.nombres import en_uso, nombre_unico
-        seleccionados = [nombre_unico(reservar=False) if en_uso(n, a) else (n, a) for n, a in seleccionados]
+        if rng is None:
+            seleccionados = [nombre_unico(reservar=False) if en_uso(n, a) else (n, a) for n, a in seleccionados]
 
         resultado = []
         id_base = 5000 + (max(1, int(jornada)) * 10)
 
         for idx, (nombre, apellido) in enumerate(seleccionados):
-            pos = random.choice(POSICIONES)
+            pos = azar.choice(POSICIONES)
             # v0.8.x: los agentes libres suelen ser veteranos → OVR un poco más bajo
             # pero el rango refleja "free agents decentes", no estrellas.
-            ovr = random.randint(64, 76)
+            ovr = azar.randint(64, 76)
 
             # Generación de atributos individuales por posición
             if pos == "POR":
@@ -91,9 +97,9 @@ def get_free_agents(jornada: int) -> list[Jugador]:
             else:  # DEL
                 atk, dfs, fis, tec, men = ovr + 10, ovr - 20, ovr, ovr + 5, ovr
 
-            rasgo = random.choice(RASGOS) if random.random() < 0.3 else None
+            rasgo = azar.choice(RASGOS) if azar.random() < 0.3 else None
             # v0.8.x: edad entre 28 y 35 (veterano, perfil de agente libre)
-            edad = random.randint(28, 35)
+            edad = azar.randint(28, 35)
 
             j = Jugador(
                 nombre=nombre,
@@ -132,6 +138,18 @@ def get_free_agents(jornada: int) -> list[Jugador]:
     except Exception as e:
         logger.error(f"Error al generar agentes libres: {e}. Retornando lista vacía.")
         return []
+
+
+def relleno_libres(temporada: int, faltan: int, presentes=()) -> list[Jugador]:
+    """v0.4.21.0: veteranos de parodia para cuando la bolsa real de agentes libres tiene pocos. Salen de una
+    semilla por temporada: son los mismos toda la temporada (ya no cambian de posición ni de media de una
+    jornada a otra). Se descartan los que ya juegan en algún club y los que ya están en la lista."""
+    if faltan <= 0:
+        return []
+    from alpha_football.nombres import en_uso
+    temporada = max(1, int(temporada or 1))
+    lote = get_free_agents(temporada * 3, random.Random(f"libres-{temporada}"), len(NOMBRES_LIBRES))
+    return [j for j in lote if not en_uso(j.nombre, j.apellido) and j.nombre_completo not in presentes][:faltan]
 
 
 # ── v4.6.0: jugadores libres creados en el editor ────────────────────────────

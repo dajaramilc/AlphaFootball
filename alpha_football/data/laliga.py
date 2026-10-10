@@ -35,7 +35,7 @@ except ImportError as error_importacion:
         mental: int
         moral: int = 70
         rasgo: Optional[str] = None
-        lesion_partidos: int = 0
+        lesion_dias: int = 0
         id: int = 0
         edad: int = 25
 
@@ -489,7 +489,7 @@ def crear_liga_fallback() -> Liga:
                     mental=70,
                     moral=70,
                     rasgo=None,
-                    lesion_partidos=0,
+                    lesion_dias=0,
                     edad=j_data[5] if len(j_data) > 5 else 25
                 ))
             
@@ -561,7 +561,7 @@ def get_liga() -> Liga:
                     mental=men,
                     moral=70,
                     rasgo=rasgo,
-                    lesion_partidos=0,
+                    lesion_dias=0,
                     id=id_counter,
                     edad=edad
                 )

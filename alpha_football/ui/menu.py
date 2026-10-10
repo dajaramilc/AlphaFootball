@@ -205,7 +205,7 @@ def load_league_teams(league_id: str):
                 tecnica: int
                 mental: int
                 moral: int = 70
-                lesion_partidos: int = 0
+                lesion_dias: int = 0
                 @property
                 def overall(self): return (self.ataque + self.defensa + self.fisico + self.tecnica + self.mental) // 5
                 @property
@@ -1024,6 +1024,11 @@ def _aplicar_estado_cargado(estado: dict, loaded) -> bool:
 
         # v2.3.6: clasificación real a copas + historial del Balón de Oro
         estado['datos_carrera'] = dict(getattr(loaded, 'datos_carrera', None) or {})
+        try:    # v0.4.21.0: la bolsa real de agentes libres se guarda con la partida
+            from alpha_football.negociacion import cargar_libres
+            cargar_libres(estado)
+        except Exception as e_lib:
+            logger.error(f"No se pudo cargar la bolsa de agentes libres: {e_lib}")
         # v2.3.7: valores según la región de cada liga (antes los de las ligas de fondo
         # sudamericanas salían a precio europeo) y, en saves viejos, presupuestos
         # realistas para los clubes de la IA (el del user no se toca).
@@ -1038,6 +1043,11 @@ def _aplicar_estado_cargado(estado: dict, loaded) -> bool:
             if not estado['datos_carrera'].get('presupuestos_v237'):
                 asignar_presupuestos_realistas(estado, incluir_usuario=False)
                 estado['datos_carrera']['presupuestos_v237'] = True
+            if not estado['datos_carrera'].get('saldos_v0420'):
+                # v0.4.20.0: una vez por save: los rojos que el bug del saldo multiplicó en cada carga
+                from alpha_football.mercado_ia import reparar_saldos
+                reparar_saldos(estado)
+                estado['datos_carrera']['saldos_v0420'] = True
             # v2.3.8: nacionalidades (para los regens) y más techo para los jóvenes
             from alpha_football.retiros import asignar_nacionalidades
             asignar_nacionalidades(estado)
@@ -1064,6 +1074,13 @@ def _aplicar_estado_cargado(estado: dict, loaded) -> bool:
     except Exception as e:
         logger.error(f"Error al aplicar estado cargado: {e}")
         return False
+
+
+def _dibujar_aviso_version(screen: pygame.Surface, estado: dict) -> None:
+    """v0.4.15.0: el actualizador encontró una versión nueva y no la instaló (copia git con cambios o falla)."""
+    aviso = estado.get('aviso_version')
+    if aviso:
+        draw_text(screen, str(aviso)[:60], (100, 598), size='sm', color='dorado')
 
 
 def render(screen: pygame.Surface, estado: dict) -> str | None:
@@ -1144,6 +1161,7 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
 
         # Dibujar panel de ambientación a la derecha
         _dibujar_panel_derecho(screen, estado)
+        _dibujar_aviso_version(screen, estado)      # v0.4.15.0
 
         # Lógica de clics
         if click_pos:
@@ -1720,6 +1738,13 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                         estado['copa_clasificado'] = False
                         estado['copa_user_en_copa'] = False
                         estado['copa_clasificado_motivo'] = "Default (cálculo falló)"
+                    # v0.4.16.0: cada continente con su temporada: el otro arranca a mitad de la suya
+                    pantalla_carga.mostrar("INICIANDO CARRERA", "El otro continente, a mitad de temporada", 0.88)
+                    try:
+                        from alpha_football import temporadas as _temporadas
+                        _temporadas.arrancar_desfase(estado)
+                    except Exception as e_desfase:
+                        logger.error(f"No se pudo desfasar los continentes al crear la carrera: {e_desfase}")
                     from alpha_football.models import alineacion_por_defecto
                     def_alin = alineacion_por_defecto(equipo)
                     estado['alineacion_activa'] = def_alin

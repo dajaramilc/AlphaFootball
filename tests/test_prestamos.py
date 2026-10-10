@@ -51,7 +51,7 @@ def test_acordado_con_mercado_cerrado_espera_la_ventana():
     mi, club = e['mi_equipo'], e['liga'].equipos[4]
     j = club.jugadores[9]
     txt = P.iniciar(e, j, club, mi, 6, 50)
-    assert j in club.jugadores and 'jornada 11' in txt
+    assert j in club.jugadores and '1 ene 2027' in txt                # v0.4.13.0: dice la fecha de apertura
     e['datos_carrera'] = json.loads(json.dumps(e['datos_carrera']))    # guardar / cargar
     e['liga'].jornada_actual = 11
     P.revisar_jornada(e)
@@ -65,7 +65,7 @@ def test_terminar_antes():
     j = club.jugadores[8]
     P.iniciar(e, j, club, mi, 12, 50)
     e['liga'].jornada_actual = 5                                 # cerrado → vuelve en la próxima ventana
-    assert 'jornada 11' in P.terminar(e, j) and j in mi.jugadores
+    assert '1 ene 2027' in P.terminar(e, j) and j in mi.jugadores   # v0.4.13.0: dice la fecha de apertura
     e['liga'].jornada_actual = 11
     P.revisar_jornada(e)
     assert j in club.jugadores and j.prestamo is None

@@ -55,12 +55,13 @@ def _jornada(estado: dict) -> int:
 def asignar_tope(of: dict, rng: Optional[random.Random] = None) -> int:
     """v3.5.0: tope oculto del comprador (se fija una sola vez por oferta)."""
     if 'tope' not in of:
+        from alpha_football.market import cifra_cerrada
         azar = rng or random.Random()
         monto = int(of.get('monto', 0) or 0)
         tope = int(monto * azar.uniform(*TOPE_RANGO))
         if not of.get('exterior'):
             tope = min(tope, max(monto, int(getattr(of.get('comprador'), 'balance', 0) or 0)))
-        of['tope'] = tope
+        of['tope'] = max(monto, cifra_cerrada(tope, abajo=True))     # v0.4.18.0: cifra cerrada, sin bajar de la oferta
     return int(of['tope'])
 
 
@@ -92,7 +93,8 @@ def vender(estado: dict, of: dict, asunto: Optional[str] = None, remitente: str 
         return False
     estado['ofertas_recibidas'] = [o for o in (estado.get('ofertas_recibidas') or [])
                                    if o.get('jugador') is not jug]
-    if not TP.mercado_abierto(estado):
+    from alpha_football import dia_final as DF      # v0.4.14.0: el último día, una venta cuesta 2 horas
+    if not TP.puede_concretar(estado, DF.HORAS_VENTA):
         # mercado cerrado: la plata llega ya, el jugador se va cuando se abra la ventana
         try:
             aviso = TP.diferir_venta(estado, jug, comp, monto)
@@ -153,19 +155,27 @@ def contraofertar(estado: dict, of: dict, pedido: int, rng: Optional[random.Rand
         vender(estado, of)
         return 'aceptada', f"{comp} acepta {dinero_exacto(pedido)}."
     if pedido <= int(tope * MARGEN_ANALISIS):
+        from alpha_football import dia_final as DF      # v0.4.14.0: el último día responde a las 3 horas
+        ok, hora = DF.analisis(estado)
+        if not ok:
+            retirar(estado, of)
+            return 'rechazada', f"{comp}: no hay tiempo para analizarlo hoy y retira la oferta."
         of['contra'] = {'pedido': pedido, 'estado': 'analizando', 'jornada': _jornada(estado)}
-        return 'analizando', f"{comp}: \"Lo analizamos\". Te responden por correo en la próxima jornada."
+        if hora is not None:
+            of['contra']['hora_resp'] = hora
+        return 'analizando', f"{comp}: \"Lo analizamos\". {DF.texto_respuesta(hora)}"
     retirar(estado, of)
     return 'rechazada', f"{comp} considera excesivo {dinero_exacto(pedido)} y retira la oferta."
 
 
 def _resolver_ventas(estado: dict, azar: random.Random) -> None:
     from alpha_football import correo as C
+    from alpha_football import dia_final as DF      # v0.4.14.0: vence por jornada (como siempre) o por hora
     from alpha_football.negociacion import dinero_exacto
     mi = estado.get('mi_equipo')
     for of in list(estado.get('ofertas_recibidas') or []):
         c = of.get('contra') or {}
-        if c.get('estado') != 'analizando' or _jornada(estado) <= int(c.get('jornada', 0)):
+        if c.get('estado') != 'analizando' or not DF.vencido(estado, c):
             continue
         jug, comp = of.get('jugador'), of.get('comprador')
         if mi is None or jug not in mi.jugadores:
@@ -185,11 +195,12 @@ def _resolver_ventas(estado: dict, azar: random.Random) -> None:
 
 def _resolver_compras(estado: dict, azar: random.Random) -> None:
     from alpha_football import correo as C
+    from alpha_football import dia_final as DF      # v0.4.14.0
     from alpha_football.negociacion import dinero_exacto, minimo_club, buscar_en_club
     dc = estado.setdefault('datos_carrera', {})
     pend = dc.setdefault('analisis_compras', [])
     for a in list(pend):
-        if _jornada(estado) <= int(a.get('jornada', 0)):
+        if not DF.vencido(estado, a):
             continue
         pend.remove(a)
         club, j = buscar_en_club(estado, a['club_id'], a['jugador_id'])
@@ -220,7 +231,7 @@ def _ubicar_contrato(estado: dict, a: dict) -> tuple:
         return None, None, "El acuerdo era de otra temporada."
     from alpha_football.market import ventana_mercado_abierta
     liga = estado.get('liga')
-    if liga is None or not ventana_mercado_abierta(liga.jornada_actual, liga.num_jornadas):
+    if liga is None or not ventana_mercado_abierta(liga.jornada_actual, liga.num_jornadas, estado=estado):
         return None, None, "La ventana de fichajes se cerró."
     if a.get('club_id') is None:
         j = next((x for x in estado.get('free_agents_list') or []
@@ -234,11 +245,12 @@ def _resolver_contratos(estado: dict, azar: random.Random) -> None:
     """v4.4.0: respuesta del jugador a un contrato "en análisis" (fichaje o renovación)."""
     from alpha_football import correo as C
     from alpha_football import negociacion as N
+    from alpha_football import dia_final as DF      # v0.4.14.0
     dc = estado.setdefault('datos_carrera', {})
     pend = dc.setdefault('analisis_contratos', [])
     temporada = int(estado.get('temporada', 1) or 1)
     for a in list(pend):
-        if int(a.get('temporada', temporada)) == temporada and _jornada(estado) <= int(a.get('jornada', 0)):
+        if not DF.vencido(estado, a):
             continue
         pend.remove(a)
         nombre, renueva = a.get('jugador', '?'), a['modo'] == 'renovar'
@@ -251,14 +263,15 @@ def _resolver_contratos(estado: dict, azar: random.Random) -> None:
             C.enviar(estado, 'jugador', f"{nombre} no acepta tu propuesta",
                      f"Míster, lo pensé bien y por {N.dinero_exacto(a['salario'])} al año no firmo. Creo que "
                      f"lo justo son {N.dinero_exacto(pedido)}. Si lo mejoran, hablamos.",
-                     C.accion('plantilla_screen', "VER PLANTILLA") if renueva else None)
+                     C.accion('plantilla_screen', "VER PLANTILLA") if renueva else None,
+                     jugador=j if renueva else None)
             continue
         if renueva:
             N.renovar(estado, j, a['salario'], a['anios'], a['clausula_mult'])
             C.enviar(estado, 'jugador', f"{nombre} acepta renovar",
                      f"Míster, acepto: firmo por {a['anios']} años y {N.dinero_exacto(a['salario'])} al año. "
                      "Gracias por la confianza, voy a devolverla en la cancha.",
-                     C.accion('plantilla_screen', "VER PLANTILLA"))
+                     C.accion('plantilla_screen', "VER PLANTILLA"), jugador=j)
             continue
         ok, msg = N.completar_fichaje(estado, j, club, a['monto'], a['salario'], a['anios'], a['clausula_mult'])
         if not ok:   # si ficha, fichar() ya manda el correo de llegada

@@ -150,7 +150,7 @@ def test_lesion_sin_cambios():
     ctx = e['sim_ctx']; e['sim_subs_realizadas'] = 5
     j = ctx.en_cancha[lado][6]
     _inyectar(e, {'minuto': 20, 'tipo': 'lesion', 'lado': lado, 'equipo_id': ctx.ids_equipo[lado], 'jugador': j,
-                  'jugador_id': j.id, 'partidos': 2, 'detalle': 'lesion'})
+                  'jugador_id': j.id, 'dias': 14, 'detalle': 'lesion'})
     _avanzar(e, 22)
     assert e.get('sim_cambio_forzado') is None
     assert len(e['sim_ctx'].en_cancha[lado]) <= 10 and j not in e['sim_ctx'].en_cancha[lado]
@@ -161,7 +161,7 @@ def test_lesion_abre_selector_y_cambia():
     e = estado_carrera(); p, lado = _vivo(e)
     ctx = e['sim_ctx']; j = ctx.en_cancha[lado][6]
     _inyectar(e, {'minuto': 20, 'tipo': 'lesion', 'lado': lado, 'equipo_id': ctx.ids_equipo[lado], 'jugador': j,
-                  'jugador_id': j.id, 'partidos': 2, 'detalle': 'lesion'})
+                  'jugador_id': j.id, 'dias': 14, 'detalle': 'lesion'})
     subs0 = e['sim_subs_realizadas']
     while e['sim_minuto'] < 20:
         if e.get('sim_cambio_forzado') is not None:
@@ -249,7 +249,7 @@ def test_selector_en_descanso_no_reanuda():
     e = estado_carrera(); p, lado = _vivo(e)
     ctx = e['sim_ctx']; j = ctx.en_cancha[lado][6]
     _inyectar(e, {'minuto': 45, 'tipo': 'lesion', 'lado': lado, 'equipo_id': ctx.ids_equipo[lado], 'jugador': j,
-                  'jugador_id': j.id, 'partidos': 2, 'detalle': 'lesion'})
+                  'jugador_id': j.id, 'dias': 14, 'detalle': 'lesion'})
     _hasta(e, 45)
     assert e['sim_estado'] == 'medio_tiempo' and e.get('sim_cambio_forzado') == PC.clave(j)
     key(pygame.K_RETURN); MS.render(screen, e)

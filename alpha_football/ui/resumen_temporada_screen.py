@@ -93,7 +93,20 @@ def avanzar_nueva_temporada(estado: dict) -> None:
         if not liga or not mi_equipo:
             return
 
-        _pc.mostrar("PASANDO DE TEMPORADA", "Cerrando las copas", 0.05)
+        # v0.4.16.0: con los continentes desfasados (temporadas.py) tu cierre solo cierra TU continente;
+        # sin la marca cierra todo como siempre y, al terminar, la partida se desfasa (F6).
+        from alpha_football import temporadas as _TS
+        from alpha_football import calendario as _CAL_cierre
+        _paises = _TS.paises_cierre(estado)                     # None = todos los países
+        _continente = _CAL_cierre.continente(estado)
+        _tipos_copa = (_TS.copa_de(_continente),) if _paises is not None else None
+
+        try:   # v0.4.23.0: las noticias más recientes desfilan durante la carga
+            from alpha_football import noticias as _noticias
+            _pc.fijar_titulares(_noticias.ultimas(estado, 10))
+        except Exception as e_tit:
+            logger.error(f"No se pudieron preparar los titulares de la carga: {e_tit}")
+        _pc.mostrar("PASANDO DE TEMPORADA", "Cerrando temporada…", 0.05)
         # 0. v3.8.0: las dos copas terminan ANTES de subir la temporada (si no, el motor las
         #    reemplazaría por las de la temporada nueva). Se guardan sus campeones.
         campeones_copas = {}
@@ -101,8 +114,8 @@ def avanzar_nueva_temporada(estado: dict) -> None:
         try:
             from alpha_football import competiciones as CP
             from alpha_football.ui.copa_screen import simular_copa_entera
-            simular_copa_entera(estado)
-            campeones_copas = {t: CP.campeon(estado, t) for t in CP.N_FECHAS}
+            simular_copa_entera(estado, tipos=_tipos_copa)
+            campeones_copas = _TS.campeones_copas(estado, {t: CP.campeon(estado, t) for t in CP.N_FECHAS})
             bono_copa_cobrado = _premios_copa_temporada(estado)
             estado.setdefault('datos_carrera', {}).setdefault('campeones_copas', []).append(
                 {'temporada': int(estado.get('temporada', 1) or 1), **campeones_copas})
@@ -113,12 +126,14 @@ def avanzar_nueva_temporada(estado: dict) -> None:
         temp_anterior = estado.get('temporada', 1)
         nueva_temp = temp_anterior + 1
         estado['temporada'] = nueva_temp
+        _TS.subir_anio(estado, _continente)     # v0.4.16.0: el año de tu continente sube con tu temporada (antes de los premios)
         try:   # v4.7.0: la bandeja arranca limpia (quedan los correos del cierre que vienen ahora)
             from alpha_football.correo import limpiar_temporadas_anteriores
             limpiar_temporadas_anteriores(estado)
         except Exception as e_co:
             logger.error(f"No se pudo limpiar el correo: {e_co}")
 
+        campeon_nombre = None      # v0.4.23.0: lo usan las noticias del cierre aunque falle el cálculo de abajo
         # 2. Guardar registro en el historial de campañas (Career Screen)
         #    v0.8.1: claves correctas (pos/pts/gf/gc/campeon_liga/libertadores) +
         #    bono de fin de temporada + reset de la mejor fase de copa.
@@ -227,7 +242,7 @@ def avanzar_nueva_temporada(estado: dict) -> None:
                 logger.error(f"Error evaluando los patrocinios: {e_pat}")
             try:  # v3.4.0: DTs de la IA que no cumplieron (usa la tabla final: antes del swap)
                 from alpha_football.entrenadores import cierre_temporada as _dts_cierre
-                _dts_cierre(estado)
+                _dts_cierre(estado, paises=_paises)
             except Exception as e_dts:
                 logger.error(f"Error en el cierre de temporada de los DTs: {e_dts}")
             try:  # v2.9.0: premios de la temporada que termina en su libro de finanzas
@@ -236,6 +251,12 @@ def avanzar_nueva_temporada(estado: dict) -> None:
             except Exception as e_lib:
                 logger.error(f"Error al registrar los premios: {e_lib}")
             estado.setdefault('historial', []).append(registro)
+            try:  # v0.4.23.0: logros que dependen del historial (título de liga, final continental)
+                from alpha_football import logros as _logros
+                # el contador de temporada ya subió (paso 1): el logro se fecha en la que acaba de terminar
+                _logros.revisar(estado, temporada=temp_anterior, jornada=int(getattr(liga, 'num_jornadas', 0) or 0))
+            except Exception as e_logros:
+                logger.error(f"Error al revisar los logros del cierre de temporada: {e_logros}")
             logger.info(
                 f"Fin T{temp_anterior}: pos {posicion}, pts {mi_equipo.puntos}, "
                 f"copa {mejor_fase}, bono €{bono_total:,}"
@@ -250,14 +271,14 @@ def avanzar_nueva_temporada(estado: dict) -> None:
         #     (tabla final de cada 1ª en copa_ranking; ascender no da copa; 2ª no juega copa).
         estado['copa_clasificado_motivo'] = ""
 
-        _pc.mostrar("PASANDO DE TEMPORADA", "Ascensos y descensos", 0.25)
+        _pc.mostrar("PASANDO DE TEMPORADA", "Actualizando clasificaciones y descensos…", 0.25)
         # 3a. SWAP promoción/relegación entre la 1ª y la 2ª del país del usuario.
         # v2.3.5: ambas ligas son las reales de la partida (persistidas y simuladas de
         # fondo). Antes, con el user en 2ª, la 1ª se recargaba de disco con 0 puntos
         # (descendían equipos al azar) y los ascendidos se perdían al guardar.
         try:
             from alpha_football.ui.league_screen import completar_ligas_de_fondo
-            completar_ligas_de_fondo(estado)
+            completar_ligas_de_fondo(estado, paises=_paises)
         except Exception as e_fondo:
             logger.error(f"Error completando ligas de fondo: {e_fondo}")
 
@@ -278,96 +299,60 @@ def avanzar_nueva_temporada(estado: dict) -> None:
         # 3a-0. v4.4.0: rendimiento de la temporada (tramos, objetivos, grandes) antes del swap
         try:
             from alpha_football.nivel_temporada import preparar as _nivel_preparar
-            _nivel_preparar(estado)
+            _nivel_preparar(estado, paises=_paises)
         except Exception as e_niv:
             logger.error(f"Error preparando el nivel de fin de temporada: {e_niv}")
 
         # 3a-bis. v2.3.6: con TODAS las tablas finales cerradas (antes del reset):
         #   - tabla final de cada 1ª = clasificados reales de la próxima copa
-        #   - Balón de Oro al mejor rendimiento de las 10 ligas
+        #   - Balón de Oro y Sudamericano del Año (se entregan en octubre y en enero)
         try:
             from alpha_football.ui.copa_screen import guardar_ranking_copas
-            guardar_ranking_copas(estado)
+            guardar_ranking_copas(estado, paises=_paises)
         except Exception as e_rank:
             logger.error(f"Error guardando la tabla final para la copa: {e_rank}")
-        try:
-            from alpha_football.premios import calcular_balon_de_oro
-            # v3.8.0: campeones de las dos copas + goles/asistencias de copa de cada jugador
-            balon = calcular_balon_de_oro(primeras, segunda, temp_anterior,
-                                          [c for c in campeones_copas.values() if c],
-                                          datos_copas=(estado.get('datos_carrera') or {}).get('copas'))
-            if balon:
-                estado.setdefault('datos_carrera', {}).setdefault('balon_oro', []).append(balon)
-                estado['balon_oro_ultimo'] = balon
-                logger.info(f"Balón de Oro T{temp_anterior}: {balon['ganador']['nombre']} ({balon['ganador']['equipo']})")
+        try:   # v0.4.17.0: Balón de Oro y Sudamericano del Año se calculan aquí y se entregan en su gala
+            from alpha_football import premios as _premios
+            _prim_premios, _seg_premios = _TS.mapas_cierre(estado, primeras, segunda)     # v0.4.16.0: con desfase, tu continente
+            _premios.cerrar_temporada(estado, _prim_premios, _seg_premios, temp_anterior, campeones_copas)
+            _TS.fundir_balon(estado)            # + el podio congelado del otro continente (su última temporada cerrada)
         except Exception as e_balon:
-            logger.error(f"Error calculando el Balón de Oro: {e_balon}")
+            logger.error(f"Error calculando los premios de la temporada: {e_balon}")
+
+        try:   # v0.4.23.0: campeones y equipo del año, con la tabla final todavía intacta (antes del intercambio de clubes)
+            from alpha_football import noticias as _noticias
+            from alpha_football import noticias_gen as _ngen
+            _ngen.generar_cierre_temporada(estado, temp_anterior, campeon_nombre, campeones_copas)
+            _pc.fijar_titulares(_noticias.ultimas(estado, 10))
+        except Exception as e_ncierre:
+            logger.error(f"Error publicando las noticias del cierre de temporada: {e_ncierre}")
 
         # 3a. SWAP promoción/relegación en los 5 países (v2.3.6: antes solo en el del
         # user y en las demás ligas los últimos seguían en 1ª la temporada siguiente).
-        user_asc = user_des = False
-        movimientos = []
-        premio_ascenso_user = 0
+        # v0.4.16.0: el bucle de ascensos y descensos vive en temporadas.py (lo comparte el cierre del otro continente)
+        from alpha_football import temporadas as _TS
         estado['_recien_ascendidos'] = []
-        from alpha_football.mercado_ia import aplicar_ascenso, aplicar_descenso
-        for tipo_x in sorted(set(primeras) | set(segunda)):
-            l1, l2 = primeras.get(tipo_x), segunda.get(tipo_x)
-            try:
-                ascenden, descienden = _swap_promocion(l1, l2)
-            except Exception as e_promo:
-                logger.error(f"Error en swap promoción/relegación de '{tipo_x}': {e_promo}")
-                continue
-            if not ascenden and not descienden:
-                continue
-            # v4.4.0: ascenso +3..+6 (techo 83) y descenso −2..−5 según rendimiento (nivel_temporada);
-            # el que asciende cobra el premio de ascenso.
-            for eq in ascenden:
-                try:
-                    premio = aplicar_ascenso(eq, tipo_x, estado)
-                    estado['_recien_ascendidos'].append(eq.nombre)
-                    if eq.id == mi_equipo.id:
-                        premio_ascenso_user = premio
-                        try:   # el premio de ascenso también va al libro de finanzas de la temporada
-                            from alpha_football.finanzas import registrar
-                            registrar(estado, 'premios', int(premio or 0), temp_anterior)
-                        except Exception as e_lib_asc:
-                            logger.error(f"No se pudo registrar el premio de ascenso: {e_lib_asc}")
-                except Exception as e_asc:
-                    logger.error(f"Error aplicando el ascenso de {eq.nombre}: {e_asc}")
-            for eq in descienden:
-                try:
-                    aplicar_descenso(eq, estado)
-                except Exception as e_des:
-                    logger.error(f"Error aplicando el descenso de {eq.nombre}: {e_des}")
-            movimientos.append({'tipo': tipo_x,
-                                'ascendidos': [e.nombre for e in ascenden],
-                                'descendidos': [e.nombre for e in descienden]})
-            if tipo_x == liga_tipo:
-                def _payload(equipos, origen, destino):
-                    return [{'nombre': getattr(e, 'nombre', '?'), 'ovr': getattr(e, 'ovr_promedio', 0),
-                             'origen': origen, 'destino': destino, 'es_user': e.id == mi_equipo.id}
-                            for e in equipos]
-                user_asc = any(e.id == mi_equipo.id for e in ascenden)
-                user_des = any(e.id == mi_equipo.id for e in descienden)
-                estado['promo_releg_data'] = {
-                    'ascendidos': _payload(ascenden, 2, 1),
-                    'descendidos': _payload(descienden, 1, 2),
-                    'user_ascendio': user_asc,
-                    'user_descendio': user_des,
-                }
-            logger.info(
-                f"Promo/releg {tipo_x} T{nueva_temp}: ascendieron {[e.nombre for e in ascenden]} "
-                f"/ descendieron {[e.nombre for e in descienden]}"
-            )
+        _promo = _TS.ascensos_descensos(estado, _paises, temp_anterior)
+        user_asc, user_des = _promo['user_asc'], _promo['user_des']
+        movimientos = _promo['movimientos']
+        if _promo['payload_user']:
+            estado['promo_releg_data'] = _promo['payload_user']
         if movimientos:
             estado.setdefault('promo_releg_data', {'ascendidos': [], 'descendidos': [],
                                                    'user_ascendio': False, 'user_descendio': False})
             estado['promo_releg_data']['todos_paises'] = movimientos
-            estado['promo_releg_data']['premio_ascenso_user'] = premio_ascenso_user
+            estado['promo_releg_data']['premio_ascenso_user'] = _promo['premio_ascenso_user']
+        try:   # v0.4.23.0: ascensos y descensos de la temporada que se cierra
+            from alpha_football import noticias as _noticias
+            from alpha_football import noticias_gen as _ngen
+            _ngen.generar_cierre_movimientos(estado, temp_anterior, movimientos)
+            _pc.fijar_titulares(_noticias.ultimas(estado, 10))
+        except Exception as e_nmov:
+            logger.error(f"Error publicando los ascensos y descensos: {e_nmov}")
 
         try:  # v4.4.0: temporada sin ningún objetivo cumplido → 0 a −2 según rendimiento
             from alpha_football.nivel_temporada import aplicar_objetivos
-            aplicar_objetivos(estado)
+            aplicar_objetivos(estado, paises=_paises)
         except Exception as e_nobj:
             logger.error(f"Error aplicando el bajón por objetivos: {e_nobj}")
 
@@ -398,35 +383,10 @@ def avanzar_nueva_temporada(estado: dict) -> None:
         #    (antes las 2ª jugaban una sola temporada y quedaban congeladas).
         todas = [liga] + [l for l in list(primeras.values()) + list(segunda.values())
                           if l is not None and l is not liga]
-        for liga_r in todas:
-            for eq in liga_r.equipos:
-                eq.puntos = 0
-                eq.sancion_puntos = 0           # v4.6.0: la sanción por quiebra dura una temporada
-                eq.pj = 0
-                eq.pg = 0
-                eq.pe = 0
-                eq.pp = 0
-                eq.gf = 0
-                eq.gc = 0
-                for j in eq.jugadores:
-                    j.goles = 0
-                    j.asistencias = 0
-                    j.partidos_jugados = 0
-                    j.porterias_cero = 0
-                    j.moral = max(70, j.moral)
-                    j.lesion_partidos = 0
-                    from alpha_football.sanciones import nueva_temporada as _sanc_nueva
-                    _sanc_nueva(j)              # sanciones y amarillas de liga y copa a cero
-                    j.energia = 100.0           # v3.1.0: pretemporada
-            # 4b. Desarrollo pasivo de fin de temporada (envejecimiento + OVR).
-            try:
-                from alpha_football.desarrollo import progresar_liga_pasivo
-                progresar_liga_pasivo(liga_r, 1)
-            except Exception as e_dev_pasivo:
-                logger.error(f"Error en desarrollo pasivo de fin de temporada: {e_dev_pasivo}")
-            # 5. Calendario nuevo
-            liga_r.calendario = []
-            liga_r.jornada_actual = 1
+        for liga_r in todas:                    # v0.4.16.0: los pasos por liga viven en temporadas.py
+            if _paises is None or getattr(liga_r, 'tipo', None) in _paises:
+                _TS.reiniciar_ligas([liga_r])   # 4 y 5: tablas, estadísticas, sanciones y calendario nuevo (tu continente)
+            _TS.envejecer_ligas([liga_r])       # 4b: desarrollo pasivo de fin de temporada: anual y para todos
 
         try:  # v4.4.0: tope bajón + curva por edad y correo al user con los cambios de nivel
             from alpha_football.nivel_temporada import aplicar_topes
@@ -443,7 +403,7 @@ def avanzar_nueva_temporada(estado: dict) -> None:
         except Exception as e_comp:
             logger.error(f"Error completando las ligas a 12: {e_comp}")
 
-        _pc.mostrar("PASANDO DE TEMPORADA", "Retiros y regens", 0.5)
+        _pc.mostrar("PASANDO DE TEMPORADA", "Generando agentes libres y regens…", 0.5)
         # 4b-bis. v2.3.8: retiros (35+ años, sorteado) → regens de su país y posición.
         try:
             from alpha_football.retiros import procesar_retiros
@@ -451,12 +411,12 @@ def avanzar_nueva_temporada(estado: dict) -> None:
         except Exception as e_ret:
             logger.error(f"Error procesando retiros: {e_ret}")
 
-        _pc.mostrar("PASANDO DE TEMPORADA", "Ingresos de los clubes", 0.65)
+        _pc.mostrar("PASANDO DE TEMPORADA", "Procesando mercado de pases…", 0.65)
         # 4c. Ingresos de la IA. v0.4.11.0: ya no hay ronda de pretemporada (la IA fichaba antes
         #     que el user); ahora ficha en la ventana de inicio, jornada a jornada, a la vez que él.
         try:
             from alpha_football.mercado_ia import ingresos_fin_temporada
-            ingresos_fin_temporada(estado)
+            ingresos_fin_temporada(estado, paises=_paises)
             estado['mercado_ia_log'] = []
         except Exception as e_mia:
             logger.error(f"Error en los ingresos de temporada de la IA: {e_mia}")
@@ -469,11 +429,11 @@ def avanzar_nueva_temporada(estado: dict) -> None:
 
         try:  # v4.4.0: objetivo de la IA para la temporada que empieza (tras la pretemporada)
             from alpha_football.nivel_temporada import foto_objetivos_ia
-            foto_objetivos_ia(estado)
+            foto_objetivos_ia(estado, paises=_paises)
         except Exception as e_foto:
             logger.error(f"Error guardando los objetivos de la IA: {e_foto}")
 
-        _pc.mostrar("PASANDO DE TEMPORADA", "Contratos y finanzas", 0.8)
+        _pc.mostrar("PASANDO DE TEMPORADA", "Contratos y finanzas…", 0.8)
         # 4d. v2.9.0: contratos (−1 año; los del user que vencen se van libres) y quiebra.
         try:
             from alpha_football.finanzas import cierre_temporada
@@ -499,15 +459,22 @@ def avanzar_nueva_temporada(estado: dict) -> None:
         except Exception as e_tp:
             logger.error(f"Error concretando los traspasos acordados al empezar la temporada: {e_tp}")
 
-        _pc.mostrar("PASANDO DE TEMPORADA", "Sorteando las copas", 0.9)
+        _pc.mostrar("PASANDO DE TEMPORADA", "Preparando nueva temporada…", 0.9)
         # 5. v3.8.0: copas de la temporada nueva (clasificados por la tabla final de cada 1ª).
         if not estado.get('copa_clasificado_motivo') and getattr(liga, 'division', 1) == 2:
             estado['copa_clasificado_motivo'] = "En 2ª división no se clasifica a copa."
         try:
             from alpha_football.ui.copa_screen import iniciar_copas_temporada
-            iniciar_copas_temporada(estado, forzar=True)
+            iniciar_copas_temporada(estado, forzar=True, tipos=_tipos_copa)
         except Exception as e_copa_nueva:
             logger.error(f"Error al sortear las copas de la temporada nueva: {e_copa_nueva}")
+
+        if _paises is None:   # v0.4.16.0 (F6): un save sin desfase cerró todo junto; desde aquí cada continente va por su fecha
+            _pc.mostrar("PASANDO DE TEMPORADA", "El otro continente, a mitad de temporada", 0.94)
+            try:
+                _TS.arrancar_desfase(estado)
+            except Exception as e_desfase:
+                logger.error(f"No se pudo desfasar los continentes tras el cierre: {e_desfase}")
 
         _pc.mostrar("PASANDO DE TEMPORADA", "Guardando la partida", 0.97)
         # 6. Autoguardar la partida de forma automática y atómica en el slot activo
@@ -555,7 +522,8 @@ def avanzar_nueva_temporada(estado: dict) -> None:
     finally:
         if liga and mi_equipo:                  # sin partida no hubo carga que mostrar
             _pc.mostrar("PASANDO DE TEMPORADA", "Listo", 1.0)
-        _pc.cerrar()
+        _pc.cerrar(minimo=_pc.MINIMO_TEMPORADA)      # v0.4.23.0: ~3 s en el juego real: se leen los titulares
+        _pc.fijar_titulares(None)
 
 
 # v3.9.0: rects expuestos (ayuda H). AVANZAR sube a y=646 (antes 652: la barra de atajos lo pisaba).

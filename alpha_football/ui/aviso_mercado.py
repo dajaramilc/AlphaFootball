@@ -29,30 +29,16 @@ R_CONTINUAR = pygame.Rect(R_CARTEL.right - 270, R_CARTEL.bottom - 76, 230, 52)
 FRANJA_Y, FRANJA_H, MARGEN_DER = 80, 22, 16
 
 
-def eventos_ventana(num_jornadas: int) -> dict:
-    """{jornada: 'abre'|'cierra'}: abre el primer día de cada ventana y cierra el día siguiente
-    al último (la de cierre de temporada no tiene cartel de cierre)."""
-    from alpha_football.market import ventanas_mercado
-    n = int(num_jornadas or 22)
-    ev = {}
-    for a, b, _nombre in ventanas_mercado(n):
-        ev[a] = 'abre'
-        if b < n:
-            ev[b + 1] = 'cierra'
-    return ev
+def _hasta(estado: dict) -> str:
+    """Último día de la ventana abierta hoy ('vie 31 ene')."""
+    from alpha_football import temporada as T, calendario as CAL
+    n = T.ventana_actual(estado)
+    return CAL.texto_fecha(T.ventanas(estado)[n][1], False) if n else CAL.texto_fecha(T.fecha(estado), False)
 
 
-def _hasta(jornada: int, n: int) -> int:
-    """Última jornada de la ventana abierta en `jornada`."""
-    from alpha_football.market import ventana_actual
-    v = ventana_actual(jornada, n)
-    return v[1] if v else n
-
-
-def _reabre(jornada: int, n: int) -> str:
-    from alpha_football.market import proxima_apertura
-    p = proxima_apertura(jornada, n)
-    return f"Reabre en la jornada {p}." if p > jornada else "Reabre al empezar la próxima temporada."
+def _reabre(estado: dict) -> str:
+    from alpha_football import temporada as T, calendario as CAL
+    return f"Reabre el {CAL.texto_fecha(T.proxima_apertura(estado))}."
 
 
 def _liga(estado):
@@ -60,35 +46,42 @@ def _liga(estado):
 
 
 def evento_pendiente(estado: dict) -> Optional[tuple]:
-    liga = _liga(estado)
-    if liga is None:
+    """v0.4.13.0: ('abre', 'AAAA-MM-DD') el primer día de una ventana, ('cierra', …) el día siguiente a su
+    cierre; None el resto o si ya se vio. Solo con reloj (en el hub); sin él no hay cartel."""
+    if _liga(estado) is None:
         return None
-    j = int(getattr(liga, 'jornada_actual', 1) or 1)
-    tipo = eventos_ventana(getattr(liga, 'num_jornadas', 22)).get(j)
+    from alpha_football import dias, temporada as T
+    if not dias.activo(estado):
+        return None
+    d = T.fecha(estado)
+    tipo = T.hito_del_dia(estado, d)
     if not tipo:
         return None
-    clave = [int(estado.get('temporada', 1) or 1), j]
+    clave = [int(estado.get('temporada', 1) or 1), d.isoformat()]
     if (estado.get('datos_carrera') or {}).get('aviso_mercado_visto') == clave:
         return None
-    return tipo, j
+    return tipo, d.isoformat()
 
 
-def _abrir(estado: dict, tipo: str, jornada: int) -> None:
+def _abrir(estado: dict, tipo: str, fecha: str) -> None:
     dc = estado.setdefault('datos_carrera', {})
-    dc['aviso_mercado_visto'] = [int(estado.get('temporada', 1) or 1), jornada]
+    dc['aviso_mercado_visto'] = [int(estado.get('temporada', 1) or 1), fecha]
     # con el mercado cerrado no hay a qué ir: el foco arranca en CONTINUAR
-    estado['aviso_mercado_activo'] = {'tipo': tipo, 'jornada': jornada, 'foco': 0 if tipo == 'abre' else 1}
+    estado['aviso_mercado_activo'] = {'tipo': tipo, 'fecha': fecha, 'foco': 0 if tipo in ('abre', 'ultimo') else 1}
     try:
         from alpha_football import correo as C
-        n = int(getattr(_liga(estado), 'num_jornadas', 22) or 22)
         if tipo == 'abre':
             C.enviar(estado, 'club', "Se abrió el mercado de pases",
-                     f"Hasta la jornada {_hasta(jornada, n)} se pueden cerrar fichajes, recibir ofertas y pagar "
-                     "cláusulas.",
+                     f"Hasta el {_hasta(estado)} se pueden cerrar fichajes, recibir ofertas y pagar cláusulas.",
+                     C.accion('negociaciones', "IR A NEGOCIACIONES"))
+        elif tipo == 'ultimo':
+            C.enviar(estado, 'club', "Último día de fichajes",
+                     "Hoy cierra el mercado: quedan 20 horas para concretar tus operaciones. Lo que no llegue a "
+                     "inscribirse queda acordado para la próxima ventana.",       # v0.4.14.1: sin anunciar costos
                      C.accion('negociaciones', "IR A NEGOCIACIONES"))
         else:
             C.enviar(estado, 'club', "Se cerró el mercado de pases",
-                     "El mercado de pases ha cerrado. " + _reabre(jornada, n))
+                     "El mercado de pases ha cerrado. " + _reabre(estado))
     except Exception as e:
         logger.error(f"No se pudo enviar el correo del mercado: {e}")
 
@@ -129,8 +122,8 @@ def _ancho_cabecera(estado: dict) -> int:
         liga, mi = _liga(estado), estado.get('mi_equipo')
         from alpha_football.paises import nombre_liga
         cab = (f"{nombre_liga(liga.tipo, getattr(liga, 'division', 1) or 1).upper()[:32]}  ·  {mi.nombre[:22]}  ·  "
-               f"{'2ª' if getattr(liga, 'division', 1) == 2 else '1ª'} División  ·  T{estado.get('temporada', 1)}  ·  "
-               f"Jornada {getattr(liga, 'jornada_actual', 1)}/{getattr(liga, 'num_jornadas', 14)}  ·  "
+               f"{'2ª' if getattr(liga, 'division', 1) == 2 else '1ª'} Div.  ·  T{estado.get('temporada', 1)}  ·  "
+               f"{fecha_corta(estado)} · J{getattr(liga, 'jornada_actual', 1)}/{getattr(liga, 'num_jornadas', 14)}  ·  "
                f"${getattr(mi, 'balance', 0) / 1_000_000:.1f}M")
         return get_font('sm').size(cab)[0]
     except Exception as e:
@@ -138,25 +131,31 @@ def _ancho_cabecera(estado: dict) -> int:
         return 965                                   # peor caso medido
 
 
+def fecha_corta(estado: dict) -> str:
+    """'15 ago' (la fecha de hoy sin día de la semana ni año), para la cabecera del hub."""
+    try:
+        from alpha_football import temporada as T, calendario as CAL
+        d = T.fecha(estado)
+        return f"{d.day} {CAL.MESES[d.month - 1]}"
+    except Exception:
+        return "-"
+
+
 def _texto_franja(estado: dict, corto: bool = False) -> Optional[tuple]:
-    liga = _liga(estado)
-    if liga is None:
+    if _liga(estado) is None:
         return None
-    from alpha_football.market import ventana_mercado_abierta
-    j = int(getattr(liga, 'jornada_actual', 1) or 1)
-    n = int(getattr(liga, 'num_jornadas', 22) or 22)
-    if not ventana_mercado_abierta(j, n):
+    from alpha_football import temporada as T
+    from alpha_football import dia_final as DF          # v0.4.14.0
+    if DF.activo(estado):
+        h = DF.horas(estado)
+        return (f"ÚLTIMO DÍA · {h} h" if corto else f"ÚLTIMO DÍA · quedan {h} h"), 'dorado'
+    if not T.ventana_abierta(estado):
         return None
-    # la última jornada ya jugada = temporada terminada: no hay cuenta regresiva que mostrar
-    if j >= n and all(getattr(p, 'jugado', False) for p in getattr(liga, 'calendario', []) or []
-                      if getattr(p, 'jornada', 0) == j):
-        return None
-    fin = _hasta(j, n)
-    quedan = fin - j
-    if quedan <= 0:
-        return ("MERCADO · ÚLTIMA J." if corto else "MERCADO ABIERTO · ÚLTIMA JORNADA"), 'dorado'
-    return (f"MERCADO ABIERTO · {quedan + 1} J." if corto
-            else f"MERCADO ABIERTO · cierra en {quedan + 1} jornadas"), 'verde'
+    d = T.dias_para_cierre(estado)
+    if d <= 0:
+        return ("MERCADO · ÚLTIMO DÍA" if corto else "MERCADO ABIERTO · ÚLTIMO DÍA"), 'dorado'
+    return (f"MERCADO ABIERTO · {d} d." if corto
+            else f"MERCADO ABIERTO · cierra en {d} día{'s' if d != 1 else ''}"), 'verde'
 
 
 def _franja(estado: dict, ancho_cabecera: Optional[int] = None) -> tuple:
@@ -177,6 +176,18 @@ def rect_franja(estado: dict, ancho_cabecera: Optional[int] = None) -> Optional[
     return _franja(estado, ancho_cabecera)[2]
 
 
+def linea_cartel(estado: dict, tipo: str) -> str:
+    """La línea bajo el título del cartel. v0.4.14.1: el último día solo dice las horas que quedan (los
+    costos de cada operación se aplican, pero no se anuncian)."""
+    if tipo == 'ultimo':
+        from alpha_football import dia_final as _DF
+        h = _DF.horas(estado) or _DF.HORAS_DIA
+        return "Queda 1 hora." if h == 1 else f"Quedan {h} horas."
+    if tipo == 'abre':
+        return f"Hasta el {_hasta(estado)}: fichajes, ofertas y cláusulas."
+    return _reabre(estado)
+
+
 def dibujar(screen: pygame.Surface, estado: dict, mouse_pos) -> None:
     try:
         texto, col, r = _franja(estado)
@@ -194,16 +205,13 @@ def dibujar(screen: pygame.Surface, estado: dict, mouse_pos) -> None:
         velo.fill((0, 0, 0, 170))
         screen.blit(velo, (0, 0))
         draw_panel(screen, R_CARTEL)
-        abre = act.get('tipo') == 'abre'
-        color = COLORS.get('verde' if abre else 'rojo', (0, 255, 136))
+        tipo_c = act.get('tipo')
+        abre = tipo_c in ('abre', 'ultimo')
+        color = COLORS.get({'abre': 'verde', 'ultimo': 'dorado'}.get(tipo_c, 'rojo'), (0, 255, 136))
         pygame.draw.rect(screen, color, R_CARTEL, width=3, border_radius=8)
-        s = get_font('xl').render("MERCADO ABIERTO" if abre else "MERCADO CERRADO", True, color)
+        s = get_font('xl').render({'abre': "MERCADO ABIERTO", 'ultimo': "ÚLTIMO DÍA DE FICHAJES"}.get(tipo_c, "MERCADO CERRADO"), True, color)
         screen.blit(s, s.get_rect(center=(R_CARTEL.centerx, R_CARTEL.y + 50)))
-        n = int(getattr(_liga(estado), 'num_jornadas', 22) or 22)
-        if abre:
-            linea = f"Hasta la jornada {_hasta(int(act.get('jornada', 1)), n)}: fichajes, ofertas y cláusulas."
-        else:
-            linea = _reabre(int(act.get('jornada', 1)), n)
+        linea = linea_cartel(estado, tipo_c)
         s2 = get_font('md').render(linea, True, COLORS.get('blanco', (255, 255, 255)))
         screen.blit(s2, s2.get_rect(center=(R_CARTEL.centerx, R_CARTEL.y + 104)))
         salen = sum(1 for j in getattr(estado.get('mi_equipo'), 'jugadores', []) or [] if getattr(j, 'pide_salir', False))

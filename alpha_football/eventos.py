@@ -21,7 +21,6 @@ logger = logging.getLogger(__name__)
 PROB_BASE = 0.12
 PROB_MAL = 0.45
 ENFRIAMIENTO = 6            # jornadas sin repetir el mismo evento
-MAX_NOTICIAS = 100
 JORNADAS_MIN_TABLA = 4      # antes de esto la tabla no dice si el equipo va mal
 
 
@@ -67,19 +66,19 @@ def va_mal(estado: dict) -> bool:
 
 # ---------------------------------------------------------------- noticias
 def noticias(estado: dict) -> list:
-    return _dc(estado).setdefault('noticias', [])
+    from alpha_football import noticias as _noticias
+    return _noticias.lista(estado)
 
 
 def registrar_noticia(estado: dict, titular: str, cuerpo: str, tipo: str = 'vestuario',
                       jugadores: Optional[list] = None, evento: str = '', opcion: Optional[int] = None) -> dict:
-    """Guarda una noticia (lo más nuevo primero). La futura sección NOTICIAS lee de aquí."""
-    lista = noticias(estado)
-    t, j = _jornada(estado)
-    n = {'id': max((int(x.get('id', 0)) for x in lista), default=0) + 1, 'temporada': t, 'jornada': j,
-         'tipo': tipo, 'titular': str(titular), 'cuerpo': str(cuerpo), 'jugadores': list(jugadores or []),
-         'evento': evento, 'opcion': opcion}
-    lista.insert(0, n)
-    del lista[MAX_NOTICIAS:]
+    """v0.4.23.0: envoltorio del núcleo (noticias.publicar): la consecuencia del evento sale en NOTICIAS."""
+    from alpha_football import noticias as _noticias
+    ids = list(jugadores or [])
+    mi = estado.get('mi_equipo')
+    n = _noticias.publicar(estado, tipo, titular, cuerpo, jugadores=ids,
+                           equipos=[mi] if mi is not None else (), evento=evento, opcion=opcion)
+    n['jugadores'] = ids
     return n
 
 
@@ -111,7 +110,8 @@ def _frase(clave: str, quien: str, v) -> str:
     if clave == 'sancion':
         return f"{quien}: apartado {v} partido{'s' if v != 1 else ''} de liga"
     if clave == 'lesion':
-        return f"{quien}: baja {v} partido{'s' if v != 1 else ''}"
+        from alpha_football.energia import texto_lesion      # v0.4.19.0: los valores son semanas de baja (x7 = días)
+        return f"{quien}: baja {texto_lesion(int(v) * 7)}"
     if clave == 'progreso':
         return f"{quien}: acelera su desarrollo"
     return f"{quien}: le diste tu palabra"
@@ -157,7 +157,7 @@ def aplicar(estado: dict, efectos: list, prot: list, rng: Optional[random.Random
             elif clave == 'sancion':
                 S.sumar_sancion(j, int(v), 'liga')
             elif clave == 'lesion':
-                j.lesion_partidos = int(getattr(j, 'lesion_partidos', 0) or 0) + int(v)
+                j.lesion_dias = int(getattr(j, 'lesion_dias', 0) or 0) + int(v) * 7
             elif clave == 'progreso':
                 j.progreso_desarrollo = float(getattr(j, 'progreso_desarrollo', 0.0) or 0.0) + float(v)
             elif clave == 'promesa':
@@ -189,7 +189,8 @@ def revisar_promesas(estado: dict) -> None:
         j.moral = max(0, min(100, int(j.moral) + int(p['falla'])))
         que = "los minutos que me prometió" if p['tipo'] == 'minutos' else "el aumento que me prometió"
         C.enviar(estado, 'jugador', f"{_nom(j)}: usted no cumplió",
-                 f"Míster, sigo esperando {que}. Yo cumplí mi parte y usted no la suya. Que conste.\n{_nom(j)}")
+                 f"Míster, sigo esperando {que}. Yo cumplí mi parte y usted no la suya. Que conste.\n{_nom(j)}",
+                 jugador=j)
         registrar_noticia(estado, f"{_nom(j)}, molesto con el técnico",
                           f"El jugador asegura en su entorno que el entrenador no cumplió {que.replace('me prometió', 'le prometió')}.",
                           jugadores=[j.id], evento='promesa_rota')
@@ -648,6 +649,8 @@ def cierre_jornada(estado: dict, rng: Optional[random.Random] = None) -> None:
     try:
         resolver_pendientes(estado, rng)
         revisar_promesas(estado)
-        sortear(estado, rng)
+        from alpha_football import dias as _dias      # v0.4.12.0: el evento llega en un día del hueco
+        with _dias.diferir_correos(estado):
+            sortear(estado, rng)
     except Exception as e:
         logger.error(f"Error en los eventos de la jornada: {e}", exc_info=True)

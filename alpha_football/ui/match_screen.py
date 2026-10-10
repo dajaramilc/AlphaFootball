@@ -412,6 +412,22 @@ def finalizar_jornada_liga(estado: dict, liga: Any, mi_equipo: Any, partido: Any
             liga.jornada_actual += 1
         else:
             logger.info("Fin de temporada alcanzado.")
+        # v0.4.11.0: descanso según el calendario. Primero los días hasta el próximo partido de
+        # cualquier competición; el resto, después de la copa (más abajo).
+        descanso = None
+        try:
+            from alpha_football import calendario as _cal_d
+            from alpha_football import dias as _dias_d
+            from alpha_football.energia import recuperar_todos as _recuperar_dias
+            if _dias_d.activo(estado):
+                descanso = (0.0, 0.0)          # v0.4.12.0: con reloj, la energía se recupera cada día que pasa
+            else:
+                _cal_d.aplicar_descanso_pendiente(estado)      # por si quedó de una fecha de copa sin cerrar
+                descanso = _cal_d.descanso_tras_liga(estado, int(getattr(partido, 'jornada', 0) or 1))
+                _recuperar_dias(estado, descanso[0])
+        except Exception as e_desc:
+            logger.error(f"Error calculando el descanso de la jornada: {e_desc}")
+            descanso = None
         # v3.8.0: las dos copas juegan sus fechas vencidas tras la jornada (salvo el partido del
         # user, que queda pendiente para JUGAR).
         try:
@@ -424,7 +440,11 @@ def finalizar_jornada_liga(estado: dict, liga: Any, mi_equipo: Any, partido: Any
         # descendió, su partido en la 2ª división se salta (lo juega él).
         try:
             from alpha_football.ui.league_screen import simular_jornada_segunda_division
-            simular_jornada_segunda_division(estado)
+            from alpha_football import temporadas as _temporadas
+            # v0.4.16.0: con los continentes desfasados, solo las ligas de TU continente siguen tu jornada;
+            # las del otro juegan (y cierran su temporada) por fecha.
+            simular_jornada_segunda_division(estado, paises=_temporadas.paises_al_ritmo_del_user(estado))
+            _temporadas.revisar_jornada(estado)
         except Exception as e_bg2:
             logger.error(f"Error al simular jornada de 2ª división: {e_bg2}")
         # traspasos acordados con el mercado cerrado: se concretan al abrirse (antes que la IA)
@@ -444,7 +464,8 @@ def finalizar_jornada_liga(estado: dict, liga: Any, mi_equipo: Any, partido: Any
         # v2.3.7: con el mercado abierto, los clubes de la IA fichan entre ellos.
         try:
             from alpha_football import market as _mk
-            if _mk.ventana_mercado_abierta(liga.jornada_actual, liga.num_jornadas):
+            from alpha_football import dias as _dias_ia      # v0.4.13.0: con reloj, la IA hace sus rondas en días de la ventana
+            if _mk.ventana_mercado_abierta(liga.jornada_actual, liga.num_jornadas, estado=estado) and not _dias_ia.activo(estado):
                 from alpha_football.mercado_ia import ronda_fichajes_ia
                 ronda_fichajes_ia(estado, 'ventana')
         except Exception as e_mia:
@@ -453,14 +474,18 @@ def finalizar_jornada_liga(estado: dict, liga: Any, mi_equipo: Any, partido: Any
         try:
             from alpha_football import market
             if mi_equipo:
+                from alpha_football import dias as _dias_of      # v0.4.12.0: con reloj, la oferta se sortea ahora y llega otro día
+                _en_dias = _dias_of.activo(estado)
+                if _en_dias:
+                    _dias_of.programar_ofertas(estado)
                 rivales = [e for e in liga.equipos if e.id != mi_equipo.id]
-                oferta_ia = market.crear_oferta_ui(mi_equipo, rivales, liga.jornada_actual, liga.num_jornadas)
+                oferta_ia = None if _en_dias else market.crear_oferta_ui(mi_equipo, rivales, liga.jornada_actual, liga.num_jornadas, estado=estado)
                 if oferta_ia and market.traspasado_en_ventana(estado, oferta_ia.get('jugador')):
                     oferta_ia = None   # recién llegado: no se lo puede traspasar en esta ventana
                 if oferta_ia:
                     estado.setdefault('ofertas_recibidas', []).append(oferta_ia)
                     _correo_oferta(estado, oferta_ia, "Oferta por")
-                _crear_ext = getattr(market, 'crear_oferta_exterior', None)
+                _crear_ext = None if _en_dias else getattr(market, 'crear_oferta_exterior', None)
                 if _crear_ext:
                     oferta_ext = _crear_ext(mi_equipo, estado)
                     if oferta_ext and market.traspasado_en_ventana(estado, oferta_ext.get('jugador')):
@@ -482,7 +507,14 @@ def finalizar_jornada_liga(estado: dict, liga: Any, mi_equipo: Any, partido: Any
             logger.error(f"Error en los eventos de la jornada: {e_ev}")
         try:  # v3.1.0: recuperación física de todos, pedidos de la directiva y cláusulas
             from alpha_football.energia import recuperar_todos
-            recuperar_todos(estado)
+            if descanso is None:
+                recuperar_todos(estado)                    # sin calendario: la recuperación fija de siempre
+            elif descanso[1] > 0:                          # v0.4.11.0: lo que queda tras la fecha de copa
+                from alpha_football import competiciones as _CP_d
+                if _CP_d.partido_pendiente_user(estado):   # tu partido de copa va antes: se aplica al cerrarlo
+                    estado.setdefault('datos_carrera', {})['descanso_pendiente'] = descanso[1]
+                else:
+                    recuperar_todos(estado, descanso[1])
             from alpha_football.directiva import revisar_pedido
             revisar_pedido(estado)
             from alpha_football.directiva import avisar_tope_salarial   # v4.6.0
@@ -490,7 +522,7 @@ def finalizar_jornada_liga(estado: dict, liga: Any, mi_equipo: Any, partido: Any
             from alpha_football.ofertas_dt import revisar_jornada as _ofertas_dt   # v4.6.0
             _ofertas_dt(estado)
             from alpha_football import market as _mk2
-            if _mk2.ventana_mercado_abierta(liga.jornada_actual, liga.num_jornadas):
+            if _mk2.ventana_mercado_abierta(liga.jornada_actual, liga.num_jornadas, estado=estado):
                 from alpha_football.mercado_ia import pago_clausulas
                 pago_clausulas(estado)
         except Exception as e_v31:
@@ -539,6 +571,27 @@ def finalizar_jornada_liga(estado: dict, liga: Any, mi_equipo: Any, partido: Any
             _patro.revisar_jornada(estado)
         except Exception as e_pat:
             logger.error(f"Error revisando los patrocinios: {e_pat}")
+        try:  # v0.4.17.0: partidas sin reloj: la gala del Balón de Oro / Sudamericano se revisa aquí
+            from alpha_football import premios as _premios_j
+            _premios_j.revisar_jornada(estado, frenar=False)    # sin frenar: esa marca solo la consume el reloj
+        except Exception as e_prem:
+            logger.error(f"Error revisando los premios: {e_prem}")
+        try:  # v0.4.23.0: noticias de la jornada (rumores, generadores y purga), ya con todo lo anterior resuelto
+            from alpha_football import noticias as _noticias
+            _noticias.cierre_jornada(estado)
+        except Exception as e_not:
+            logger.error(f"Error en las noticias de la jornada: {e_not}")
+        try:  # v0.4.11.0: partidos demasiado pegados → se reprograma uno y se avisa
+            from alpha_football import calendario as _cal_ch
+            _cal_ch.revisar_choques(estado)
+        except Exception as e_cal:
+            logger.error(f"Error revisando el calendario: {e_cal}")
+        try:  # v0.4.12.0: lo que quedó en la agenda recibe su día (ya con los choques resueltos)
+            from alpha_football import dias as _dias_fin
+            if _dias_fin.activo(estado):
+                _dias_fin.asignar_dias(estado)
+        except Exception as e_dia:
+            logger.error(f"Error asignando los días de la agenda: {e_dia}")
     except Exception as e:
         logger.error(f"Error en finalizar_jornada_liga: {e}")
 
@@ -1020,6 +1073,8 @@ def _cerrar_partido_vivo(estado: dict, match_mode: str, liga: Any, mi_equipo: An
                     registrar_stats_copa(estado, getattr(visitante, 'nombre', ''), goles_l, rep_v)
                     pen_user = estado.get('sim_penales_marcador') if estado.get('sim_penales_resuelto') else None
                     registrar_resultado_copa(estado, goles_l, goles_v, pen_user)
+                    from alpha_football import calendario as _cal_copa      # v0.4.11.0
+                    _cal_copa.tras_partido_copa_user(estado)
                 except Exception as e_reg:
                     logger.error(f"Error al registrar el partido de copa: {e_reg}")
             else:
@@ -1140,6 +1195,8 @@ def _render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             _lu = _lado_user(local, user_eq)
             estado['sim_ctx'] = nuevo_estado(local, visitante, _once_titular(local), _once_titular(visitante),
                                              auto_l=_lu != 'l', auto_v=_lu != 'v')
+            from alpha_football import prensa as _prensa     # v0.4.23.0: tono agresivo de la prensa (nunca lanza)
+            estado['sim_ctx'].factor_tarjetas = _prensa.factor_tarjetas(estado)
             _gl1, _gv1, ev1 = simular_rango(local, visitante, 1, 45, mult=estado["sim_suerte"],
                                             minutos_previos=_minutos_previos(estado, user_eq, getattr(user_eq, 'alineacion_activa', None)),
                                             ctx=estado['sim_ctx'].copia(),

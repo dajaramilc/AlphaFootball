@@ -42,6 +42,8 @@ R_MARCA = pygame.Rect(16, 446, 616, 250)
 R_JUV = pygame.Rect(648, 446, 616, 250)          # termina en y=696 (barra de atajos)
 R_AYUDA_META = pygame.Rect(R_LOCAL.right - 56, R_LOCAL.y + 12, 36, 36)
 R_REGLAS = pygame.Rect(SCREEN_W // 2 - 380, 150, 760, 368)   # v0.4.11.0: una fila más (antes 330)
+# v0.4.17.0: pasarse del tope además trae la sanción de la liga (sancion_liga.py)
+TEXTO_REGLA_TOPE = "Pasar el tope o el saldo mínimo = objetivo fallado; el tope, además, un año sin fichar"
 
 
 def _volver() -> pygame.Rect:
@@ -208,7 +210,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                       + ("TE ECHAN (ya tenías advertencia)" if (estado.get('datos_carrera') or {}).get('advertencia_dt')
                          else "advertencia (segunda oportunidad)"), 'rojo'),
                      ("Descender o quedar 4+ puestos por debajo de la meta = despido directo", 'rojo'),
-                     ("Pasar el tope salarial o cerrar bajo el saldo mínimo = objetivo fallado", 'rojo'),
+                     (TEXTO_REGLA_TOPE, 'rojo'),
                      (f"Ranking de tu plantilla al empezar: {obj.get('ranking_inicial', '?')}º por media", 'azul'),
                      ("El saldo no pasa de temporada: el presupuesto siguiente sube 25% / 10% o baja 15%", 'azul'),   # v0.4.11.0
                      ("Clic o ESC para cerrar", 'blanco')]

@@ -116,7 +116,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 ri = rect_item(p, i)
                 if foco == [p, i] or ri.collidepoint(mouse_pos):
                     pygame.draw.rect(screen, (40, 60, 95), ri, border_radius=6)
-                cab = f"{C.REMITENTES.get(m['remitente'], m['remitente'])}  ·  T{m['temporada']} J{m['jornada']}"
+                cab = f"{C.REMITENTES.get(m['remitente'], m['remitente'])}  ·  {C.texto_fecha(m)}"   # v0.4.14.1
                 if _pendiente(m):
                     cab += "  ·  DECISIÓN PENDIENTE"
                 draw_text(screen, cab, (ri.x + 8, ri.y + 4), size='sm', color='rojo' if _pendiente(m) else 'azul',

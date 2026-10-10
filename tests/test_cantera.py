@@ -19,11 +19,11 @@ def test_generar_canterano_rangos():
         j = K.generar_canterano(e, mi, rng)
         assert 15 <= j.edad <= 18 and not j.joya
         assert max(40, nivel - 28) <= j.overall <= max(40, nivel - 18)
-        assert j.overall + 8 <= j.potencial <= min(99, j.overall + 20) or j.potencial == 99
+        assert j.overall + 10 <= j.potencial <= min(99, j.overall + 20)           # v0.4.18.0: mínimo 10 (antes 8)
         assert j.posicion in ('POR', 'DEF', 'MED', 'DEL')
     joya = K.generar_canterano(e, mi, rng, joya=True)
     assert joya.joya and 16 <= joya.edad <= 18 and nivel - 4 <= joya.overall <= nivel
-    assert joya.overall + 5 <= joya.potencial <= min(99, joya.overall + 12) or joya.potencial == 99
+    assert joya.overall + 10 <= joya.potencial <= min(99, joya.overall + 14)      # v0.4.18.0: antes +5 a +12
     ids = {K.generar_canterano(e, mi, rng).id for _ in range(5)}
     assert len(ids) == 5                                   # ids únicos (contador regen_id)
     print("  test_generar_canterano_rangos: OK")
@@ -70,7 +70,9 @@ def test_renovar_crecen_llegan_y_topes():
     for j in ahora:
         if j.id in antes:
             ovr0, pot0, edad0 = antes[j.id]
-            assert ovr0 <= j.overall <= pot0 and j.overall - ovr0 <= 4 and j.edad == edad0
+            # v0.4.18.0: sube de +2 a +5 y el potencial sube con la media (siempre a 10 o más)
+            assert 2 <= j.overall - ovr0 <= 5 and j.potencial - pot0 == j.overall - ovr0 and j.edad == edad0
+            assert j.potencial - j.overall >= 10
     idos = {j.id for j, _m in res['se_van']}
     assert idos <= set(antes) and not idos & {j.id for j in ahora}
     for _ in range(12):                                                # nunca se sale de los topes
@@ -145,7 +147,9 @@ def test_correo_de_joya():
     assert msg['asunto'].startswith("Una joya en la cantera") and res['joya'].apellido in msg['cuerpo']
     assert K.proximo_informe(e) == "inicio de la próxima temporada"
     e['liga'].jornada_actual = 1
-    assert K.proximo_informe(e) == f"jornada {_mitad(e)}"
+    from datetime import date                                              # v0.4.13.0: la mitad es una fecha
+    from alpha_football import calendario as CAL
+    assert K.proximo_informe(e) == CAL.texto_fecha(date(2027, 1, 1), False)
     print("  test_correo_de_joya: OK")
 
 
@@ -243,8 +247,11 @@ def test_ia_probabilidad_cero_y_joya_en_prensa():
         K.PROB_CANTERANO_IA, K.PROB_JOYA_IA = p_c, p_j
     assert altas and all(a['joya'] for a in altas)
     rivales = {eq.nombre for eq in e['liga'].equipos if eq is not e['mi_equipo']}
-    prensa = [m for m in C.bandeja(e) if m['remitente'] == 'prensa']
-    assert prensa and len(prensa) == sum(1 for a in altas if a['club'] in rivales)   # solo los de tu liga
+    from alpha_football import noticias as NO
+    joyas = [n for n in NO.lista(e) if n['tipo'] == 'cantera']       # v0.4.23.0: noticia, ya no correo de Prensa
+    assert joyas and len(joyas) == sum(1 for a in altas if a['club'] in rivales)   # solo los de tu liga
+    assert all(n['importancia'] == 3 and n['categoria'] == 'promesa' and len(n['equipos_ids']) == 1 for n in joyas)
+    assert not [m for m in C.bandeja(e) if m['remitente'] == 'prensa']
     print("  test_ia_probabilidad_cero_y_joya_en_prensa: OK")
 
 

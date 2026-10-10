@@ -8,6 +8,7 @@ puede traer una acción: la pantalla a la que lleva su botón.
 from __future__ import annotations
 
 import logging
+from datetime import date
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -47,9 +48,75 @@ FIRMAS = {'directiva': "La Directiva de {club}", 'medico': "Cuerpo médico de {c
           'patrocinador': "Departamento comercial de {club}"}
 
 
+def _nombre_jugador(j) -> str:
+    return f"{getattr(j, 'nombre', '')} {getattr(j, 'apellido', '')}".strip()
+
+
+def _refs(msg: dict) -> list:
+    """v0.4.14.1: [(id, nombre)] de los jugadores de los que trata el mensaje: su 'jugador' y los
+    protagonistas de su evento (de estos solo se guarda el id)."""
+    refs = []
+    ref = msg.get('jugador')
+    if isinstance(ref, dict):
+        refs.append((ref.get('id'), ref.get('nombre') or ''))
+    for i in (msg.get('evento') or {}).get('protagonistas') or []:
+        refs.append((i, ''))
+    return refs
+
+
+def _buscar(estado: dict, ref: tuple):
+    """El jugador de tu plantilla con ese id (y ese nombre: el id solo es único dentro de un club)."""
+    i, nombre = ref
+    for j in getattr(estado.get('mi_equipo'), 'jugadores', []) or []:
+        if getattr(j, 'id', None) == i and (not nombre or _nombre_jugador(j) == nombre):
+            return j
+    return None
+
+
+def jugador_de(estado: dict, msg: dict):
+    """v0.4.14.1: el jugador del que trata el mensaje, si sigue en tu plantilla (None si no trata de
+    ninguno o si ya se fue)."""
+    refs = _refs(msg)
+    return _buscar(estado, refs[0]) if refs else None
+
+
+def vigente(estado: dict, msg: dict) -> bool:
+    """v0.4.14.1: False si el mensaje trata de un jugador que ya no está en tu plantilla."""
+    return all(_buscar(estado, ref) is not None for ref in _refs(msg))
+
+
+def _hoy_iso(estado: dict) -> Optional[str]:
+    """v0.4.14.1: la fecha de hoy ('AAAA-MM-DD') para sellar el mensaje. Con reloj se lee tal cual, sin pasar
+    por calendario.asegurar: un correo enviado a mitad de un cambio de temporada no debe rearmar el bloque."""
+    try:
+        cal = (estado.get('datos_carrera') or {}).get('calendario')
+        dia = cal.get('dia') if isinstance(cal, dict) else None
+        if dia:
+            return date.fromisoformat(str(dia)).isoformat()
+        if estado.get('liga') is None or estado.get('mi_equipo') is None:
+            return None
+        from alpha_football import temporada as T
+        return T.fecha(estado).isoformat()
+    except Exception as e:
+        logger.error(f"correo: no se pudo leer la fecha de hoy: {e}")
+        return None
+
+
+def texto_fecha(msg: dict) -> str:
+    """v0.4.14.1: 'sáb 15 ago 2026'. Los mensajes sin fecha (saves viejos) siguen con 'T1 J5'."""
+    try:
+        if msg.get('fecha'):
+            from alpha_football.calendario import texto_fecha as _texto
+            return _texto(date.fromisoformat(str(msg['fecha'])))
+    except ValueError as e:
+        logger.debug(f"correo: fecha ilegible en el mensaje {msg.get('id')}: {e}")
+    return f"T{msg.get('temporada', 1)} J{msg.get('jornada', 1)}"
+
+
 def enviar(estado: dict, remitente: str, asunto: str, cuerpo: str, accion: Optional[dict] = None,
-           firma: Optional[str] = None) -> dict:
-    """`firma`: quién firma si no es tu club (p. ej. la directiva de otro club que te ofrece el banquillo)."""
+           firma: Optional[str] = None, jugador=None) -> dict:
+    """`firma`: quién firma si no es tu club (p. ej. la directiva de otro club que te ofrece el banquillo).
+    `jugador` (v0.4.14.1): el jugador de tu plantilla del que trata el mensaje."""
     lista = bandeja(estado)
     liga = estado.get('liga')
     msg = {'id': max((int(m.get('id', 0)) for m in lista), default=0) + 1,
@@ -60,6 +127,28 @@ def enviar(estado: dict, remitente: str, asunto: str, cuerpo: str, accion: Optio
            'club': getattr(estado.get('mi_equipo'), 'nombre', '')}
     if firma:
         msg['firma'] = str(firma)
+    hoy = _hoy_iso(estado)                       # v0.4.14.1: fecha exacta
+    if hoy:
+        msg['fecha'] = hoy
+    if jugador is not None:                      # v0.4.14.1
+        msg['jugador'] = {'id': getattr(jugador, 'id', None), 'nombre': _nombre_jugador(jugador)}
+    cola = estado.get('_diferir_correos')        # v0.4.12.0: dentro de dias.diferir_correos va a la agenda
+    if cola is not None:
+        msg['id'] = 0                            # el id se asigna al entregarlo (correo.entregar)
+        cola.append({'fecha': None, 'tipo': 'correo', 'datos': msg})
+        return msg
+    lista.insert(0, msg)
+    del lista[MAX_CORREOS:]
+    return msg
+
+
+def entregar(estado: dict, msg: dict) -> dict:
+    """v0.4.12.0: pasa a la bandeja un mensaje que esperaba en la agenda (dias.py)."""
+    lista = bandeja(estado)
+    msg['id'] = max((int(m.get('id', 0)) for m in lista), default=0) + 1
+    hoy = _hoy_iso(estado)                       # v0.4.14.1: la fecha es la del día en que llega
+    if hoy:
+        msg['fecha'] = hoy
     lista.insert(0, msg)
     del lista[MAX_CORREOS:]
     return msg

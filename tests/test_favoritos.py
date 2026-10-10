@@ -82,7 +82,7 @@ def test_mercado_cerrado_difiere_venta_y_compra():
     assert vendido in mi.jugadores and mi.balance > b0                     # plata ya, jugador después
     club = liga.equipos[4]; fichado = club.jugadores[0]
     ok, msg = N.fichar(e, fichado, club, 5_000_000)
-    assert ok and fichado in club.jugadores and fichado not in mi.jugadores and 'jornada' in msg
+    assert ok and fichado in club.jugadores and fichado not in mi.jugadores and '1 ene 2027' in msg   # v0.4.13.0: dice la fecha, no la jornada
     assert N.fichar(e, fichado, club, 1)[0] is False                       # ya está acordado
     e['datos_carrera'] = json.loads(json.dumps(e['datos_carrera']))       # guardar / cargar
     e.pop('_compradores_pendientes', None)

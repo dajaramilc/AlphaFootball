@@ -40,7 +40,7 @@ def test_bajas_a_reservas():
     e = estado_carrera(); mi = e['mi_equipo']; js = mi.jugadores; alin = mi.alineacion_activa
     F.normalizar_convocados(alin, js)
     tit, ban = alin.titulares[3], alin.convocados[0]
-    js[tit].lesion_partidos = 2
+    js[tit].lesion_dias = 2
     js[ban].partidos_sancion = 1
     pos = js[tit].posicion
     retirados = F.retirar_no_disponibles(alin, js)
@@ -50,7 +50,7 @@ def test_bajas_a_reservas():
     assert len(alin.titulares) == 11 and len(set(alin.titulares)) == 11
     assert js[alin.titulares[3]].posicion == pos                    # lo cubre uno de su puesto
     assert not set(alin.titulares) & set(alin.convocados)
-    assert all(js[i].lesion_partidos == 0 and not js[i].partidos_sancion for i in alin.titulares + alin.convocados)
+    assert all(js[i].lesion_dias == 0 and not js[i].partidos_sancion for i in alin.titulares + alin.convocados)
     assert F.retirar_no_disponibles(alin, js) == []                 # idempotente
     print("  test_bajas_a_reservas: OK")
 

@@ -35,6 +35,9 @@ FACTOR_TAQUILLA = {'victoria': 1.2, 'empate': 1.0, 'derrota': 0.85}
 JORNADAS_ROJO_VENTA = 4         # v4.6.0: antes 3
 PUNTOS_QUIEBRA = 6              # v4.6.0: cerrar la temporada en rojo resta puntos en la siguiente
 VENTA_FORZADA_FRAC = 0.8        # la directiva malvende al 80% del valor
+EDAD_LIBRE_IA = 28              # v0.4.21.0: al vencer su contrato, el suplente de la IA de esta edad o más...
+PROB_LIBRE_IA = 0.30            # ...queda libre con esta probabilidad (más o menos uno por club y temporada)
+PLANTILLA_MIN_LIBRE_IA = 20     # el club no suelta a nadie si se queda con menos (mercado_ia.PLANTILLA_MIN_VENDEDOR)
 CLAVES_LIBRO = ['taquilla', 'patrocinio', 'salarios', 'fichajes', 'ventas', 'premios', 'directiva']  # v3.2.0: + espaldarazo
 
 
@@ -214,7 +217,7 @@ def quitar_de_plantilla(equipo, jugador) -> None:
             # sale un titular: se cubre solo su puesto (mismo slot) con el mejor disponible,
             # prefiriendo su misma posición; el resto del once que armó el user queda igual
             libres = [i for i, o in enumerate(jugadores)
-                      if i not in alin.titulares and getattr(o, 'lesion_partidos', 0) == 0
+                      if i not in alin.titulares and getattr(o, 'lesion_dias', 0) == 0
                       and not _sancionado(o)]
             misma = [i for i in libres if getattr(jugadores[i], 'posicion', '') == getattr(jugador, 'posicion', '')]
             if not misma and getattr(jugador, 'posicion', '') != 'POR':
@@ -254,7 +257,7 @@ def vender_mejor(estado: dict) -> Optional[str]:
         from alpha_football.contraofertas import acreditar_venta
         acreditar_venta(estado, estrella, comprador, monto, extra=aviso)
         texto = (f"Quiebra: la directiva vendió a {estrella.nombre_completo} a {comprador.nombre} "
-                 f"por ${monto / 1_000_000:.1f}M (se va en la jornada {TP.jornada_apertura(estado)})")
+                 f"por ${monto / 1_000_000:.1f}M (se va {TP.texto_apertura(estado)})")
         estado.setdefault('transfer_log', []).append(texto)
         logger.info(texto)
         return texto
@@ -336,9 +339,11 @@ def procesar_jornada(estado: dict, es_local: bool, gf: int, gc: int) -> dict:
 SALUD_ROJO = 0.80
 SALUD_TRAMOS = ((0.25, 0.90), (0.75, 1.00), (1.50, 1.10))    # (saldo/base menor que, factor)
 SALUD_MAX = 1.20
-FACTOR_OBJETIVO = {'superado': 1.25, 'cumplido': 1.10, 'fallado': 0.85}
-BONO_LIGA, BONO_COPA = 0.15, 0.20
-MULT_MIN, MULT_MAX = 0.60, 1.75
+# v0.4.14.1: pesan más los resultados que el tamaño del club: base × (parte fija + resultados) × salud
+PARTE_FIJA = 0.40                 # lo que el club da por ser quien es
+PARTE_OBJETIVO = {'superado': 0.80, 'cumplido': 0.55, 'fallado': 0.15}
+PARTE_NEUTRA = 0.60               # sin dato del objetivo (club nuevo, save viejo): la base tal cual
+BONO_LIGA, BONO_COPA = 0.20, 0.25
 PISO_PRESUPUESTO = 0.10
 
 
@@ -352,13 +357,14 @@ def factor_salud(saldo: int, base: int) -> float:
 
 def presupuesto_temporada(base: int, saldo: int, resultado: str, campeon_liga: bool = False,
                           campeon_copa: bool = False) -> dict:
-    """Desglose del presupuesto nuevo: base × salud × objetivo × (1 + bonos), entre ×0.60 y ×1.75;
-    la deuda se descuenta entera (piso: 10% de la base)."""
+    """Desglose del presupuesto nuevo. v0.4.14.1: base × (0.40 + objetivo + títulos) × salud, de ×0.44
+    (objetivo fallado y en rojo) a ×1.98 (superado, liga, copa y las arcas llenas); la deuda se descuenta
+    entera (piso: 10% de la base)."""
     base, saldo = int(base), int(saldo)
     salud = factor_salud(saldo, base)
-    objetivo = FACTOR_OBJETIVO.get(resultado, 1.0)
+    objetivo = PARTE_OBJETIVO.get(resultado, PARTE_NEUTRA)
     bonos = (BONO_LIGA if campeon_liga else 0.0) + (BONO_COPA if campeon_copa else 0.0)
-    mult = max(MULT_MIN, min(MULT_MAX, salud * objetivo * (1 + bonos)))
+    mult = (PARTE_FIJA + objetivo + bonos) * salud
     deuda = max(0, -saldo)
     total = max(int(base * PISO_PRESUPUESTO), int(round(base * mult)) - deuda)
     return {'base': base, 'saldo': saldo, 'salud': salud, 'objetivo': objetivo, 'bonos': bonos,
@@ -386,17 +392,10 @@ def aplicar_presupuesto_temporada(estado: dict) -> Optional[dict]:
     dc['presupuesto_temporada'] = dict(info, temporada=temporada)
     try:
         from alpha_football import correo as C
-        m = lambda v: f"${v / 1_000_000:.1f}M"
-        cierre = (f"Cierre de la temporada anterior: {m(info['saldo'])} (el sobrante queda en las arcas del club)."
-                  if info['saldo'] >= 0 else
-                  f"Cierre de la temporada anterior: −{m(info['deuda'])} (la deuda se descuenta del presupuesto).")
-        titulos = f" Títulos: +{int(round(info['bonos'] * 100))}%." if info['bonos'] else ""
+        # v0.4.14.1: sin la cuenta a la vista: solo el monto y por qué
         C.enviar(estado, 'directiva', f"Presupuesto de la temporada {temporada}",
-                 "La directiva ha fijado el presupuesto de la nueva temporada.\n\n"
-                 f"{cierre}\n"
-                 f"Presupuesto base del club: {m(info['base'])}.\n"
-                 f"Salud financiera: ×{info['salud']:.2f}. Objetivo deportivo: ×{info['objetivo']:.2f}.{titulos}\n\n"
-                 f"Presupuesto disponible: {m(info['total'])}.",
+                 f"Este es su presupuesto para la nueva temporada, debido a sus resultados: "
+                 f"${info['total'] / 1_000_000:.1f}M.",
                  C.accion('finanzas_screen', "VER FINANZAS"))
     except Exception as e:
         logger.error(f"No se pudo avisar el presupuesto de la temporada: {e}")
@@ -423,7 +422,14 @@ def cierre_temporada(estado: dict) -> list:
         acordados = {(p.get('jugador'), str(p.get('jugador_id'))) for p in _TP._pendientes(estado)}
     except Exception as e_tp:
         logger.error(f"No se pudieron leer los traspasos acordados: {e_tp}")
+    from alpha_football.negociacion import liberar, retirar_libres, registrar_pase
+    cerrada = int(estado.get('temporada', 1) or 1) - 1      # la temporada ya subió: se cierra la anterior
+    try:    # v0.4.21.0: el agente libre que pasó la temporada entera sin club se retira
+        retirar_libres(estado, cerrada)
+    except Exception as e_ret:
+        logger.error(f"No se pudieron retirar los agentes libres viejos: {e_ret}")
     for eq in _todos_los_equipos(estado):
+        once = None     # v0.4.21.0: perezoso (solo hace falta si a alguien se le acaba el contrato)
         for j in list(eq.jugadores):
             if acordados and (getattr(j, 'nombre_completo', ''), str(getattr(j, 'id', ''))) in acordados:
                 continue
@@ -438,14 +444,24 @@ def cierre_temporada(estado: dict) -> list:
                     _limpiar_salida(j)
                 except Exception as e_lim:
                     logger.error(f"No se pudo limpiar la salida: {e_lim}")
-                j.fin_de_contrato = True     # sigue en la lista de libres aunque cambie la jornada
-                estado.setdefault('free_agents_list', []).append(j)
+                liberar(estado, j, cerrada)  # sigue en la lista de libres aunque cambie la jornada
                 salidas.append({'jugador': f"{j.nombre} {j.apellido}", 'posicion': j.posicion, 'media': j.overall})
                 try:
-                    from alpha_football.negociacion import registrar_pase
                     registrar_pase(estado, j, mi.nombre, 'Libre (fin de contrato)', 0, True)
                 except Exception as e:
                     logger.error(f"No se pudo registrar la salida libre: {e}")
+                continue
+            if once is None:
+                from alpha_football.formaciones import mejor_once
+                once = {id(eq.jugadores[i]) for i in mejor_once(eq.jugadores, "4-3-3") if 0 <= i < len(eq.jugadores)}
+            if (id(j) not in once and int(getattr(j, 'edad', 25) or 25) >= EDAD_LIBRE_IA
+                    and not getattr(j, 'prestamo', None) and len(eq.jugadores) > PLANTILLA_MIN_LIBRE_IA
+                    and azar.random() < PROB_LIBRE_IA):
+                # v0.4.21.0: la IA no renueva a todos: el suplente veterano queda libre (bolsa de agentes libres)
+                eq.jugadores.remove(j)
+                eq.alineacion_activa = None
+                liberar(estado, j, cerrada)
+                registrar_pase(estado, j, eq.nombre, 'Libre (fin de contrato)', 0, False)
             else:
                 j.contrato_anios = azar.randint(1, 3)
     if mi is not None:
@@ -476,6 +492,11 @@ def cierre_temporada(estado: dict) -> list:
         aplicar_presupuesto_temporada(estado)
     except Exception as e_pres:
         logger.error(f"Error fijando el presupuesto de la temporada: {e_pres}")
+    try:    # v0.4.17.0: multa de la liga (tope salarial + mala salud) sobre el presupuesto nuevo
+        from alpha_football import sancion_liga as _SL
+        _SL.cobrar_multa(estado)
+    except Exception as e_san:
+        logger.error(f"Error cobrando la multa de la liga: {e_san}")
     if mi is not None:     # v4.9.0: vencen patrocinios y llegan las ofertas de la ventana de inicio
         try:
             from alpha_football import patrocinios as _P

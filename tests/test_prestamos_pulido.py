@@ -61,7 +61,7 @@ def test_ofertas_aceptar_prestamo_cerrado_dice_la_jornada():
     of = {'jugador': j, 'comprador': e['liga'].equipos[8], 'monto': 0, 'prestamo': {'meses': 6, 'pct_ellos': 60}}
     e['ofertas_recibidas'] = [of]
     OS._aceptar_sel(e, of)
-    assert 'jornada 11' in e['oferta_msg'][0], e['oferta_msg']
+    assert '1 ene 2027' in e['oferta_msg'][0], e['oferta_msg']          # v0.4.13.0: dice la fecha, no la jornada
     print("  test_ofertas_aceptar_prestamo_cerrado_dice_la_jornada: OK")
 
 
@@ -227,12 +227,15 @@ def test_correos_del_que_llega_a_prestamo():
     ms = _correos_de(e, j)
     assert len(ms) == 1 and 'llegó' in ms[0]['asunto'].lower(), [m['asunto'] for m in ms]
     c = ms[0]['cuerpo']
-    assert '6 meses' in c and 'J2 T1' in c and 'J11 T1' in c and 'pagas el 60%' in c.lower(), c
+    from datetime import date                                      # v0.4.13.0: el periodo termina en la fecha de apertura
+    from alpha_football import calendario as CAL
+    f_inv = CAL.texto_fecha(date(2027, 1, 1))
+    assert '6 meses' in c and 'J2 T1' in c and f_inv in c and 'pagas el 60%' in c.lower(), c
     e['liga'].jornada_actual = 11
     P.revisar_jornada(e)
     ms = _correos_de(e, j)
     assert len(ms) == 2 and 'vuelve' in ms[0]['asunto'].lower(), [m['asunto'] for m in ms]
-    assert '6 meses' in ms[0]['cuerpo'] and 'J2 T1' in ms[0]['cuerpo'] and 'J11 T1' in ms[0]['cuerpo'], ms[0]['cuerpo']
+    assert '6 meses' in ms[0]['cuerpo'] and 'J2 T1' in ms[0]['cuerpo'] and f_inv in ms[0]['cuerpo'], ms[0]['cuerpo']
     print("  test_correos_del_que_llega_a_prestamo: OK")
 
 
@@ -244,12 +247,12 @@ def test_correos_del_cedido_acordado_con_mercado_cerrado():
     ms = _correos_de(e, j)
     assert len(ms) == 1 and 'acordado' in ms[0]['asunto'].lower(), [m['asunto'] for m in ms]
     c = ms[0]['cuerpo']
-    assert '1 año' in c and 'J11 T1' in c and 'J11 T2' in c and '70%' in c and '30%' in c, c
+    assert '1 año' in c and 'J11 T1' in c and '1 ene 2028' in c and '70%' in c and '30%' in c, c   # v0.4.13.0: hasta una fecha
     e['liga'].jornada_actual = 11
     P.revisar_jornada(e)
     ms = _correos_de(e, j)
     assert len(ms) == 2 and 'cedido' in ms[0]['asunto'].lower(), [m['asunto'] for m in ms]
-    assert '1 año' in ms[0]['cuerpo'] and 'J11 T1' in ms[0]['cuerpo'] and 'J11 T2' in ms[0]['cuerpo'], ms[0]['cuerpo']
+    assert '1 año' in ms[0]['cuerpo'] and 'J11 T1' in ms[0]['cuerpo'] and '1 ene 2028' in ms[0]['cuerpo'], ms[0]['cuerpo']
     print("  test_correos_del_cedido_acordado_con_mercado_cerrado: OK")
 
 
@@ -265,13 +268,14 @@ def test_correo_de_vuelta_por_fin_de_contrato_dice_que_queda_libre():
 
 
 def test_correo_de_concluir_muestra_la_fecha_real():
-    e = estado_carrera(); _abierto(e, 2); mi = e['mi_equipo']
+    e = estado_carrera(); _abierto(e, 1); mi = e['mi_equipo']        # v0.4.13.0: J1 → J2 (la J3 ya está cerrada por fecha)
     j = sorted(mi.jugadores, key=lambda x: x.overall)[0]
-    P.iniciar(e, j, mi, _club(e), 12, 50)                        # vuelve J2 T2
-    e['liga'].jornada_actual = 3
+    P.iniciar(e, j, mi, _club(e), 12, 50)                        # vuelve J1 T2
+    e['liga'].jornada_actual = 2
     P.terminar(e, j)                                              # abierto: vuelve ya
     m = _correos_de(e, j)[0]
-    assert 'hasta J3 T1' in m['cuerpo'], m['cuerpo']
+    from alpha_football import calendario as CAL                    # la fecha real de la vuelta (hoy), no la prevista
+    assert f"hasta el {CAL.texto_fecha(CAL.fecha_liga(e, 2))}" in m['cuerpo'], m['cuerpo']
     print("  test_correo_de_concluir_muestra_la_fecha_real: OK")
 
 
@@ -304,7 +308,11 @@ def test_regreso_por_nombre_de_ventana_si_la_liga_se_achica():
     club = _club(e); j = _suplente(club)
     P.iniciar(e, j, club, mi, 12, 50)
     assert j.prestamo['vuelve'] == [2, 19]
-    liga.num_jornadas = 8; e['temporada'] = 2; liga.jornada_actual = 2   # 8 jornadas: solo inicio (J1-3), sin invierno
+    liga.num_jornadas = 8; e['temporada'] = 2
+    from datetime import date                                        # v0.4.13.0: el regreso es el 1 ene (una fecha), tenga la liga las jornadas que tenga
+    from alpha_football import dias as _D, calendario as _CAL, temporada as _T
+    _D.hoy(e); _CAL.asegurar(e)['dia'] = '2028-01-01'
+    liga.jornada_actual = _T.jornada_de(e, date(2028, 1, 1), 2)      # la primera jornada por jugar ese día
     P.revisar_jornada(e)
     assert j in club.jugadores and j.prestamo is None
     print("  test_regreso_por_nombre_de_ventana_si_la_liga_se_achica: OK")

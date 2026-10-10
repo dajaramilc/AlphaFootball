@@ -315,7 +315,7 @@ def test_sobre_badge():
     for i in range(3):
         C.enviar(e, 'club', f'm{i}', 'x')
     e['hub_tab'] = 'inicio'
-    e['datos_carrera']['aviso_mercado_visto'] = [1, e['liga'].jornada_actual]   # sin el cartel del mercado (v4.4.0)
+    e['datos_carrera']['aviso_mercado_visto'] = [1, '2026-07-01']   # sin el cartel del mercado (v0.4.13.0: por fecha, el reloj nace el 1 jul)
     pygame.event.clear(); L.render(screen, e)
     click(L.R_SOBRE.center)
     assert L.render(screen, e) == 'notificaciones_screen'

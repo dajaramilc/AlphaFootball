@@ -13,6 +13,7 @@ import logging
 from typing import Optional, Any, Dict, List
 
 from alpha_football import formaciones as F
+from alpha_football.energia import texto_lesion      # v0.4.19.0
 from alpha_football.vestuario import PERSONALIDAD_TXT
 
 # Configurar logger
@@ -426,7 +427,7 @@ def baja_de(estado, j, en_partido: bool) -> Optional[str]:
         from alpha_football.sanciones import sancionado
         if sancionado(j):                 # la sanción de la competición del próximo partido
             return 'roja'
-        if getattr(j, 'lesion_partidos', 0) > 0:
+        if getattr(j, 'lesion_dias', 0) > 0:
             return 'lesion'
     except Exception as e:
         logger.error(f"No se pudo saber si {getattr(j, 'apellido', '?')} está disponible: {e}")
@@ -496,8 +497,8 @@ def _dibujar_tarjeta(screen, rect, j, seleccionada, hover, sustituido=False, ene
         _icono_baja(screen, 'roja', (rect.right - 14, rect.y + 11))
     elif sustituido:
         draw_text(screen, "SUSTITUIDO", (rect.x + 8, rect.y + 76), size='sm', color='rojo', shadow=False)
-    elif getattr(j, 'lesion_partidos', 0) > 0:
-        draw_text(screen, f"LESIÓN {j.lesion_partidos}", (rect.x + 8, rect.y + 76), size='sm', color='rojo', shadow=False)
+    elif getattr(j, 'lesion_dias', 0) > 0:
+        draw_text(screen, f"LESIÓN {texto_lesion(j.lesion_dias, corto=True)}", (rect.x + 8, rect.y + 76), size='sm', color='rojo', shadow=False)
     else:
         draw_text(screen, f"Moral {getattr(j, 'moral', 70)}", (rect.x + 8, rect.y + 76), size='sm', color='verde', shadow=False)
     _barra_energia(screen, rect.x + 8, rect.bottom - 9, rect.width - 16,
@@ -539,7 +540,7 @@ def _cambio_en_partido(estado, alin, jugadores, sel, hit, subs_hechas, salieron)
     if subs_hechas >= SUBS_MAX_PARTIDO:
         _flash(estado, f"Ya hiciste los {SUBS_MAX_PARTIDO} cambios permitidos", 2.2)
         return
-    if getattr(jugadores[idx_entra], 'lesion_partidos', 0) > 0:
+    if getattr(jugadores[idx_entra], 'lesion_dias', 0) > 0:
         _flash(estado, f"{jugadores[idx_entra].apellido} está lesionado", 2.0)
         return
     F.intercambiar(alin, campo, banco)
@@ -737,8 +738,8 @@ def _render_direccion(screen, estado, mi_equipo, alin, es_amistoso, modo_prepart
             n_s = _ps(jsel)
             draw_text(screen, f"SANCIONADO ({n_s} p. de {_ca()})" if n_s else "EXPULSADO: juegas con uno menos",
                       (_FICHA.x + 16, _FICHA.bottom - 60), size='sm', color='rojo')
-        elif getattr(jsel, 'lesion_partidos', 0) > 0 or baja_sel == 'lesion':
-            draw_text(screen, f"LESIONADO ({jsel.lesion_partidos} partidos)" if jsel.lesion_partidos else "LESIONADO en el partido",
+        elif getattr(jsel, 'lesion_dias', 0) > 0 or baja_sel == 'lesion':
+            draw_text(screen, f"LESIONADO ({texto_lesion(jsel.lesion_dias)})" if jsel.lesion_dias else "LESIONADO en el partido",
                       (_FICHA.x + 16, _FICHA.bottom - 60), size='sm', color='rojo')
         draw_text(screen, "Clic de nuevo para soltarlo", (_FICHA.x + 16, _FICHA.bottom - 30), size='sm', color='azul', shadow=False)
 
@@ -911,7 +912,7 @@ def _render_direccion(screen, estado, mi_equipo, alin, es_amistoso, modo_prepart
                 entra_a_lista = [s_ for s_ in (sel, hit) if s_[0] == 'reserva']
                 otro = hit if sel[0] == 'reserva' else sel
                 j_res = _jugador_de(alin, jugadores, entra_a_lista[0]) if entra_a_lista else None
-                if j_res is not None and getattr(j_res, 'lesion_partidos', 0) > 0:
+                if j_res is not None and getattr(j_res, 'lesion_dias', 0) > 0:
                     _flash(estado, f"{j_res.apellido} está lesionado: no puede jugar")
                 else:
                     a_nombre = _jugador_de(alin, jugadores, sel).apellido

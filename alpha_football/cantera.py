@@ -18,6 +18,8 @@ EDAD_SALIDA = 20                 # a esta edad sin subir, se va
 PROB_JOYA_USER = 0.08            # por renovación (máximo una)
 PROB_CANTERANO_IA = 0.15         # por club de la IA y renovación
 PROB_JOYA_IA = 0.01              # muy raro
+BRECHA_MIN = 10                  # v0.4.18.0: mínimo de diferencia entre media y potencial de un canterano
+TOPE_MEDIA = 99 - BRECHA_MIN     # v0.4.18.0: con el potencial en 99 como máximo, la media llega a 89
 PESOS_POSICION = (('POR', 1), ('DEF', 3), ('MED', 3), ('DEL', 2))
 
 
@@ -43,11 +45,9 @@ def _siguiente_id(estado: dict) -> int:
 
 
 def _hito(estado: dict) -> str:
-    """'<temporada>-inicio' hasta la mitad de la liga y '<temporada>-mitad' desde ahí."""
-    liga = estado.get('liga')
-    n = int(getattr(liga, 'num_jornadas', 22) or 22)
-    j = int(getattr(liga, 'jornada_actual', 1) or 1)
-    return f"{int(estado.get('temporada', 1) or 1)}-{'mitad' if j >= max(2, n // 2) else 'inicio'}"
+    """'<temporada>-inicio' hasta la mitad de la temporada y '<temporada>-mitad' desde ahí (v0.4.13.0: por fecha)."""
+    from alpha_football import temporada as T
+    return f"{int(estado.get('temporada', 1) or 1)}-{'mitad' if T.segunda_mitad(estado) else 'inicio'}"
 
 
 def generar_canterano(estado: dict, equipo: Any, rng: random.Random, joya: bool = False,
@@ -59,20 +59,33 @@ def generar_canterano(estado: dict, equipo: Any, rng: random.Random, joya: bool 
     from alpha_football.retiros import PAIS_POR_LIGA, _atributos_para
     nivel = int(nivel_club(equipo))
     if joya:
-        ovr = max(40, nivel - rng.randint(0, 4))
-        potencial, edad = ovr + rng.randint(5, 12), rng.randint(16, 18)
+        ovr = min(TOPE_MEDIA, max(40, nivel - rng.randint(0, 4)))
+        potencial, edad = ovr + rng.randint(BRECHA_MIN, 14), rng.randint(16, 18)       # v0.4.18.0: antes +5 a +12
     else:
-        ovr = max(40, nivel - rng.randint(18, 28))
-        potencial, edad = ovr + rng.randint(8, 20), rng.randint(15, 18)
+        ovr = min(TOPE_MEDIA, max(40, nivel - rng.randint(18, 28)))
+        potencial, edad = ovr + rng.randint(BRECHA_MIN, 20), rng.randint(15, 18)       # v0.4.18.0: antes +8 a +20
     if posicion is None:
         posicion = rng.choices([p for p, _ in PESOS_POSICION], weights=[w for _, w in PESOS_POSICION])[0]
     pais = PAIS_POR_LIGA.get(_tipo_liga(estado, equipo), '')
     nombre, apellido = nombre_unico(pais, rng)
     ataque, defensa, fisico, tecnica, mental = _atributos_para(posicion, ovr, rng)
-    return Jugador(nombre=nombre, apellido=apellido, posicion=posicion,
-                   ataque=ataque, defensa=defensa, fisico=fisico, tecnica=tecnica, mental=mental,
-                   id=_siguiente_id(estado), edad=edad, potencial=min(99, potencial),
-                   nacionalidad=pais, joya=joya)
+    j = Jugador(nombre=nombre, apellido=apellido, posicion=posicion,
+                ataque=ataque, defensa=defensa, fisico=fisico, tecnica=tecnica, mental=mental,
+                id=_siguiente_id(estado), edad=edad, potencial=min(99, potencial),
+                nacionalidad=pais, joya=joya)
+    _asegurar_brecha(j)
+    return j
+
+
+def _falta_brecha(j: Any) -> bool:
+    """v0.4.18.0: ¿el potencial queda a menos de BRECHA_MIN de la media (y aún se puede subir)?"""
+    return int(j.potencial) < min(99, int(j.overall) + BRECHA_MIN)
+
+
+def _asegurar_brecha(j: Any) -> None:
+    """v0.4.18.0: sube el potencial hasta dejarlo a BRECHA_MIN de la media (tope 99)."""
+    if _falta_brecha(j):
+        j.potencial = min(99, int(j.overall) + BRECHA_MIN)
 
 
 def _guardar(estado: dict, jugadores: list) -> None:
@@ -97,7 +110,12 @@ def cantera(estado: dict) -> list:
         dc['cantera_ultima'] = _hito(estado)     # recién creada: no se renueva en esta misma mitad
         _guardar(estado, jugadores)
         return jugadores
-    return [Jugador.from_dict(c) for c in crudos]
+    lista = [Jugador.from_dict(c) for c in crudos]
+    if any(_falta_brecha(j) for j in lista):         # v0.4.18.0: cantera de una partida anterior (menos de 10 de diferencia)
+        for j in lista:
+            _asegurar_brecha(j)
+        _guardar(estado, lista)
+    return lista
 
 
 def _prob_salida(j: Any) -> float:
@@ -107,11 +125,16 @@ def _prob_salida(j: Any) -> float:
 
 
 def _crecer(j: Any, rng: random.Random) -> int:
-    """Sube de +1 a +4 de media sin pasar su potencial. Retorna cuánto subió."""
-    sube = min(rng.randint(1, 4), max(0, int(j.potencial) - int(j.overall)))
+    """v0.4.18.0: sube de +2 a +5 de media (tope TOPE_MEDIA) y su potencial sube lo mismo, así que
+    siempre queda a BRECHA_MIN o más de la media. Retorna cuánto subió la media."""
+    antes = int(j.overall)
+    sube = min(rng.randint(2, 5), max(0, TOPE_MEDIA - antes))
     for attr in ('ataque', 'defensa', 'fisico', 'tecnica', 'mental'):
         setattr(j, attr, min(99, getattr(j, attr) + sube))
-    return sube
+    real = int(j.overall) - antes                    # un atributo en 99 puede frenar la subida
+    j.potencial = min(99, int(j.potencial) + real)
+    _asegurar_brecha(j)
+    return real
 
 
 def renovar(estado: dict, rng: Optional[random.Random] = None) -> dict:
@@ -204,10 +227,10 @@ def revisar_jornada(estado: dict, rng: Optional[random.Random] = None) -> Option
 
 def proximo_informe(estado: dict) -> str:
     """Cuándo llega el próximo informe (texto para la pantalla)."""
-    liga = estado.get('liga')
-    mitad = max(2, int(getattr(liga, 'num_jornadas', 22) or 22) // 2)
-    j = int(getattr(liga, 'jornada_actual', 1) or 1)
-    return f"jornada {mitad}" if j < mitad else "inicio de la próxima temporada"
+    from alpha_football import temporada as T, calendario as CAL
+    if T.segunda_mitad(estado):
+        return "inicio de la próxima temporada"
+    return CAL.texto_fecha(T.mitad(estado), False)
 
 
 def subir(estado: dict, jugador_id: int) -> tuple:
@@ -255,7 +278,7 @@ def liberar(estado: dict, jugador_id: int) -> bool:
 def renovar_ia(estado: dict, rng: Optional[random.Random] = None) -> list:
     """Clubes de la IA (menor medida): cada uno puede subir un canterano directo a su plantilla;
     muy rara vez, una joya. Con la plantilla llena reemplaza al de peor media, en su misma posición."""
-    from alpha_football import correo as C
+    from alpha_football import noticias
     from alpha_football.mercado_ia import ligas_de_la_partida, PLANTILLA_MAX_IA
     from alpha_football.market import calcular_valor, registrar_region_jugador
     from alpha_football.finanzas import contrato_inicial, quitar_de_plantilla
@@ -295,10 +318,13 @@ def renovar_ia(estado: dict, rng: Optional[random.Random] = None) -> list:
                 eq.alineacion_activa = None      # la IA rearma su once
                 altas.append({'club': eq.nombre, 'jugador': nuevo.nombre_completo, 'media': nuevo.overall,
                               'joya': joya})
-                if joya and en_mi_liga:
-                    C.enviar(estado, 'prensa', f"{eq.nombre} presenta a una joya de su cantera",
-                             f"{nuevo.nombre_completo} ({nuevo.posicion}, {nuevo.edad} años, media "
-                             f"{nuevo.overall}) sube al primer equipo de {eq.nombre}.")
+                if joya and en_mi_liga:      # v0.4.23.0: es una noticia (antes, un correo de Prensa)
+                    noticias.publicar(estado, 'cantera',
+                                      noticias.titular(f"{eq.nombre} presenta a una joya de su cantera",
+                                                       f"{eq.nombre} presenta a una joya", f"Joya en {eq.nombre}"),
+                                      f"{nuevo.nombre_completo} ({nuevo.posicion}, {nuevo.edad} años, media "
+                                      f"{nuevo.overall}) sube al primer equipo de {eq.nombre}.",
+                                      importancia=3, equipos=[eq], jugadores=[nuevo])
             except Exception as e:
                 logger.error(f"Cantera de {getattr(eq, 'nombre', '?')}: {e}")
     return altas

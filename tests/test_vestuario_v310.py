@@ -50,11 +50,11 @@ def test_resistencia_por_rasgo_y_edad():
 def test_cerrar_partido_gasta_solo_minutos_jugados():
     eq = Equipo("Prueba FC", "X", 3.0, "cruyffismo", 1_000_000, [jug(), jug(), jug()])
     a, b, c = eq.jugadores
-    c.lesion_partidos, c.partidos_sancion = 2, 1
+    c.lesion_dias, c.partidos_sancion = 2, 1
     E.cerrar_partido(eq, {a.id: 90, b.id: 30}, rng=random.Random(99))
-    assert abs(a.energia - E.energia_en_minuto(jug(), 90)) < 0.01 or a.lesion_partidos > 0
+    assert abs(a.energia - E.energia_en_minuto(jug(), 90)) < 0.01 or a.lesion_dias > 0
     assert b.energia > a.energia                                   # sustituido en el 30' gasta menos
-    assert c.energia == 100 and c.lesion_partidos == 1 and c.partidos_sancion == 0   # no jugó: descuenta
+    assert c.energia == 100 and c.lesion_dias == 2 and c.partidos_sancion == 0   # no jugó: la sanción descuenta, la lesión no
     print("  test_cerrar_partido_gasta_solo_minutos_jugados: OK")
 
 
@@ -145,7 +145,7 @@ def _test_simular_partido_gasta_energia_de_los_titulares():
     for j in a.jugadores + b.jugadores: j.energia = 100
     once = engine._once_titular(a)
     engine.simular_partido(a, b)
-    assert all(j.energia < 100 or j.lesion_partidos for j in once)
+    assert all(j.energia < 100 or j.lesion_dias for j in once)
     assert all(j.energia == 100 for j in a.jugadores if j not in once)
     assert all(getattr(j, 'energia_vivo', None) is None for j in a.jugadores)
     for j in a.jugadores: j.energia = 100
@@ -339,7 +339,7 @@ def test_pedidos_de_la_directiva():
     jugar_jornada(3)
     p = D.pedido_activo(e)
     assert p and p['tipo'] in ('clasico', 'puntos', 'sub21')
-    p.update(tipo='puntos', hasta=6, puntos_ini=mi.puntos)       # forzar el de puntos
+    p.update(tipo='puntos', hasta=6, puntos_ini=mi.puntos, puntos=8)   # forzar el de puntos (v0.4.14.1: la meta va en el pedido)
     for pts in (3, 3, 0, 0, 3):
         jugar_jornada(pts)
     assert p['resuelto'] and p['cumplido'] and D.calif_dt(e) == 53
@@ -395,8 +395,11 @@ def _test_simulacion_instantanea_aplica_vestuario():
     once_ids = {mi.jugadores[i].id for i in mi.alineacion_activa.titulares}
     prepartido_screen._simular_instantaneo(e, local, visit)
     gastaron = [j for j in mi.jugadores if j.id in once_ids]
+    from alpha_football import calendario as CAL          # v0.4.11.0: la recuperación depende de los días de descanso
+    _jugada = e['liga'].jornada_actual - 1
+    _factor = sum(CAL.descanso_tras_liga(e, _jugada)) / CAL.dias_por_jornada(e)
     for j in gastaron:                                  # gastó 90' + adición (3-10, v4.4.0) y recuperó la jornada (tope 100)
-        esperado = [min(100.0, max(0.0, 100 - E.gasto_por_minuto(j) * m) + E.recuperacion(j)) for m in (100, 90)]
+        esperado = [min(100.0, max(0.0, 100 - E.gasto_por_minuto(j) * m) + E.recuperacion(j) * _factor) for m in (100, 90)]
         assert esperado[0] - 0.01 <= j.energia <= esperado[1] + 0.01, (j.energia, esperado)
     assert all(j.energia == 100 for j in mi.jugadores if j.id not in once_ids)
     assert len(e['datos_carrera'].get('racha', [])) == 1          # el hook de vestuario corrió una vez
@@ -423,7 +426,7 @@ def test_lesion_del_user_llega_al_correo():
         V.post_partido_user(e, mi, rival, 1, 0, [], {mi.jugadores[0].id: 90}, rng=random.Random(1))
     finally:
         Ener.PROB_LESION_90 = orig
-    assert mi.jugadores[0].lesion_partidos > 0
+    assert mi.jugadores[0].lesion_dias > 0
     assert any(x['remitente'] == 'medico' and x['accion']['pantalla'] == 'team_screen' for x in C.bandeja(e))
     print("  test_lesion_del_user_llega_al_correo: OK")
 
@@ -457,7 +460,7 @@ def test_final_titular_no_disponible_no_juega_en_vivo():
     e = _estado(); mi = e['mi_equipo']; alin = mi.alineacion_activa
     js = mi.jugadores
     lesionado, sancionado = js[alin.titulares[3]], js[alin.titulares[5]]
-    lesionado.lesion_partidos, sancionado.partidos_sancion = 2, 1
+    lesionado.lesion_dias, sancionado.partidos_sancion = 2, 1
     match_screen._depurar_titulares(mi, alin)
     en_cancha = [js[i] for i in alin.titulares]
     assert len(en_cancha) == 11 and lesionado not in en_cancha and sancionado not in en_cancha
@@ -517,10 +520,10 @@ def test_ajuste_no_castiga_al_que_no_podia_jugar():
     e = _estado(); mi, rival = e['mi_equipo'], e['liga'].equipos[1]
     top = max(mi.jugadores, key=lambda j: j.overall)
     for j in mi.jugadores: j.moral, j.salario, j.notas_recientes = 70, 10**9, []
-    top.lesion_partidos = 1                                   # cumple su último partido de lesión
+    top.lesion_dias = 1                                   # sigue lesionado (la lesión se cura con los días)
     otros = {j.id: 90 for j in mi.jugadores if j is not top}
     V.post_partido_user(e, mi, rival, 0, 0, [], otros, rng=random.Random(1))
-    assert top.lesion_partidos == 0 and top.moral == 70, top.moral
+    assert top.lesion_dias == 1 and top.moral == 70, top.moral
     print("  test_ajuste_no_castiga_al_que_no_podia_jugar: OK")
 
 

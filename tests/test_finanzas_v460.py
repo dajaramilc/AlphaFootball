@@ -105,10 +105,17 @@ def test_quiebra_ia_remata_sanciona_y_avisa():
     quebrados = MI.ingresos_fin_temporada(e, random.Random(1))
     assert eq.nombre in quebrados
     assert eq.puntos == -F.PUNTOS_QUIEBRA and eq.sin_fichajes_hasta == e['temporada']
-    idos = [j for j in tops if j not in eq.jugadores]
-    assert 2 <= len(idos) <= 3
-    noticia = next(m for m in e['datos_carrera']['correo'] if m['remitente'] == 'prensa')
-    assert eq.nombre in noticia['asunto'] and all(j.apellido in noticia['cuerpo'] for j in idos)
+    en_remate = [j for j in tops if j.remate]          # v0.4.21.0: esperan 7 días en el club (primero el user)
+    assert 2 <= len(en_remate) <= 3 and all(j in eq.jugadores for j in en_remate)
+    from alpha_football import noticias as NO                  # v0.4.23.0: noticia, ya no correo de Prensa
+    noticia = next(n for n in NO.lista(e) if n['titular'] == f"Quiebra en {eq.nombre}")
+    assert (noticia['tipo'], noticia['importancia']) == ('economia', 4) and noticia['equipos_ids'] == [eq.id]
+    assert noticia['accion']['pantalla'] == 'buscador_screen' and all(j.apellido in noticia['cuerpo'] for j in en_remate)
+    assert not [m for m in e['datos_carrera'].get('correo', []) if m['remitente'] == 'prensa']
+    for r in e['datos_carrera']['remates']:
+        r['vence'] = '2000-01-01'
+    MI.resolver_remates(e, random.Random(1))
+    assert all(j not in eq.jugadores for j in en_remate)   # vencido el plazo, se los lleva la IA
     print("  test_quiebra_ia_remata_sanciona_y_avisa: OK")
 
 
@@ -135,7 +142,8 @@ def test_remate_sin_comprador_queda_barato_para_el_user():
     libres = [j for j, comp, _p in rem if comp is None]
     assert libres and all(j.remate and j in eq.jugadores for j in libres)
     j = libres[0]
-    esperado = int((int(getattr(j, 'valor', 0) or 0) or calcular_valor(j)) * MI.PRECIO_REMATE)
+    from alpha_football.market import cifra_cerrada      # v0.4.18.0: el remate sale en cifra cerrada
+    esperado = cifra_cerrada((int(getattr(j, 'valor', 0) or 0) or calcular_valor(j)) * MI.PRECIO_REMATE)
     assert N.precio_fichaje(j) == esperado and N.minimo_club(j, eq) == esperado
     N.registrar_pase(e, j, eq.nombre, 'Otro', 1, False)
     assert not j.remate

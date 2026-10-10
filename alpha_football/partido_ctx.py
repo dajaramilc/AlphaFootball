@@ -60,6 +60,7 @@ class EstadoPartido:
     jugadores: dict = field(default_factory=dict)   # clave -> objeto Jugador
     objetivo_cambios: dict = field(default_factory=dict)   # lado -> cambios que hará la IA
     fin: int = 90                                   # v4.4.0: último minuto (90 + adición)
+    factor_tarjetas: float = 1.0                    # v0.4.23.0: tono agresivo en la prensa (1.0 = sin tensión)
 
     def copia(self) -> 'EstadoPartido':
         """Copia independiente (listas/dicts nuevos; los Jugador son los mismos objetos)."""
@@ -71,7 +72,7 @@ class EstadoPartido:
             asist=dict(self.asist), entrada=dict(self.entrada), salida=dict(self.salida),
             incidencias=[dict(i) for i in self.incidencias], posicion=dict(self.posicion),
             lado_jugador=dict(self.lado_jugador), jugadores=dict(self.jugadores),
-            objetivo_cambios=dict(self.objetivo_cambios), fin=self.fin)
+            objetivo_cambios=dict(self.objetivo_cambios), fin=self.fin, factor_tarjetas=self.factor_tarjetas)
 
     def lado_de_equipo(self, equipo_id) -> Optional[str]:
         for lado, eid in self.ids_equipo.items():
@@ -147,7 +148,7 @@ def aplicar_evento(ctx: EstadoPartido, ev: dict) -> None:
         elif t == 'lesion':
             ctx.fuera.add(jid)
             _sacar(ctx, lado, jid, m)
-            ctx.incidencias.append({'tipo': 'lesion', 'jugador_id': jid, 'partidos': int(ev.get('partidos', 1))})
+            ctx.incidencias.append({'tipo': 'lesion', 'jugador_id': jid, 'dias': int(ev.get('dias', 7))})
         elif t == 'cambio':
             sale = clave(ev.get('sale'))
             entra = ev.get('entra')

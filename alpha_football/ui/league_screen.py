@@ -19,6 +19,7 @@ import pygame
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s')
 logger = logging.getLogger(__name__)
 from alpha_football.sanciones import sancionado_en_algo  # noqa: E402
+from alpha_football.energia import texto_lesion as _texto_lesion  # noqa: E402  v0.4.19.0
 
 # Importación resiliente del tema visual con fallback local si falla
 try:
@@ -148,14 +149,16 @@ def inicializar_calendario_liga(liga: Any) -> None:
         logger.error(f"Error al inicializar calendario de liga: {error_cal}")
 
 
-def _ligas_de_fondo(estado: dict) -> list:
+def _ligas_de_fondo(estado: dict, paises=None) -> list:
     """v2.3.5: ligas que avanzan en background: las 1ª y 2ª de los 5 países.
-    Nunca incluye la liga del user (esa la juega él)."""
+    Nunca incluye la liga del user (esa la juega él). v0.4.16.0: con `paises`, solo las de esos países."""
     liga_user = estado.get('liga')
+    filtro = set(paises) if paises is not None else None
     ligas = (list((estado.get('primera_division') or {}).values())
              + list((estado.get('segunda_division') or {}).values()))
     return [l for l in ligas if l is not None and l is not liga_user
-            and len(getattr(l, 'equipos', []) or []) >= 2]
+            and len(getattr(l, 'equipos', []) or []) >= 2
+            and (filtro is None or getattr(l, 'tipo', None) in filtro)]
 
 
 def _desarrollar_equipo_fondo(engine, equipo, gf: int, gc: int, stats: Optional[dict] = None) -> None:
@@ -231,22 +234,22 @@ def _simular_jornada_liga_fondo(liga_b) -> bool:
     return True
 
 
-def simular_jornada_segunda_division(estado: dict) -> None:
+def simular_jornada_segunda_division(estado: dict, paises=None) -> None:
     """
     v2.3 (Fase 7) / v2.3.5: avanza UNA jornada de cada liga de fondo (2ª divisiones y,
     si el user está en 2ª, la 1ª de su país) al terminar cada jornada del usuario.
     """
-    for liga_b in _ligas_de_fondo(estado):
+    for liga_b in _ligas_de_fondo(estado, paises):
         try:
             _simular_jornada_liga_fondo(liga_b)
         except Exception as e_liga:
             logger.error(f"Error en simulación de fondo de {getattr(liga_b, 'nombre', '?')}: {e_liga}")
 
 
-def completar_ligas_de_fondo(estado: dict) -> None:
+def completar_ligas_de_fondo(estado: dict, paises=None) -> None:
     """v2.3.5: al cerrar la temporada, juega lo que falte de cada liga de fondo para que
     el ascenso/descenso se decida con la tabla final (las ligas tienen distinto largo)."""
-    for liga_b in _ligas_de_fondo(estado):
+    for liga_b in _ligas_de_fondo(estado, paises):
         try:
             for _ in range(200):  # tope de seguridad
                 if not _simular_jornada_liga_fondo(liga_b):
@@ -353,6 +356,7 @@ TARJETAS = {
         ("FORMACIÓN", "Once, banco, formación y táctica", 'team_screen'),
         ("PLANTILLA", "Todos tus jugadores, ficha y transferibles", 'plantilla_screen'),
         ("CANTERA", "Juveniles del club: súbelos o libéralos", 'cantera_screen'),   # v4.8.0
+        ("CALENDARIO", "Tus partidos de liga y copa, día por día", 'calendario_screen'),   # v0.4.11.0
     ],
     'negociaciones': [
         ("NEGOCIAR", "Buscador de jugadores de todas las ligas", 'buscador_screen'),
@@ -363,6 +367,7 @@ TARJETAS = {
     ],
     'oficina': [
         ("NOTIFICACIONES", "Mensajes de jugadores y presidente, y correo del club", 'notificaciones_screen'),   # v0.4.10.0
+        ("NOTICIAS", "Titulares de tu liga y del mundo", 'noticias_screen'),   # v0.4.23.0
         ("ESTADÍSTICAS", "Goleadores, asistencias, vallas", 'stats_screen'),
         ("COPA INTERNACIONAL", "Grupos, llaves y estadísticas", 'copa_screen'),
         ("HISTORIAL DE CARRERA", "Tus temporadas y títulos", 'career_screen'),
@@ -382,6 +387,10 @@ TARJETAS = {
 R_TABLA = pygame.Rect(16, 106, 640, 400)
 R_HIST = pygame.Rect(16, 516, 640, 180)       # v3.6.0: termina en y=696 (barra de atajos)
 R_JUGAR = pygame.Rect(672, 106, 592, 96)
+R_DIA = pygame.Rect(R_JUGAR.right - 116, R_JUGAR.bottom - 30, 100, 24)   # v0.4.12.0: botón +1 DÍA (dentro de JUGAR)
+R_HORA = pygame.Rect(R_JUGAR.x + 20, R_JUGAR.bottom - 32, 200, 26)        # v0.4.14.0: AVANZAR 1 HORA (último día)
+R_CERRAR = pygame.Rect(R_JUGAR.x + 232, R_JUGAR.bottom - 32, 200, 26)     # v0.4.14.0: CERRAR MERCADO
+MS_DIA_AVANCE = 1000      # v0.4.14.1: pausa entre día y día mientras CONTINUAR avanza a la vista; v0.4.18.0: 1 s por día (antes 40 ms)
 Y_AVISOS = 210
 R_JORNADA = pygame.Rect(672, 296, 592, 252)
 R_CLUB = pygame.Rect(672, 558, 592, 138)       # v3.6.0: termina en y=696
@@ -508,6 +517,10 @@ def _rects_tarjetas(n: int) -> list:
     w, h, gap, cols, y0 = 440, 150, 28, 2, 170
     if n > 6:       # v3.2.0: 4 filas (OFICINA) → tarjetas más bajas para que quepan en 720
         h, gap = 120, 16
+    if n > 8:       # v0.4.23.0: con NOTICIAS, OFICINA ya no cabe en 2 columnas × 4 filas: 3 columnas
+        w, cols = 392, 3
+        if n > 9:
+            h, gap = 108, 12
     x0 = (SCREEN_W - (cols * w + (cols - 1) * gap)) // 2
     return [pygame.Rect(x0 + (i % cols) * (w + gap), y0 + (i // cols) * (h + gap), w, h) for i in range(n)]
 
@@ -615,8 +628,8 @@ def _alertas_inicio(estado, mi_equipo) -> list:
             if not (0 <= i < len(jugadores)):
                 continue
             j = jugadores[i]
-            if getattr(j, 'lesion_partidos', 0) > 0:
-                avisos.append((f"Lesionado en tu once: {j.nombre} {j.apellido} ({j.lesion_partidos} p.)", 'rojo'))
+            if getattr(j, 'lesion_dias', 0) > 0:
+                avisos.append((f"Lesionado en tu once: {j.nombre} {j.apellido} ({_texto_lesion(j.lesion_dias, corto=True)})", 'rojo'))
             elif sancionado_en_algo(j):
                 from alpha_football.sanciones import sancionado as _sc
                 cual = " y ".join(c for c in ('liga', 'copa') if _sc(j, c))
@@ -683,6 +696,13 @@ def _info_partido(estado, liga, mi_equipo) -> tuple:
     partido_usuario = next((p for p in partidos_jornada
                             if mi_equipo.id in (p.local_id, p.visitante_id)), None)
     esta_finalizada = (jornada_actual == num_jornadas and all(p.jugado for p in partidos_jornada))
+    if esta_finalizada:
+        try:   # v0.4.13.0: con reloj, la temporada termina en su fecha (30 jun / 31 dic), no al jugar la última jornada
+            from alpha_football import dias as _dias_f, temporada as _T_f
+            if _dias_f.activo(estado) and not _T_f.es_fin(estado):
+                esta_finalizada = False
+        except Exception as e_fin:
+            logger.error(f"Error al leer el fin de temporada: {e_fin}")
     fase_copa, rival_copa = None, None
     try:
         from alpha_football.ui.copa_screen import rival_copa_pendiente
@@ -692,8 +712,170 @@ def _info_partido(estado, liga, mi_equipo) -> tuple:
     return partido_usuario, esta_finalizada, fase_copa, rival_copa
 
 
+def _iniciar_avance(estado) -> None:
+    """v0.4.14.1: CONTINUAR ya no corre todos los días de golpe (cruzar una ronda de fichajes de la IA
+    congelaba la pantalla varios segundos): los pasa de a uno por cuadro, a la vista."""
+    from alpha_football import dias as _dias, calendario as _cal, temporada as _T
+    prox = _cal.proximo_evento(estado)
+    meta = prox['fecha'] if prox else _T.fin(estado)
+    estado['hub_avance'] = {'desde': _dias.hoy(estado).isoformat(), 'meta': meta.isoformat(), 'sig': 0,
+                            'total': {'dias': 0, 'correos': 0, 'ofertas': 0, 'eventos': 0}}
+
+
+def _terminar_avance(estado) -> None:
+    """Cierra el avance a la vista y deja el resumen de lo que pasó en el aviso de Inicio."""
+    av = estado.pop('hub_avance', None)
+    if av:
+        from alpha_football import dias as _dias
+        _toast(estado, _dias.texto_resumen(av.get('total') or {}), color='azul')
+
+
+def _paso_avance(estado, ahora: Optional[int] = None) -> bool:
+    """Pasa un día más del avance de CONTINUAR, si ya toca. True mientras el avance siga; se detiene con las
+    reglas de dias.continuar (llegó tu partido, una oferta, un evento o el último día de fichajes)."""
+    av = estado.get('hub_avance')
+    if not av:
+        return False
+    try:
+        from alpha_football import dias as _dias
+        ahora = pygame.time.get_ticks() if ahora is None else int(ahora)
+        if ahora < int(av.get('sig', 0) or 0):
+            return True
+        r = _dias.avanzar_dia(estado)
+        total = av['total']
+        for k in ('dias', 'correos', 'ofertas', 'eventos'):
+            total[k] = int(total.get(k, 0) or 0) + int(r.get(k, 0) or 0)
+        if r.get('hito'):
+            total['hito'] = r['hito']
+        if r['dias'] and not _dias.debe_parar(r) and _dias.es_dia_de_continuar(estado):
+            av['sig'] = ahora + MS_DIA_AVANCE
+            return True
+    except Exception as e_av:
+        logger.error(f"Error en el avance de los días: {e_av}", exc_info=True)
+    _terminar_avance(estado)
+    return False
+
+
+def avance_visible(estado) -> Optional[tuple]:
+    """(fecha de hoy, días que van, días hasta tu próximo partido) mientras CONTINUAR avanza a la vista."""
+    av = estado.get('hub_avance')
+    if not av:
+        return None
+    try:
+        from datetime import date
+        from alpha_football import dias as _dias
+        hoy, desde = _dias.hoy(estado), date.fromisoformat(av['desde'])
+        return hoy, (hoy - desde).days, max(1, (date.fromisoformat(av['meta']) - desde).days)
+    except Exception as e_av:
+        logger.error(f"Avance de los días dañado: {e_av}")
+        estado.pop('hub_avance', None)
+        return None
+
+
+def _dibujar_avance(screen, anim: tuple) -> None:
+    """v0.4.14.1: tapa el botón grande con el día que va pasando: la fecha, la semana alrededor y el avance."""
+    from datetime import timedelta
+    from alpha_football import calendario as _cal
+    fecha, k, total = anim
+    dorado, azul = COLORS.get('dorado', (255, 215, 0)), COLORS.get('azul', (0, 191, 255))
+    pygame.draw.rect(screen, (12, 18, 34), R_JUGAR, border_radius=8)
+    pygame.draw.rect(screen, dorado, R_JUGAR, width=2, border_radius=8)
+    draw_text(screen, "AVANZANDO", (R_JUGAR.x + 20, R_JUGAR.y + 8), size='sm', color='azul')
+    draw_text(screen, _cal.texto_fecha(fecha), (R_JUGAR.x + 20, R_JUGAR.y + 28), size='lg', color='dorado')
+    draw_text(screen, f"día {k} de {total} · una tecla lo detiene", (R_JUGAR.x + 20, R_JUGAR.y + 64), size='sm',
+              color='blanco')
+    x0 = R_JUGAR.right - 20 - 7 * 44                 # la semana alrededor del día: la casilla del centro es hoy
+    for i in range(7):
+        d = fecha + timedelta(days=i - 3)
+        rc = pygame.Rect(x0 + i * 44, R_JUGAR.y + 14, 40, 54)
+        centro = i == 3
+        pygame.draw.rect(screen, (40, 60, 95) if centro else (20, 26, 46), rc, border_radius=6)
+        if centro:
+            pygame.draw.rect(screen, dorado, rc, width=2, border_radius=6)
+        s1 = get_font('sm').render(_cal.DIAS_SEM[d.weekday()], True, azul)
+        s2 = get_font('md').render(str(d.day), True, (255, 255, 255) if centro else (150, 160, 180))
+        screen.blit(s1, s1.get_rect(center=(rc.centerx, rc.y + 13)))
+        screen.blit(s2, s2.get_rect(center=(rc.centerx, rc.y + 37)))
+    barra = pygame.Rect(R_JUGAR.x + 20, R_JUGAR.bottom - 10, R_JUGAR.width - 40, 4)
+    pygame.draw.rect(screen, (30, 40, 60), barra, border_radius=2)
+    pygame.draw.rect(screen, dorado, pygame.Rect(barra.x, barra.y, barra.width * min(k, total) // max(1, total), 4),
+                     border_radius=2)
+
+
+def _avanzar_un_dia(estado) -> None:
+    """v0.4.12.0: +1 DÍA (tecla D). Pasa un día y avisa lo que llegó; el día de un partido no hace nada."""
+    try:
+        from alpha_football import dias as _dias
+        if _dias.es_dia_de_continuar(estado):
+            _toast(estado, _dias.texto_resumen(_dias.avanzar_dia(estado)), color='azul')
+    except Exception as e_dias:
+        logger.error(f"Error al avanzar un día: {e_dias}")
+
+
+def _avanzar_hora(estado) -> None:
+    """v0.4.14.0: AVANZAR 1 HORA el último día. Cancela una confirmación de cierre pendiente."""
+    try:
+        from alpha_football import dia_final as _DF
+        estado.pop('confirmar_cierre_mercado', None)
+        if _DF.activo(estado):
+            _toast(estado, _DF.texto_hora(_DF.avanzar_hora(estado)), color='azul')
+    except Exception as e_df:
+        logger.error(f"Error al avanzar una hora: {e_df}")
+
+
+def _momento_cierre(estado) -> list:
+    """[día, horas que quedan]: el momento del último día en que se pide la confirmación de cierre."""
+    from alpha_football import dia_final as _DF
+    return [_DF._hoy_iso(estado), _DF.horas(estado)]
+
+
+def _cierre_pedido(estado) -> bool:
+    """v0.4.14.0: ¿sigue en pie la confirmación de CERRAR MERCADO? Solo si no pasó ni una hora ni un día desde
+    que se pidió (también la cancelan cambiar de pestaña y salir del hub: render)."""
+    try:
+        if estado.get('confirmar_cierre_mercado') == _momento_cierre(estado):
+            return True
+    except Exception as e_df:
+        logger.error(f"Error al leer la confirmación de cierre: {e_df}")
+    estado.pop('confirmar_cierre_mercado', None)
+    return False
+
+
+def _pedir_cierre(estado) -> None:
+    """v0.4.14.0: CERRAR MERCADO: la primera vez pide confirmación; la segunda (Enter, C o clic) cierra."""
+    try:
+        from alpha_football import dia_final as _DF
+        if not _DF.activo(estado):
+            return
+        if _cierre_pedido(estado):
+            estado.pop('confirmar_cierre_mercado', None)
+            _DF.cerrar(estado)
+            _toast(estado, "Mercado cerrado", color='rojo')
+        else:
+            estado['confirmar_cierre_mercado'] = _momento_cierre(estado)
+    except Exception as e_df:
+        logger.error(f"Error al cerrar el mercado: {e_df}")
+
+
 def _accion_jugar(estado, partido_usuario, esta_finalizada, fase_copa) -> Optional[str]:
     """JUGAR: primero la copa si toca, después la liga o el cierre de temporada."""
+    try:   # v0.4.14.0: el último día, JUGAR avanza una hora (o confirma el cierre si estaba pedido)
+        from alpha_football import dia_final as _DF
+        if _DF.activo(estado):
+            if _cierre_pedido(estado):
+                _pedir_cierre(estado)
+            else:
+                _avanzar_hora(estado)
+            return None
+    except Exception as e_df:
+        logger.error(f"Error en el último día: {e_df}")
+    try:   # v0.4.12.0: sin partido hoy, JUGAR corre los días hasta que pase algo
+        from alpha_football import dias as _dias
+        if _dias.es_dia_de_continuar(estado):
+            _iniciar_avance(estado)        # v0.4.14.1: los días pasan a la vista, uno por cuadro (render)
+            return None
+    except Exception as e_dias:
+        logger.error(f"Error al continuar los días: {e_dias}")
     if fase_copa:
         from alpha_football.ui.copa_screen import preparar_partido_copa
         if preparar_partido_copa(estado):
@@ -733,6 +915,13 @@ def _nivel(equipo) -> int:
 
 def _textos_jugar(liga, mi_equipo, info, estado: Optional[dict] = None) -> tuple:
     """(línea grande, línea 2, línea 3, habilitado) del botón JUGAR."""
+    try:   # v0.4.12.0: sin partido hoy, el botón grande es CONTINUAR
+        from alpha_football import dias as _dias
+        t = _dias.textos_hub(estado) if estado else None
+        if t:
+            return t[0], t[1], t[2], True
+    except Exception as e_dias:
+        logger.error(f"Error en los textos de CONTINUAR: {e_dias}")
     partido_usuario, esta_finalizada, fase_copa, rival_copa = info
     if fase_copa:
         return "JUGAR", f"{fase_copa} vs {(rival_copa or '?')[:26]}", "", True   # v3.8.0
@@ -757,12 +946,89 @@ class _TablaDibujada(Exception):
 
 
 def rect_tab_tabla(clave: str) -> pygame.Rect:
-    """v3.8.0: pestañas LIGA / COPA arriba a la derecha del panel de la tabla."""
+    """v3.8.0: pestañas LIGA / COPA arriba a la derecha del panel de la tabla. v0.4.23.0: NOTICIAS a su izquierda."""
+    if clave == 'noticias':
+        return pygame.Rect(R_TABLA.right - 324, R_TABLA.y + 8, 104, 28)
     return pygame.Rect(R_TABLA.right - 212 + (0 if clave == 'liga' else 104), R_TABLA.y + 8, 96, 28)
 
 
+# --- v0.4.23.0: feed de noticias en el panel de la tabla -------------------------------------------------
+INTERVALO_FEED_MS = 5000          # una noticia a la vez, rota cada 5 s
+FUNDIDO_MS = 180                  # fundido de entrada al cambiar a la pestaña NOTICIAS
+R_TARJETA_FEED = pygame.Rect(R_TABLA.centerx - 99, R_TABLA.y + 40, 198, 352)    # 9:16 bajo la fila de pestañas
+
+
+def feed_actual(estado: dict, ahora: int) -> tuple:
+    """(noticias del feed, índice vigente). Rota con el reloj (`ahora` en ms). `noticias.para_feed` recorre el
+    calendario, así que la lista se guarda en `estado` y solo se recalcula al rotar o si cambia la lista."""
+    from alpha_football import noticias as _N
+    t0 = estado.setdefault('feed_t0', ahora)
+    paso = max(0, (ahora - t0) // INTERVALO_FEED_MS)
+    lista = _N.lista(estado)
+    clave = (len(lista), lista[0]['id'] if lista else None)
+    cache = estado.get('_feed_cache')
+    if not cache or cache[0] != clave or cache[1] != paso:
+        cache = (clave, paso, _N.para_feed(estado))
+        estado['_feed_cache'] = cache
+    feed = cache[2]
+    return feed, (paso % len(feed) if feed else 0)
+
+
+def alternar_noticias(estado: dict, ahora: Optional[int] = None) -> None:
+    """Tecla N: noticias ↔ la pestaña anterior de la tabla (LIGA o COPA), con fundido."""
+    ahora = pygame.time.get_ticks() if ahora is None else int(ahora)
+    actual = estado.get('hub_tabla_tab')
+    if actual == 'noticias':
+        estado['hub_tabla_tab'] = estado.get('hub_tabla_prev') if estado.get('hub_tabla_prev') in ('liga', 'copa') else 'liga'
+    else:
+        estado['hub_tabla_prev'] = 'copa' if actual == 'copa' else 'liga'
+        estado['hub_tabla_tab'] = 'noticias'
+    estado['feed_fade_ms'] = ahora
+    estado['feed_t0'] = ahora        # la tarjeta arranca desde la primera
+
+
+def _fijar_tabla_tab(estado: dict, clave: str, ahora: Optional[int] = None) -> None:
+    """Clic en una pestaña de la tabla; LIGA y COPA se recuerdan para volver con la tecla N."""
+    if clave == 'noticias':
+        if estado.get('hub_tabla_tab') != 'noticias':
+            alternar_noticias(estado, ahora)
+        return
+    estado['hub_tabla_tab'] = clave
+    estado['hub_tabla_prev'] = clave
+
+
+def _render_feed(screen, estado: dict, ahora: int) -> None:
+    """Contenido del panel de la tabla en la pestaña NOTICIAS: la noticia vigente al centro y, atenuadas a los
+    lados, la anterior y la siguiente."""
+    from alpha_football.ui import noticias_visual as V
+    draw_text(screen, "NOTICIAS", (32, R_TABLA.y + 10), size='md', color='azul')
+    feed, i = feed_actual(estado, ahora)
+    cuerpo = pygame.Rect(R_TABLA.x, R_TABLA.y + 40, R_TABLA.width, R_TABLA.height - 40)
+    if not feed:
+        draw_text(screen, "Sin noticias destacadas.", (R_TABLA.centerx - 110, R_TABLA.centery - 20), size='md', color='blanco')
+        draw_text(screen, "Se publican con cada jornada.", (R_TABLA.centerx - 118, R_TABLA.centery + 14), size='sm', color='azul')
+    else:
+        draw_text(screen, f"{i + 1} / {len(feed)}", (172, R_TABLA.y + 14), size='sm', color='azul', shadow=False)
+        ancho, alto = R_TARJETA_FEED.size
+        if len(feed) > 1:
+            previo = screen.get_clip()
+            screen.set_clip(pygame.Rect(R_TABLA.x + 8, R_TARJETA_FEED.y, R_TABLA.width - 16, alto))
+            screen.blit(V.tarjeta(feed[(i - 1) % len(feed)], ancho, alto, titular=False, dim=True),
+                        (R_TARJETA_FEED.x - 150, R_TARJETA_FEED.y))
+            screen.blit(V.tarjeta(feed[(i + 1) % len(feed)], ancho, alto, titular=False, dim=True),
+                        (R_TARJETA_FEED.x + 150, R_TARJETA_FEED.y))
+            screen.set_clip(previo)
+        screen.blit(V.tarjeta(feed[i], ancho, alto), R_TARJETA_FEED.topleft)
+        pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), R_TARJETA_FEED, width=2)
+    t = ahora - int(estado.get('feed_fade_ms', -FUNDIDO_MS) or 0)
+    if 0 <= t < FUNDIDO_MS:          # fundido de entrada: un velo del color del panel que se va aclarando
+        velo = pygame.Surface(cuerpo.size, pygame.SRCALPHA)
+        velo.fill((20, 26, 46, 255 - 255 * t // FUNDIDO_MS))
+        screen.blit(velo, cuerpo.topleft)
+
+
 def _dibujar_tabs_tabla(screen, activa: str, mouse_pos) -> None:
-    for clave, texto in (('liga', "LIGA"), ('copa', "COPA")):
+    for clave, texto in (('noticias', "NOTICIAS"), ('liga', "LIGA"), ('copa', "COPA")):
         r = rect_tab_tabla(clave)
         on = clave == activa
         pygame.draw.rect(screen, COLORS.get('azul', (0, 191, 255)) if on else
@@ -800,10 +1066,13 @@ def _render_inicio(screen, estado, liga, mi_equipo, info, jugados, mouse_pos, cl
     dorado = COLORS.get('dorado', (255, 215, 0))
 
     # --- Tabla de posiciones (v3.8.0: pestañas LIGA / COPA) ---
-    tabla_tab = 'copa' if estado.get('hub_tabla_tab') == 'copa' else 'liga'
+    tabla_tab = estado.get('hub_tabla_tab') if estado.get('hub_tabla_tab') in ('copa', 'noticias') else 'liga'   # v0.4.23.0: + noticias
     try:
         draw_panel(screen, R_TABLA)
         _dibujar_tabs_tabla(screen, tabla_tab, mouse_pos)
+        if tabla_tab == 'noticias':
+            _render_feed(screen, estado, pygame.time.get_ticks())
+            raise _TablaDibujada()
         if tabla_tab == 'copa':
             _render_tabla_copa(screen, estado)
             raise _TablaDibujada()
@@ -883,12 +1152,45 @@ def _render_inicio(screen, estado, liga, mi_equipo, info, jugados, mouse_pos, cl
             pygame.draw.rect(screen, dorado, R_JUGAR, width=3, border_radius=8)
         draw_text(screen, l1, (R_JUGAR.x + 20, R_JUGAR.y + 10), size='lg',
                   color='verde' if habilitado else 'blanco')
-        draw_text(screen, l2, (R_JUGAR.x + 20, R_JUGAR.y + 48), size='sm',
-                  color='dorado' if fase_copa else 'blanco')
+        try:   # v0.4.11.0: fecha del partido, arriba a la derecha del botón
+            from alpha_football import calendario as _cal_j
+            if habilitado and l1 == "CONTINUAR":
+                _txt_fecha = ""                                 # v0.4.13.0: la fecha y la fase van en la línea 2
+            else:
+                _txt_fecha = _cal_j.texto_proximo(estado) if habilitado and l1 == "JUGAR" else ""
+            if _txt_fecha:
+                _w_fecha = get_font('sm').size(_txt_fecha)[0]
+                draw_text(screen, _txt_fecha, (R_JUGAR.right - 20 - _w_fecha, R_JUGAR.y + 16), size='sm', color='dorado')
+        except Exception as e_fecha:
+            logger.error(f"Error al dibujar la fecha del partido: {e_fecha}")
+        if l1 == "ÚLTIMO DÍA":     # v0.4.14.0: la fecha y las horas van arriba a la derecha (abajo están los botones)
+            draw_text(screen, l2, (R_JUGAR.right - 20 - get_font('sm').size(l2)[0], R_JUGAR.y + 16), size='sm',
+                      color='dorado')
+        else:
+            draw_text(screen, l2, (R_JUGAR.x + 20, R_JUGAR.y + 48), size='sm',
+                      color='dorado' if (fase_copa or l1 == "CONTINUAR") else 'blanco')
         if l3:
             draw_text(screen, l3, (R_JUGAR.x + 20, R_JUGAR.y + 70), size='sm', color='azul')
+        if l1 == "CONTINUAR":      # v0.4.12.0: avanzar de a un día
+            pygame.draw.rect(screen, (30, 45, 75) if R_DIA.collidepoint(mouse_pos) else (15, 22, 40), R_DIA, border_radius=6)
+            pygame.draw.rect(screen, COLORS.get('azul', (0, 191, 255)), R_DIA, width=1, border_radius=6)
+            _s_dia = get_font('sm').render("+1 DÍA", True, (255, 255, 255))
+            screen.blit(_s_dia, _s_dia.get_rect(center=R_DIA.center))
+        if l1 == "ÚLTIMO DÍA":      # v0.4.14.0: AVANZAR 1 HORA y CERRAR MERCADO
+            for _rb, _tb in ((R_HORA, "AVANZAR 1 HORA"),
+                             (R_CERRAR, "¿CERRAR? ENTER" if _cierre_pedido(estado) else "CERRAR MERCADO")):
+                pygame.draw.rect(screen, (30, 45, 75) if _rb.collidepoint(mouse_pos) else (15, 22, 40), _rb, border_radius=6)
+                pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), _rb, width=1, border_radius=6)
+                _sb = get_font('sm').render(_tb, True, (255, 255, 255))
+                screen.blit(_sb, _sb.get_rect(center=_rb.center))
     except Exception as e_jugar:
         logger.error(f"Error al dibujar JUGAR: {e_jugar}")
+    try:   # v0.4.14.1: los días de CONTINUAR pasando sobre el botón
+        _anim = avance_visible(estado)
+        if _anim:
+            _dibujar_avance(screen, _anim)
+    except Exception as e_anim:
+        logger.error(f"Error al dibujar el avance de los días: {e_anim}")
 
     # --- Línea de copa + alertas ---
     try:
@@ -980,10 +1282,26 @@ def _render_inicio(screen, estado, liga, mi_equipo, info, jugados, mouse_pos, cl
 
     # --- Clics ---
     if click_pos:
-        if rect_tab_tabla('liga').collidepoint(click_pos):
-            estado['hub_tabla_tab'] = 'liga'
+        if rect_tab_tabla('noticias').collidepoint(click_pos):         # v0.4.23.0
+            _fijar_tabla_tab(estado, 'noticias')
+        elif rect_tab_tabla('liga').collidepoint(click_pos):
+            _fijar_tabla_tab(estado, 'liga')
         elif rect_tab_tabla('copa').collidepoint(click_pos):
-            estado['hub_tabla_tab'] = 'copa'
+            _fijar_tabla_tab(estado, 'copa')
+        elif tabla_tab == 'noticias' and R_TARJETA_FEED.collidepoint(click_pos):
+            feed, i_feed = feed_actual(estado, pygame.time.get_ticks())
+            if feed:
+                from alpha_football.ui import noticias_screen as _NS
+                return _NS.abrir(estado, feed[i_feed]['id'])
+        elif l1 == "ÚLTIMO DÍA" and R_HORA.collidepoint(click_pos):      # v0.4.14.0
+            estado['hub_foco'] = 0
+            _avanzar_hora(estado)
+        elif l1 == "ÚLTIMO DÍA" and R_CERRAR.collidepoint(click_pos):
+            estado['hub_foco'] = 0
+            _pedir_cierre(estado)
+        elif l1 == "CONTINUAR" and R_DIA.collidepoint(click_pos):      # v0.4.12.0
+            estado['hub_foco'] = 0
+            _avanzar_un_dia(estado)
         elif R_JUGAR.collidepoint(click_pos):
             estado['hub_foco'] = 0
             if habilitado:
@@ -999,6 +1317,29 @@ def _render_inicio(screen, estado, liga, mi_equipo, info, jugados, mouse_pos, cl
             estado['hub_foco'] = 1
             _mover_jornada(estado, liga, 1)
     return None
+
+
+def _ajustar_texto(texto: str, fuente, ancho: int) -> str:
+    """v0.4.23.0: el texto recortado con "…" para que quepa en `ancho` px (las tarjetas de 3 columnas son más angostas)."""
+    texto = str(texto)
+    if fuente.size(texto)[0] <= ancho:
+        return texto
+    while texto and fuente.size(texto + "…")[0] > ancho:
+        texto = texto[:-1]
+    return texto.rstrip() + "…"
+
+
+def _no_leidas_noticias(estado) -> int:
+    """v0.4.23.0: contador de la tarjeta NOTICIAS. `noticias.no_leidas` recorre el calendario, así que solo se
+    recalcula cuando cambia la lista (alta, baja o una noticia leída); por cuadro solo se cuentan ≤ 50 dicts."""
+    from alpha_football import noticias as _N
+    lista = _N.lista(estado)
+    clave = (len(lista), lista[0]['id'] if lista else None, sum(1 for n in lista if n.get('leida')))
+    cache = estado.get('_hub_no_leidas_noticias')
+    if not cache or cache[0] != clave:
+        cache = (clave, _N.no_leidas(estado))
+        estado['_hub_no_leidas_noticias'] = cache
+    return cache[1]
 
 
 def _render_tarjetas(screen, estado, tab, mouse_pos, click_pos) -> Optional[str]:
@@ -1022,11 +1363,15 @@ def _render_tarjetas(screen, estado, tab, mouse_pos, click_pos) -> Optional[str]
             draw_styled_button(screen, rect, "", hover or i == foco, COLORS.get('azul', (0, 191, 255)))
             if i == foco and not hover:
                 pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), rect, width=3, border_radius=8)
-            draw_text(screen, titulo, (rect.x + 24, rect.y + 40), size='lg', color='blanco')
-            draw_text(screen, sub, (rect.x + 24, rect.y + 90), size='sm', color='azul')
+            tam_titulo = 'lg' if get_font('lg').size(titulo)[0] <= rect.width - 48 else 'md'    # v0.4.23.0: tarjetas de 392 px
+            draw_text(screen, titulo, (rect.x + 24, rect.y + (40 if tam_titulo == 'lg' else 44)), size=tam_titulo, color='blanco')
+            draw_text(screen, _ajustar_texto(sub, get_font('sm'), rect.width - 48), (rect.x + 24, rect.y + 90),
+                      size='sm', color='azul')
             n_badge = n_ofertas if destino == 'ofertas_screen' else (n_correo if destino == 'notificaciones_screen' else 0)
             if destino == 'ofertas_dt_screen':     # v3.4.0
                 n_badge = n_ofertas_dt
+            elif destino == 'noticias_screen':     # v0.4.23.0
+                n_badge = _no_leidas_noticias(estado)
             if n_badge > 0:
                 bx, by = rect.right - 30, rect.top + 30
                 pygame.draw.circle(screen, (255, 68, 68), (bx, by), 16)
@@ -1067,6 +1412,10 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 return "despido_screen"
         except Exception as e_desp:
             logger.error(f"Error al revisar el despido pendiente: {e_desp}")
+
+        # v0.4.17.0: gala del Balón de Oro / Sudamericano del Año (solo si alguien del podio es de tu club)
+        if (estado.get('datos_carrera') or {}).get('gala_premio_pendiente'):
+            return 'gala_balon_screen'
 
         # v3.8.0: las copas (motor de competiciones) avanzan sin abrir su pantalla. Solo se
         # sincroniza cuando cambia la temporada, la jornada o el club del user.
@@ -1127,8 +1476,31 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         foco = int(estado.get('hub_foco', 0))
         # v3.6.0: al volver de la copa / un partido, el foco queda en JUGAR (y nunca fuera de rango)
         anterior = estado.pop('pantalla_anterior', None)
+        if anterior is not None:       # v0.4.14.0: se vuelve de otra pantalla: la confirmación de cierre ya no vale
+            estado.pop('confirmar_cierre_mercado', None)
         if tab == 'inicio' and (anterior in VUELVEN_A_JUGAR or foco not in (0, 1)):
             foco, bar_foco = 0, 0
+
+        try:  # v0.4.11.0: la primera vez que se ve el calendario de la temporada, revisa los choques
+            from alpha_football import calendario as _cal
+            _c = _cal.asegurar(estado)
+            if not _c.get('revisado'):
+                _c['revisado'] = True
+                _cal.revisar_choques(estado)
+        except Exception as e_cal:
+            logger.error(f"Error preparando el calendario: {e_cal}")
+
+        try:  # v0.4.12.0: el reloj del juego (hoy) nace aquí, al abrir el hub de la temporada
+            from alpha_football import dias as _dias_r
+            _dias_r.hoy(estado)
+        except Exception as e_dia:
+            logger.error(f"Error creando el reloj del juego: {e_dia}")
+
+        try:  # v0.4.14.0: un save cargado un día de cierre con el mercado abierto arranca con 20 horas
+            from alpha_football import dia_final as _DF_r
+            _DF_r.abrir(estado)
+        except Exception as e_df:
+            logger.error(f"Error abriendo el último día: {e_df}")
 
         # --- Eventos ---
         mouse_pos = pygame.mouse.get_pos()
@@ -1167,9 +1539,18 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         else:
             dialogo_visible = False
 
+        # v0.4.14.1: CONTINUAR avanza a la vista, un día por cuadro; una tecla o un clic lo detiene ahí
+        animando = bool(estado.get('hub_avance'))
+        if animando and (key_events or click_pos or tab != 'inicio'):
+            _terminar_avance(estado)
+            animando, key_events, click_pos = False, [], None
+        elif animando:
+            animando = _paso_avance(estado)
+
         try:  # v4.4.0: cartel de apertura/cierre del mercado (consume teclas y clics mientras está abierto)
             from alpha_football.ui import aviso_mercado as _am
-            destino_am, key_events, click_pos = _am.manejar(estado, key_events, click_pos, dialogo_visible)
+            destino_am, key_events, click_pos = _am.manejar(estado, key_events, click_pos,
+                                                            dialogo_visible or animando)   # espera a la animación
             if destino_am:
                 _guardar_foco()
                 return _abrir(estado, destino_am)
@@ -1181,6 +1562,15 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             if ev.key == pygame.K_j:
                 _guardar_foco()
                 return _accion_jugar(estado, partido_usuario, esta_finalizada, fase_copa)
+            if ev.key == pygame.K_n and tab == 'inicio':     # v0.4.23.0: noticias ↔ tabla
+                alternar_noticias(estado)
+                continue
+            if ev.key == pygame.K_d and tab == 'inicio':     # v0.4.12.0: +1 DÍA
+                _avanzar_un_dia(estado)
+                continue
+            if ev.key == pygame.K_c and tab == 'inicio':     # v0.4.14.0: CERRAR MERCADO
+                _pedir_cierre(estado)
+                continue
             if ev.key == pygame.K_r:
                 tab, bar_foco, foco = 'inicio', 0, 1
             elif ev.key in (pygame.K_LEFT, pygame.K_RIGHT):
@@ -1240,6 +1630,8 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                         return _abrir(estado, DESTINO_DIRECTO[BARRA_MENU[i][0]])
                     break
         _guardar_foco()
+        if tab != 'inicio':            # v0.4.14.0: en otra pestaña la confirmación de cierre se cancela
+            estado.pop('confirmar_cierre_mercado', None)
 
         # --- Fondo ---
         try:
@@ -1282,9 +1674,10 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             pres_m = getattr(mi_equipo, 'balance', 0) / 1_000_000
             es_segunda = getattr(liga, 'division', 1) == 2
             from alpha_football.paises import nombre_liga as _nombre_liga   # v3.7.0: nombre del editor
+            from alpha_football.ui.aviso_mercado import fecha_corta     # v0.4.13.0: la fecha primero; la jornada, chica
             cabecera = (f"{_nombre_liga(liga.tipo, getattr(liga, 'division', 1) or 1).upper()[:32]}  ·  {mi_equipo.nombre[:22]}  ·  "
-                        f"{'2ª' if es_segunda else '1ª'} División  ·  T{estado.get('temporada', 1)}  ·  "
-                        f"Jornada {getattr(liga, 'jornada_actual', 1)}/{getattr(liga, 'num_jornadas', 14)}  ·  "
+                        f"{'2ª' if es_segunda else '1ª'} Div.  ·  T{estado.get('temporada', 1)}  ·  "
+                        f"{fecha_corta(estado)} · J{getattr(liga, 'jornada_actual', 1)}/{getattr(liga, 'num_jornadas', 14)}  ·  "
                         f"${pres_m:.1f}M")
             draw_text(screen, cabecera, (16, 82), size='sm', color='azul')
         except Exception as e_header:

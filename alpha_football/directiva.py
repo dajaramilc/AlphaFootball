@@ -101,7 +101,8 @@ def avisar_tope_salarial(estado: dict) -> None:
         masa, tope = masa_salarial(mi, estado), int(obj.get('tope_salarial', 0) or 0)
         if not tope or masa <= tope:
             return
-        mitad = 1 if int(getattr(liga, 'jornada_actual', 1) or 1) <= int(getattr(liga, 'num_jornadas', 22) or 22) // 2 else 2
+        from alpha_football import temporada as _T      # v0.4.13.0: la mitad es una fecha
+        mitad = 2 if _T.segunda_mitad(estado) else 1
         avisos = obj.setdefault('avisos_tope', [])
         if mitad in avisos:
             return
@@ -110,7 +111,9 @@ def avisar_tope_salarial(estado: dict) -> None:
         C.enviar(estado, 'directiva', "Te pasaste del tope salarial",
                  f"Le advertimos que la masa salarial asciende a ${masa / 1_000_000:.1f}M y supera el tope "
                  f"de ${tope / 1_000_000:.1f}M fijado para esta temporada. Si la temporada cierra en estas "
-                 "condiciones, el objetivo financiero se considerará incumplido.",
+                 "condiciones, el objetivo financiero se considerará incumplido y, además, la liga sancionará "
+                 "al club: una temporada sin fichar (ni agentes libres ni préstamos), y una multa si cierra con "
+                 "mala salud financiera.",      # v0.4.17.0
                  C.accion('objetivos_screen', "VER OBJETIVOS"))
     except Exception as e:
         logger.error(f"Error al revisar el tope salarial: {e}")
@@ -133,9 +136,9 @@ def _correo_objetivos(estado: dict, obj: dict) -> None:
                  f"{extra}\n"
                  f"Si supera el objetivo deportivo recibirá un premio de {m(ref * PREMIO['superado'])}; si lo "
                  f"cumple, {m(ref * PREMIO['cumplido'])}. Fallar cualquiera de los objetivos supone una "
-                 "advertencia, y reincidir, la rescisión de su contrato.\n\n"
-                 "El saldo no pasa de una temporada a otra: superar el objetivo sube el presupuesto de la "
-                 "próxima un 25%; cumplirlo, un 10%; fallarlo lo baja un 15%.",
+                 "advertencia, y reincidir, la rescisión de su contrato. Cerrar la temporada sobre el tope "
+                 "salarial trae además una sanción de la liga: una temporada sin fichar (ni agentes libres ni "
+                 "préstamos), y una multa si el club cierra con mala salud financiera.",      # v0.4.17.0
                  C.accion('objetivos_screen', "VER OBJETIVOS"))
     except Exception as e:
         logger.error(f"No se pudo enviar el correo de objetivos: {e}")
@@ -243,11 +246,18 @@ def evaluar_temporada(estado: dict, posicion: int) -> dict:
             logger.error(f"No se pudo registrar la deuda del espaldarazo: {e}")
     completar_financieros(estado, obj)
     fallos_fin = []
+    sancion = None
     if mi is not None:     # v4.6.0: objetivos financieros (tope salarial y saldo mínimo al cierre)
         from alpha_football.finanzas import masa_salarial
         masa, tope = masa_salarial(mi, estado), int(obj.get('tope_salarial', 0) or 0)
         if tope and masa > tope:
             fallos_fin.append(f"masa salarial ${masa / 1_000_000:.1f}M sobre el tope de ${tope / 1_000_000:.1f}M")
+            try:   # v0.4.17.0: además la liga sanciona al club (sin fichajes; multa si la salud es mala)
+                from alpha_football import sancion_liga as SL
+                sancion = SL.registrar(estado, masa, tope,
+                                       int(obj.get('temporada') or estado.get('temporada', 1) or 1))
+            except Exception as e_san:
+                logger.error(f"No se pudo registrar la sanción de la liga: {e_san}")
         minimo = int(obj.get('saldo_minimo', 0) or 0)
         if int(mi.balance) < minimo:
             fallos_fin.append(f"saldo ${mi.balance / 1_000_000:.1f}M bajo el mínimo de ${minimo / 1_000_000:.1f}M")
@@ -304,7 +314,9 @@ def evaluar_temporada(estado: dict, posicion: int) -> dict:
     info = {'temporada': obj.get('temporada'), 'texto': obj.get('texto', ''), 'posicion': posicion,
             'resultado': resultado, 'monto': monto, 'despido': despido, 'veredicto': veredicto,
             'copa': copa_ev, 'marca': marca_ev, 'juveniles': juveniles_ev, 'calif': calif_dt(estado), 'confianza': confianza(estado), 'indemnizacion': indem,
-            'fallos_financieros': fallos_fin, 'deuda': deuda}
+            'fallos_financieros': fallos_fin, 'deuda': deuda,
+            'sancion': dict(sancion) if sancion else None}     # v0.4.17.0
+    info['motivos'] = motivos_fallo(info)
     dc['directiva_ultimo'] = info
     # v3.2.0: correo de rendimiento + veredicto pendiente (pantalla veredicto_screen)
     msg = C.enviar(estado, 'directiva', f"Evaluación de la temporada {temporada_fin}", texto_evaluacion(info),
@@ -414,6 +426,8 @@ def cambiar_de_club(estado: dict, nuevo) -> None:
     viejo = estado.get('mi_equipo')
     if viejo is not None and viejo is not nuevo:
         viejo.alineacion_activa = None      # v2.9.1: la IA vuelve a su mejor 4-3-3
+    from alpha_football import temporadas as _temporadas     # v0.4.16.0: ¿cambias de continente?
+    _cont_antes, _hoy_antes = _temporadas.antes_de_cambiar_de_club(estado)
     estado['liga'] = liga_nueva
     estado['mi_equipo'] = nuevo
     estado['equipos'] = liga_nueva.equipos
@@ -426,6 +440,7 @@ def cambiar_de_club(estado: dict, nuevo) -> None:
             logger.error(f"cambiar_de_club: no se pudieron resolver las salidas del club viejo: {e_sal}")
     nuevo.alineacion_activa = alineacion_por_defecto(nuevo)
     estado['alineacion_activa'] = nuevo.alineacion_activa
+    _temporadas.al_cambiar_de_club(estado, _cont_antes, _hoy_antes)      # v0.4.16.0: sigues en la jornada de esa liga
     # v3.8.0: la copa sale del motor: si el club nuevo está en una copa de esta temporada, la
     # sigue jugando el user desde su próxima fecha (lo ya jugado lo simuló la IA).
     estado['copa_clasificado_motivo'] = "Nuevo club: sin copa esta temporada."
@@ -445,6 +460,7 @@ def cambiar_de_club(estado: dict, nuevo) -> None:
     dc['advertencia_dt'] = False
     dc.pop('pedido', None)
     dc.pop('racha', None)
+    dc.pop('racha_g', None)                # v0.4.18.0: la cuenta de victorias seguidas era del club viejo
     dc.pop('despido_pendiente', None)
     dc.pop('renovacion_dt', None)          # v3.2.0
     dc.pop('objetivo_copa', None)
@@ -496,8 +512,26 @@ def resolver_pedido(estado: dict, cumplido: bool) -> None:
              C.accion('objetivos_screen', "VER OBJETIVOS"))
 
 
+PUNTOS_PEDIDO_NIVEL = ((4, 12), (2, 10))    # v0.4.14.1: (fracción 1/k del ranking por media, puntos)
+
+
+def puntos_pedido(estado: dict) -> int:
+    """v0.4.14.1: puntos que pide la directiva en JORNADAS_PEDIDO jornadas según el nivel del club en su
+    liga (ranking por media, el mismo del objetivo): cuarto superior 12, resto de la mitad alta 10 y de la
+    mitad para abajo PUNTOS_PEDIDO (8)."""
+    try:
+        liga, mi = estado.get('liga'), estado.get('mi_equipo')
+        ranking = sorted(liga.equipos, key=lambda e: -getattr(e, 'ovr_promedio', 0))
+        r = next((i + 1 for i, e in enumerate(ranking) if e is mi or e.id == mi.id), len(ranking))
+        return next((pts for k, pts in PUNTOS_PEDIDO_NIVEL if r <= len(ranking) // k), PUNTOS_PEDIDO)
+    except Exception as e:
+        logger.error(f"No se pudo medir el nivel del club para el pedido: {e}")
+        return PUNTOS_PEDIDO
+
+
 def _crear_pedido(estado: dict, jugadas: int, azar: random.Random) -> None:
     liga, mi = estado['liga'], estado['mi_equipo']
+    puntos = puntos_pedido(estado)
     mitad = liga.num_jornadas // 2
     fin_mitad = mitad if jugadas < mitad else liga.num_jornadas
     opciones = []
@@ -506,7 +540,7 @@ def _crear_pedido(estado: dict, jugadas: int, azar: random.Random) -> None:
                                for p in liga.calendario):
         opciones.append(('clasico', f"Ganar el clásico contra {riv.nombre}", fin_mitad))
     if liga.num_jornadas - jugadas >= JORNADAS_PEDIDO:
-        opciones.append(('puntos', f"Sumar {PUNTOS_PEDIDO} puntos en las próximas {JORNADAS_PEDIDO} jornadas",
+        opciones.append(('puntos', f"Sumar {puntos} puntos en las próximas {JORNADAS_PEDIDO} jornadas",
                          jugadas + JORNADAS_PEDIDO))
         if any(int(j.edad) <= 21 for j in mi.jugadores):
             opciones.append(('sub21', f"Dar 3 partidos a un sub-21 en las próximas {JORNADAS_PEDIDO} jornadas",
@@ -518,6 +552,7 @@ def _crear_pedido(estado: dict, jugadas: int, azar: random.Random) -> None:
     _dc(estado)['pedido'] = {
         'temporada': temporada, 'tipo': tipo, 'texto': texto, 'hasta': hasta,
         'puntos_ini': int(mi.puntos), 'pj_ini': {str(j.id): int(j.partidos_jugados) for j in mi.jugadores},
+        'puntos': puntos,                       # v0.4.14.1: la meta del pedido 'puntos' (los viejos, sin ella, 8)
         'resuelto': False, 'cumplido': False, 'creado_en': [temporada, jugadas]}
     from alpha_football import correo as C
     C.enviar(estado, 'directiva', f"Pedido de la directiva: {texto}",
@@ -535,7 +570,8 @@ def revisar_pedido(estado: dict, rng: Optional[random.Random] = None) -> None:
         p = pedido_activo(estado)
         if p and jugadas >= int(p.get('hasta', 99)):
             if p['tipo'] == 'puntos':
-                resolver_pedido(estado, mi.puntos - int(p.get('puntos_ini', 0)) >= PUNTOS_PEDIDO)
+                resolver_pedido(estado, mi.puntos - int(p.get('puntos_ini', 0))
+                                >= int(p.get('puntos', PUNTOS_PEDIDO) or PUNTOS_PEDIDO))
             elif p['tipo'] == 'sub21':
                 ini = p.get('pj_ini') or {}
                 resolver_pedido(estado, any(
@@ -674,9 +710,14 @@ def definir_objetivo_marca(estado: dict, rng: Optional[random.Random] = None) ->
         return None
     from alpha_football.finanzas import valor_club
     oc = _base_secundario(estado, mi)
-    if (rng or random.Random()).random() < 0.5 and valor_club(mi) > 0:   # en rojo: la meta de valor no tiene sentido
+    from alpha_football import sancion_liga as SL       # v0.4.17.0: sancionado por la liga no puede fichar una estrella
+    sancionado = SL.activa(estado) is not None
+    azar = (rng or random.Random()).random()
+    if valor_club(mi) > 0 and (sancionado or azar < 0.5):   # en rojo: la meta de valor no tiene sentido
         meta = int(valor_club(mi) * 1.10)
         oc.update(tipo='valor', meta=meta, texto=f"Llegar a ${meta / 1_000_000:.1f}M de valor del club")
+    elif sancionado:
+        return None                                     # sin meta de marca esta temporada
     else:
         meta = round(float(getattr(mi, 'ovr_promedio', 0) or 0)) + 5
         oc.update(tipo='estrella', meta=meta, texto=f"Fichar un jugador de media {meta} o más")
@@ -878,7 +919,8 @@ def pedir_espaldarazo(estado: dict, nivel: int) -> tuple:
         return False, "No hay objetivo esta temporada."
     if obj.get('espaldarazo'):
         return False, "Ya pediste un espaldarazo esta temporada."
-    if int(getattr(liga, 'jornada_actual', 1) or 1) > int(getattr(liga, 'num_jornadas', 10) or 10) // 2:
+    from alpha_football import temporada as _T      # v0.4.13.0
+    if _T.segunda_mitad(estado):
         return False, "Solo se puede pedir hasta la mitad de la temporada."
     if calif_dt(estado) < CALIF_ESPALDARAZO:
         return False, f"La directiva se niega: tu calificación ({calif_dt(estado)}) es muy baja."
@@ -904,31 +946,82 @@ def pedir_espaldarazo(estado: dict, nivel: int) -> tuple:
     return True, f"Aprobado: +${op['monto'] / 1_000_000:.1f}M · nueva meta: puesto {obj['pos_max']} · al cierre se devuelve la mitad."
 
 
-def texto_evaluacion(info: dict) -> str:
-    """Cuerpo del correo de rendimiento."""
-    partes = [f"Le trasladamos la evaluación de la temporada.\n\nLiga: el equipo terminó {info['posicion']}º "
-              f"(objetivo: {info.get('texto', '')}) → {info['resultado'].upper()}."]
-    m = int(info.get('monto', 0) or 0)
-    partes.append(f"{'Premio' if m >= 0 else 'Multa'} de la directiva: ${abs(m) / 1_000_000:.1f}M.")
+def motivos_fallo(info: dict) -> list:
+    """v0.4.17.0: una frase por objetivo PRINCIPAL fallado (liga y finanzas), para el veredicto."""
+    out = []
+    if info.get('resultado') == 'fallado':
+        out.append(f"Terminaste {info.get('posicion', '?')}º; la meta era: {info.get('texto', '')}")
+    out += [str(f)[:1].upper() + str(f)[1:] for f in info.get('fallos_financieros') or []]
+    return out
+
+
+def _lista(xs: list) -> str:
+    """'a' / 'a y b' / 'a, b y c'."""
+    return xs[0] if len(xs) == 1 else ", ".join(xs[:-1]) + " y " + xs[-1] if xs else ""
+
+
+def _fallos_evaluacion(info: dict) -> tuple:
+    """(principales, secundarios) fallados, redactados para el correo. Principales: liga y finanzas."""
+    principales, secundarios = [], []
+    if info.get('resultado') == 'fallado':
+        principales.append(f"el objetivo de liga (terminó {info.get('posicion', '?')}º; la meta era: "
+                           f"{info.get('texto', '')})")
     ff = info.get('fallos_financieros') or []
-    partes.append("Finanzas: " + ("FALLADO (" + "; ".join(ff) + ")." if ff else "CUMPLIDO."))
-    if info.get('deuda'):
-        partes.append(f"Se descontó la deuda del espaldarazo: ${info['deuda'] / 1_000_000:.1f}M.")
-    if info.get('copa'):
-        cp = info['copa']
-        partes.append(f"Copa: {cp['alcanzada']} (meta: {cp['texto']}) → {cp['resultado'].upper()}.")
-    for clave, nombre in (('marca', 'Marca'), ('juveniles', 'Juveniles')):     # v4.7.0
+    if ff:
+        principales.append("las finanzas (" + "; ".join(str(f) for f in ff) + ")")
+    cp = info.get('copa')
+    if cp and cp.get('resultado') == 'fallado':
+        secundarios.append(f"la copa ({cp.get('alcanzada', '?')}; la meta era: {cp.get('texto', '')})")
+    for clave, nombre in (('marca', 'Marca'), ('juveniles', 'Juveniles')):
         ev = info.get(clave)
-        if ev:
-            partes.append(f"{nombre}: {ev['texto']} → {ev['resultado'].upper()}.")
-    partes.append(f"Calificación de DT: {info.get('calif')} · confianza: {info.get('confianza')}.")
+        if ev and ev.get('resultado') == 'fallado':
+            secundarios.append(f"el objetivo de {nombre} ({ev.get('texto', '')})")
+    return principales, secundarios
+
+
+def texto_evaluacion(info: dict) -> str:
+    """Cuerpo del correo de rendimiento. v0.4.17.0: un resumen que cambia según qué se cumplió."""
+    principales, secundarios = _fallos_evaluacion(info)
     v = info.get('veredicto')
-    partes.append({'felicitacion': "\nLe felicitamos: ha superado lo que esperábamos de esta temporada.",
-                   'neutro': "\nHa cumplido con lo esperado. Seguimos adelante con el proyecto.",
-                   'regano': "\nNo se han cumplido los objetivos. Le concedemos una segunda oportunidad: si "
-                             "vuelve a fallar, prescindiremos de sus servicios.",
-                   'despido': "\nLamentamos comunicarle que hemos decidido prescindir de sus servicios.",
-                   'fin_contrato': "\nSu contrato ha finalizado y no continuará en el club."}.get(v, ""))
+    if v == 'despido':
+        partes = ["Lamentamos comunicarle que prescindimos de sus servicios: no cumplió con "
+                  f"{_lista(principales) or 'los objetivos'}."]
+    elif not principales and not secundarios:
+        partes = ["Temporada sobresaliente: superó el objetivo de liga y cumplió con todo lo demás."
+                  if info.get('resultado') == 'superado' else "Cumplió con todo lo que le pedimos esta temporada."]
+    elif len(principales) == 1:
+        # "todo menos X" solo si no falló nada más: con secundarios pendientes se contradecía
+        inicio = "No cumplió" if secundarios else "Cumplió con todo menos"
+        partes = [f"{inicio} con {principales[0]}, y eso es muy importante para nosotros."]
+    elif principales:
+        partes = [f"No cumplió con lo más importante: {_lista(principales)}."]
+    else:
+        inicio = "Superó el objetivo de liga" if info.get('resultado') == 'superado' else "Cumplió con lo importante"
+        partes = [f"{inicio}. Nos quedó pendiente {_lista(secundarios)} (solo afecta su calificación)."]
+    if principales and secundarios:
+        partes.append(f"También quedó pendiente {_lista(secundarios)}.")
+    if v == 'fin_contrato':
+        partes.insert(0, "Su contrato ha finalizado y no continuará en el club.")
+    if v == 'regano':
+        partes.append("Es su advertencia: si la próxima temporada vuelve a fallar un objetivo principal, "
+                      "prescindiremos de sus servicios.")
+    if info.get('sancion'):
+        from alpha_football import sancion_liga as SL
+        partes.append(SL.texto(info['sancion']))
+    detalle = [f"Liga: {info.get('resultado', '?')}",
+               "Finanzas: " + ("fallado" if info.get('fallos_financieros') else "cumplido")]
+    if info.get('copa'):
+        detalle.append(f"Copa: {info['copa'].get('resultado', '?')}")
+    for clave, nombre in (('marca', 'Marca'), ('juveniles', 'Juveniles')):     # v4.7.0
+        if info.get(clave):
+            detalle.append(f"{nombre}: {info[clave].get('resultado', '?')}")
+    partes.append("\n\n" + " · ".join(detalle) + ".")
+    m = int(info.get('monto', 0) or 0)
+    cifras = [f"{'Premio' if m >= 0 else 'Multa'} de la directiva: ${abs(m) / 1_000_000:.1f}M"]
+    if info.get('deuda'):
+        cifras.append(f"deuda del espaldarazo descontada: ${info['deuda'] / 1_000_000:.1f}M")
+    cifras += [f"calificación de DT: {info.get('calif')}", f"confianza: {info.get('confianza')}"]
     if info.get('indemnizacion'):
-        partes.append(f"Indemnización: ${info['indemnizacion'] / 1_000_000:.2f}M a tu patrimonio.")
+        cifras.append(f"indemnización: ${info['indemnizacion'] / 1_000_000:.2f}M a tu patrimonio")
+    partes.append("\n" + " · ".join(cifras) + ".")
     return " ".join(partes)

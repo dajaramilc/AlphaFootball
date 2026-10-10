@@ -115,9 +115,14 @@ def _clave_tabla(e):
     return (getattr(e, 'puntos', 0), getattr(e, 'gf', 0) - getattr(e, 'gc', 0), getattr(e, 'gf', 0))
 
 
-def _ligas(estado: dict) -> list:
+def _ligas(estado: dict, paises=None) -> list:
+    """v0.4.16.0: con `paises`, solo las ligas de esos países (el cierre de un continente)."""
     from alpha_football.mercado_ia import ligas_de_la_partida
-    return ligas_de_la_partida(estado)
+    todas = ligas_de_la_partida(estado)
+    if paises is None:
+        return todas
+    filtro = set(paises)
+    return [x for x in todas if x[1] in filtro]
 
 
 def objetivo_fallado_user(estado: dict) -> bool:
@@ -149,7 +154,7 @@ def pos_max_ia(liga, tipo: str, division: int, eq, ranking: Optional[list] = Non
     return int(objetivo_por_ranking(r, n, int(division or 1), cupo, ventaja)[1])
 
 
-def preparar(estado: dict) -> None:
+def preparar(estado: dict, paises=None) -> None:
     """Antes del swap (tablas finales, stats aún sin resetear): plan por club."""
     dc = estado.setdefault('datos_carrera', {})
     mi = estado.get('mi_equipo')
@@ -158,7 +163,7 @@ def preparar(estado: dict) -> None:
     foto_pm = (foto.get('pos_max') or {}) if foto.get('temporada') == temporada_fin else {}
     fallo_user = objetivo_fallado_user(estado)
     plan = {}
-    for liga, tipo, division in _ligas(estado):
+    for liga, tipo, division in _ligas(estado, paises):
         medias = medias_por_puesto(liga)
         nj = _num_jornadas(liga)
         rk = sorted(liga.equipos, key=lambda e: -float(getattr(e, 'ovr_promedio', 0) or 0))
@@ -180,11 +185,11 @@ def preparar(estado: dict) -> None:
     estado.pop('_nivel_user', None)
 
 
-def aplicar_objetivos(estado: dict) -> None:
+def aplicar_objetivos(estado: dict, paises=None) -> None:
     """Bajón 0..−2 a los clubes que no cumplieron ningún objetivo y no subieron ni bajaron."""
     plan = estado.get('_nivel_plan') or {}
     movidos = set(estado.get('_nivel_movidos') or set())
-    for liga, _tipo, _div in _ligas(estado):
+    for liga, _tipo, _div in _ligas(estado, paises):
         for eq in list(liga.equipos):
             p = plan.get(id(eq))
             if p and p.get('objetivo_fallado') and id(eq) not in movidos:
@@ -215,12 +220,12 @@ def _correo_user(estado: dict, user: dict, devueltos: dict) -> None:
              f"{prom:+.1f} de media. {lista}.", C.accion('plantilla_screen', "VER PLANTILLA"))
 
 
-def aplicar_topes(estado: dict) -> dict:
+def aplicar_topes(estado: dict, paises=None) -> dict:
     """Tras la curva por edad: la pérdida (bajón + curva) no pasa del tope; correo al user."""
     from alpha_football.mercado_ia import _mover_media
     tmp = estado.pop('_nivel_tmp', None) or {}
     devueltos = {}
-    for liga, _tipo, _div in _ligas(estado):
+    for liga, _tipo, _div in _ligas(estado, paises):
         for eq in liga.equipos:
             for j in eq.jugadores:
                 t = tmp.get(id(j))
@@ -248,11 +253,13 @@ def aplicar_topes(estado: dict) -> dict:
     return devueltos
 
 
-def foto_objetivos_ia(estado: dict) -> None:
-    """Al empezar la temporada (tras el mercado de pretemporada): pos_max de cada club."""
+def foto_objetivos_ia(estado: dict, paises=None) -> None:
+    """Al empezar la temporada (tras el mercado de pretemporada): pos_max de cada club.
+    v0.4.16.0: con `paises` se funde con la foto guardada (los demás países conservan la suya)."""
     t = int(estado.get('temporada', 1) or 1)
-    pm = {}
-    for liga, tipo, division in _ligas(estado):
+    previa = (estado.get('datos_carrera') or {}).get('objetivos_ia') or {}
+    pm = dict(previa.get('pos_max') or {}) if paises is not None else {}
+    for liga, tipo, division in _ligas(estado, paises):
         rk = sorted(liga.equipos, key=lambda e: -float(getattr(e, 'ovr_promedio', 0) or 0))
         for eq in liga.equipos:
             try:

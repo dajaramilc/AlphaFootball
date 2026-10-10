@@ -19,8 +19,12 @@ def test_ventanas_con_invierno():
     assert M.ventanas_mercado(22) == [(1, 3, 'inicio'), (11, 13, 'invierno')]
     abiertas = [j for j in range(1, 23) if M.ventana_mercado_abierta(j, 22)]
     assert abiertas == [1, 2, 3, 11, 12, 13]
-    assert AM.eventos_ventana(22) == {1: 'abre', 4: 'cierra', 11: 'abre', 14: 'cierra'}
-    e = estado_carrera(); e['liga'].jornada_actual = 8
+    from datetime import date                                              # v0.4.13.0: los hitos del cartel son fechas (eventos_ventana ya no existe)
+    from alpha_football import temporada as T
+    e = estado_carrera()
+    assert [T.hito_del_dia(e, date(*d)) for d in ((2026, 7, 1), (2026, 8, 31), (2027, 1, 1), (2027, 1, 31), (2026, 7, 2))] == [
+        'abre', 'ultimo', 'abre', 'ultimo', None]                          # v0.4.14.0: el último día de fichajes reemplaza al 'cierra'
+    e['liga'].jornada_actual = 8
     assert TP.jornada_apertura(e) == 11                  # acordado en J8 → llega en el invierno
     e['liga'].jornada_actual = 15
     assert TP.jornada_apertura(e) == 1                   # v0.4.11.0: tras el invierno, la J1 siguiente
@@ -28,16 +32,21 @@ def test_ventanas_con_invierno():
 
 
 def test_cartel_de_invierno():
-    e = estado_carrera(); n = e['liga'].num_jornadas
-    e['liga'].jornada_actual = n // 2
+    from datetime import date                                              # v0.4.13.0: el cartel sale por fecha y solo con reloj
+    from alpha_football import dias as D, calendario as CAL
+    e = estado_carrera(); D.hoy(e); CAL.asegurar(e)['dia'] = '2027-01-01'
     AM.manejar(e, [], None)
     assert e['aviso_mercado_activo']['tipo'] == 'abre'
-    assert any(f"Hasta la jornada {n // 2 + 2}" in m['cuerpo'] for m in C.bandeja(e))
-    e['aviso_mercado_activo'] = None; e['liga'].jornada_actual = n // 2 + 3
+    assert any(f"Hasta el {CAL.texto_fecha(date(2027, 1, 31), False)}" in m['cuerpo'] for m in C.bandeja(e))
+    e['aviso_mercado_activo'] = None; CAL.asegurar(e)['dia'] = '2027-01-31'
     AM.manejar(e, [], None)
+    assert e['aviso_mercado_activo']['tipo'] == 'ultimo'                   # v0.4.14.0: el 31 sale el cartel del último día
+    e['aviso_mercado_activo'] = None
+    from alpha_football import dia_final as DF                             # y el cartel de cierre lo muestra dia_final.cerrar
+    DF.abrir(e); DF.cerrar(e)
     assert e['aviso_mercado_activo']['tipo'] == 'cierra'
-    # v0.4.11.0: sin ventana de cierre, tras el invierno reabre al empezar la próxima temporada
-    assert any("Reabre al empezar la próxima temporada" in m['cuerpo'] for m in C.bandeja(e))
+    # v0.4.11.0: sin ventana de cierre, tras el invierno reabre al empezar la próxima temporada (v0.4.13.0: con su fecha)
+    assert any(f"Reabre el {CAL.texto_fecha(date(2027, 7, 1))}" in m['cuerpo'] for m in C.bandeja(e))
     print("  test_cartel_de_invierno: OK")
 
 

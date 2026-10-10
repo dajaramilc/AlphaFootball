@@ -98,7 +98,9 @@ def _simular_instantaneo(estado: dict, local: any, visitante: any) -> None:
         if user_eq is not None:
             asegurar_ids_unicos(user_eq)
         minutos_user = {j.id: 90 for j in _once_titular(user_eq)} if user_eq is not None else {}
-        res = simular_partido(local, visitante, aplicar_fisico=False, **_ments(local, visitante, user_eq))
+        from alpha_football import prensa as _prensa    # v0.4.23.0: tono agresivo de la prensa (nunca lanza)
+        res = simular_partido(local, visitante, aplicar_fisico=False, factor_tarjetas=_prensa.factor_tarjetas(estado),
+                              **_ments(local, visitante, user_eq))
         gl, gv = res.goles_local, res.goles_visitante
         # v4.0.0: lo que pasó de verdad (goleadores, notas, minutos, lesiones y rojas del partido)
         from alpha_football.partido_ctx import stats_de_equipo, minutos_por_id, incidencias_de
@@ -189,7 +191,12 @@ def _simular_instantaneo(estado: dict, local: any, visitante: any) -> None:
                                   (rep_l if user_is_local else rep_v) or [], minutos_user, **cierre_fisico)
             except Exception as e_ves:
                 logger.error(f"Error de vestuario en sim instantánea de copa: {e_ves}")
-            
+            try:  # v0.4.11.0: resto del descanso hasta la jornada siguiente y choques del calendario
+                from alpha_football import calendario as _cal_copa
+                _cal_copa.tras_partido_copa_user(estado)
+            except Exception as e_cal:
+                logger.error(f"Error con el calendario tras la copa: {e_cal}")
+
             # v0.8.7: si hubo penales, agregamos la secuencia y los cobradores
             # para que la UI de resultado los muestre ronda a ronda.
             penales_payload = None
@@ -451,7 +458,15 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
     """Con un partido de copa en curso, las sanciones que cuentan son las de copa (sanciones.py)."""
     from alpha_football.sanciones import en_competicion
     with en_competicion('copa' if estado.get('match_mode') == 'copa' else 'liga'):
-        return _render(screen, estado)
+        destino = _render(screen, estado)
+    if destino is None and not estado.get('prepartido_resultado'):
+        try:   # v0.4.23.0: la conferencia de prensa previa se dibuja encima de todo
+            from alpha_football.ui import prensa_overlay as _po
+            if _po.activo(estado, 'pre'):
+                _po.dibujar(screen, estado, pygame.mouse.get_pos())
+        except Exception as e_po:
+            logger.error(f"Error al dibujar la conferencia previa: {e_po}")
+    return destino
 
 
 def _render(screen: pygame.Surface, estado: dict) -> Optional[str]:
@@ -491,6 +506,16 @@ def _render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             elif event.type == pygame.KEYDOWN:
                 key_events.append(event)
 
+        # v0.4.23.0: conferencia de prensa previa (overlay opcional, una vez por partido importante). Mientras
+        # está abierta es modal: consume las teclas y el clic y el prepartido no los ve.
+        if not estado.get('prepartido_resultado'):
+            from alpha_football import prensa as _prensa
+            from alpha_football.ui import prensa_overlay as _po
+            _prensa.evaluar_pre(estado, local, visitante, match_mode)
+            if _po.activo(estado, 'pre'):
+                _po.manejar(estado, [ev.key for ev in key_events], click_pos)
+                key_events, click_pos = [], None
+
         # Tras una simulación instantánea, mostrar el resultado y los goleadores.
         if estado.get('prepartido_resultado'):
             return _render_resultado(screen, estado, mouse_pos, click_pos, [e.key for e in key_events])
@@ -498,6 +523,15 @@ def _render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         draw_gradient_bg(screen)
         draw_text(screen, "PREPARAR PARTIDO", (SCREEN_W // 2 - get_font('xl').size("PREPARAR PARTIDO")[0] // 2, 70),
                   size='xl', color='dorado')        # v3.9.0: centrado (antes quedaba corrido a la derecha)
+        if match_mode != 'amistoso':      # v0.4.11.0: fecha real del partido que se va a jugar
+            try:
+                from alpha_football import calendario as _cal_p
+                _txt_fecha = _cal_p.texto_proximo(estado)
+                if _txt_fecha:
+                    draw_text(screen, _txt_fecha, (SCREEN_W // 2 - get_font('sm').size(_txt_fecha)[0] // 2, 50),
+                              size='sm', color='azul')
+            except Exception as e_fecha:
+                logger.error(f"Error al dibujar la fecha en el pre-partido: {e_fecha}")
 
         # Cartel del enfrentamiento
         panel = R_CARTEL

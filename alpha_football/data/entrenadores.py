@@ -135,8 +135,48 @@ DT_REALES: dict[str, tuple[str, str]] = {
     "Mushuc Ruina": ("Paúl Vélez-vélez", "artetismo"),
 }
 
+# v0.4.22.0: técnicos reales sin club (o al frente de una selección) al arrancar la 2025-26, parodiados.
+# (nombre parodia, estilo, calificación, nacionalidad, edad). Entran una vez al banco de desempleados de
+# cada carrera (entrenadores.asegurar_dts). Calificación en la misma escala que los DTs de club (40-69 al arrancar).
+DT_LIBRES_REALES: list[tuple[str, str, int, str, int]] = [
+    ("Zinedine Cidane", "anchelottismo", 74, "Francia", 53),
+    ("Jurgen Kloppo", "kloppismo", 74, "Alemania", 58),
+    ("Carlo Anchelotti", "anchelottismo", 74, "Italia", 66),
+    ("Lionel Escaloni", "anchelottismo", 72, "Argentina", 47),
+    ("Thomas Tuchelo", "flickismo", 70, "Alemania", 52),
+    ("Marcelo Bielza", "kloppismo", 68, "Argentina", 70),
+    ("Luciano Espaleti", "cruyffismo", 68, "Italia", 66),
+    ("Xavi Hernándes", "cruyffismo", 66, "España", 45),
+    ("Roberto Manchini", "anchelottismo", 66, "Italia", 60),
+    ("Mauricio Pochetino", "kloppismo", 66, "Argentina", 53),
+    ("Joaquín Low", "flickismo", 64, "Alemania", 65),
+    ("Gareth Sudgate", "haramball", 62, "Inglaterra", 55),
+    ("Titte", "anchelottismo", 62, "Brasil", 64),
+    ("Edin Terzico", "kloppismo", 62, "Alemania", 42),
+    ("Erik ten Jag", "cruyffismo", 60, "Países Bajos", 55),
+    ("Rafa Benítes", "choloismo", 60, "España", 65),
+    ("Ricardo Garreca", "anchelottismo", 60, "Argentina", 67),
+    ("Thiago Mota", "dezerbismo", 60, "Italia", 43),
+    ("Tata Martiño", "cruyffismo", 60, "Argentina", 62),
+    ("Jorge Sampaolo", "kloppismo", 60, "Argentina", 65),
+    ("Gustavo Alfajor", "choloismo", 60, "Argentina", 63),
+    ("Sebastián Becachece", "kloppismo", 58, "Argentina", 44),
+    ("Reinaldo Ruedas", "haramball", 55, "Colombia", 68),
+    ("Juan Carlos Osorno", "dezerbismo", 55, "Colombia", 64),
+]
+
+# v0.4.22.0: de 20 × 20 a 60 × 60, para que los técnicos generados casi no se repitan.
 NOMBRES = ["Carlos", "Jorge", "Luis", "Miguel", "Sergio", "Diego", "Pablo", "Andrés", "Marcelo", "Ricardo",
-           "Fernando", "Gustavo", "Hernán", "Julio", "Óscar", "Raúl", "Walter", "Nelson", "Iván", "Mauricio"]
+           "Fernando", "Gustavo", "Hernán", "Julio", "Óscar", "Raúl", "Walter", "Nelson", "Iván", "Mauricio",
+           "Alberto", "Ramón", "Héctor", "Rubén", "Daniel", "Eduardo", "Guillermo", "Ignacio", "Javier", "Leonardo",
+           "Martín", "Néstor", "Omar", "Patricio", "Rafael", "Santiago", "Tomás", "Víctor", "Wilson", "Ariel",
+           "Claudio", "Darío", "Emiliano", "Fabián", "Germán", "Hugo", "Ismael", "Joaquín", "Lorenzo", "Manuel",
+           "Nicolás", "Orlando", "Pedro", "Reinaldo", "Rodolfo", "Salvador", "Teodoro", "Ubaldo", "Vicente", "Zacarías"]
 APELLIDOS = ["Pizarrón", "Tiza", "Banquillo", "Silbato", "Cono", "Pechera", "Pizarra", "Táctico", "Rondo",
              "Libreta", "Cronómetro", "Vestuario", "Charla", "Esquema", "Doble Pivote", "Cal", "Césped",
-             "Botines", "Rotación", "Cabezazo"]
+             "Botines", "Rotación", "Cabezazo",
+             "Offside", "Córner", "Larguero", "Travesaño", "Palomita", "Rabona", "Gambeta", "Caño", "Tribuna",
+             "Camerino", "Pretemporada", "Contragolpe", "Achique", "Pressing", "Bloque Bajo", "Línea de Cinco",
+             "Enganche", "Carrilero", "Volante", "Líbero", "Catenaccio", "Tiki-Taka", "Pelotazo", "Centro Atrás",
+             "Segundo Palo", "Primer Toque", "Marcaje", "Relevo", "Cobertura", "Anticipo", "Tapada", "Atajada",
+             "Chilena", "Tijera", "Volea", "Pared", "Desmarque", "Diagonal", "Repliegue", "Basculación"]

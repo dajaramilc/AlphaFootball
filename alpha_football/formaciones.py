@@ -251,7 +251,7 @@ def mejor_once(jugadores: list, formacion: str, puntaje=None) -> list[int]:
     _p = puntaje or (lambda j: getattr(j, "overall", 60))   # v3.1.0: la IA ordena con cansancio
     por_pos: dict[str, list[tuple[int, int]]] = {"POR": [], "DEF": [], "MED": [], "DEL": []}
     for idx, j in enumerate(jugadores):
-        if getattr(j, "lesion_partidos", 0) == 0 and not _sancionado(j):
+        if getattr(j, "lesion_dias", 0) == 0 and not _sancionado(j):
             p = getattr(j, "posicion", "MED")
             if p not in por_pos:
                 p = "MED"
@@ -271,7 +271,7 @@ def mejor_once(jugadores: list, formacion: str, puntaje=None) -> list[int]:
     necesita_por = len([i for i in elegidos if getattr(jugadores[i], 'posicion', '') == 'POR']) == 0
     restantes = sorted(
         [(_p(j), idx) for idx, j in enumerate(jugadores)
-         if getattr(j, "lesion_partidos", 0) == 0 and not _sancionado(j)
+         if getattr(j, "lesion_dias", 0) == 0 and not _sancionado(j)
          and idx not in sel
          # Excluir porteros del relleno de campo (solo van al slot POR si falta portero)
          and (getattr(j, 'posicion', 'MED') != 'POR' or necesita_por)],
@@ -295,12 +295,12 @@ def normalizar_convocados(alin, jugadores: list, n: int = 10) -> list[int]:
     validos: list[int] = []
     for i in getattr(alin, 'convocados', []) or []:
         if (0 <= i < len(jugadores) and i not in titulares and i not in validos
-                and getattr(jugadores[i], 'lesion_partidos', 0) == 0):
+                and getattr(jugadores[i], 'lesion_dias', 0) == 0):
             validos.append(i)
     if len(validos) < n:
         resto = sorted(
             (i for i, j in enumerate(jugadores)
-             if i not in titulares and i not in validos and getattr(j, 'lesion_partidos', 0) == 0),
+             if i not in titulares and i not in validos and getattr(j, 'lesion_dias', 0) == 0),
             key=lambda i: -getattr(jugadores[i], 'overall', 60),
         )
         validos += resto[:n - len(validos)]
@@ -315,7 +315,7 @@ def retirar_no_disponibles(alin, jugadores: list, n: int = 10) -> list:
     el banco se completa con los mejores disponibles. Devuelve los jugadores retirados.
     """
     def disponible(i):
-        return (0 <= i < len(jugadores) and getattr(jugadores[i], 'lesion_partidos', 0) == 0
+        return (0 <= i < len(jugadores) and getattr(jugadores[i], 'lesion_dias', 0) == 0
                 and not _sancionado(jugadores[i]))
 
     titulares = list(getattr(alin, 'titulares', []) or [])

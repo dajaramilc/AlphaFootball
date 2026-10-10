@@ -9,6 +9,7 @@ import sys
 import os
 import json
 import logging
+import random
 import pygame
 
 try:
@@ -73,6 +74,15 @@ R_J_POTENCIAL = pygame.Rect(860, 360, 140, 36)
 R_ARCHIVO = pygame.Rect(530, 497, 400, 36)
 R_EXPORTAR = pygame.Rect(950, 497, 120, 36)
 R_IMPORTAR = pygame.Rect(1085, 497, 120, 36)
+# v0.4.22.0: página 2 del jugador, nacionalidad/edad del DT y quitar/asignar DT
+R_PAG = pygame.Rect(940, 112, 140, 32)
+R_DT_NAC = pygame.Rect(530, 394, 250, 34)
+R_DT_EDAD = pygame.Rect(800, 394, 100, 34)
+R_DT_QUITAR = pygame.Rect(530, 436, 150, 30)
+R_DT_PREV = pygame.Rect(700, 436, 30, 30)
+R_DT_LIBRE = pygame.Rect(734, 436, 260, 30)
+R_DT_NEXT = pygame.Rect(998, 436, 30, 30)
+R_DT_ASIGNAR = pygame.Rect(1040, 436, 170, 30)
 R_APLICAR = pygame.Rect(40, 615, 300, 50)
 R_VOLVER = pygame.Rect(360, 615, 240, 50)          # v3.9.0: 240 (en 200 no cabía "VOLVER AL MENÚ")
 
@@ -487,6 +497,228 @@ def nuevo_jugador_libre(db: dict) -> int:
     return len(lista) - 1
 
 
+# --- v0.4.22.0: editor ampliado (jugador completo, crear jugador de club, DT completo) -----------------
+ATRIBUTOS = ("ataque", "defensa", "fisico", "tecnica", "mental")
+PERSONALIDADES = ["normal", "lider", "profesional", "polemico", "mercenario"]
+# Campos de la 2ª página del jugador: (clave, etiqueta, tipo, a, b). 'int': a = mínimo, b = máximo;
+# 'sel': a = clave de la lista de opciones ('personalidad' | 'nacionalidad'), b = None.
+CAMPOS_JUGADOR_P2 = [
+    ('ataque', "Ataque", 'int', 1, 99), ('defensa', "Defensa", 'int', 1, 99),
+    ('fisico', "Físico", 'int', 1, 99), ('tecnica', "Técnica", 'int', 1, 99),
+    ('mental', "Mental", 'int', 1, 99), ('penales', "Penales", 'int', 0, 99),            # 0 = se deriva de técnica/mental
+    ('resistencia', "Resistencia", 'int', 0, 99), ('moral', "Moral", 'int', 0, 100),   # 0 = se deriva del físico y la edad
+    ('energia', "Energía", 'int', 0, 100), ('contrato_anios', "Años de contrato", 'int', 0, 6),
+    ('salario', "Salario ($/año)", 'int', 0, 500_000_000), ('clausula', "Cláusula ($)", 'int', 0, 2_000_000_000),
+    ('personalidad', "Personalidad", 'sel', 'personalidad', None),
+    ('nacionalidad', "Nacionalidad", 'sel', 'nacionalidad', None),
+]
+
+
+def overall_de(j: dict) -> int:
+    """Media de los 5 atributos (igual que Jugador.overall)."""
+    return sum(int(j.get(a, 0) or 0) for a in ATRIBUTOS) // 5
+
+
+def fijar_campo_int(j: dict, clave: str, valor, minimo: int, maximo: int) -> int:
+    """Escribe un campo numérico dentro de su rango; si es un atributo, `overall` y el techo siguen coherentes."""
+    v = max(minimo, min(maximo, int(valor)))
+    j[clave] = v
+    if clave in ATRIBUTOS:
+        j['overall'] = overall_de(j)
+        if int(j.get('potencial') or 0) < j['overall']:     # el techo nunca queda bajo la media
+            j['potencial'] = j['overall']
+    return v
+
+
+def fijar_ovr_todos(j: dict, ovr) -> None:
+    """Atajo del campo OVR: los 5 atributos quedan iguales."""
+    ovr = max(1, min(99, int(ovr)))
+    for a in ATRIBUTOS:
+        j[a] = ovr
+    j['overall'] = ovr
+    if int(j.get('potencial') or 0) < ovr:
+        j['potencial'] = ovr
+
+
+def teclear_entero(actual, char, minimo: int, maximo: int, max_digitos: int) -> int:
+    """Valor tras teclear un dígito: el 0 inicial se reemplaza, no pasa de `max_digitos` ni del techo."""
+    base = int(actual or 0)
+    if not str(char).isdigit():
+        return base
+    s = str(base)
+    nuevo = str(char) if s == '0' else s + str(char)
+    return base if len(nuevo) > max_digitos else min(maximo, int(nuevo))
+
+
+def borrar_digito(actual) -> int:
+    s = str(int(actual or 0))[:-1]
+    return int(s) if s else 0
+
+
+def ciclar_opcion(actual, opciones: list, paso: int = 1):
+    """Siguiente (o anterior) opción de la lista; un valor que no está arranca en la primera."""
+    if not opciones:
+        return actual
+    i = opciones.index(actual) if actual in opciones else -1
+    return opciones[(i + paso) % len(opciones)] if i >= 0 or paso > 0 else opciones[-1]
+
+
+def sanear_jugador(j: dict) -> None:
+    """Lleva a su rango los campos de la 2ª página que están fuera de él (un atributo borrado a 0 vuelve a 1).
+    No agrega claves que el jugador no tenga y no toca lo que ya está en rango (0 en penales, resistencia,
+    salario, cláusula y años = "automático")."""
+    for clave, _etq, tipo, a, b in CAMPOS_JUGADOR_P2:
+        if tipo != 'int' or clave not in j:
+            continue
+        try:
+            num = float(j[clave] or 0)
+        except (TypeError, ValueError):
+            num = a
+        if not (a <= num <= b):
+            fijar_campo_int(j, clave, num, a, b)
+
+
+def opciones_nacionalidad(db: dict) -> list:
+    """Los 8 países y cualquier otra nacionalidad que ya esté en la base."""
+    ops = [p['nombre'] for p in _paises.PAISES]
+    vistas = set(ops)
+    listas = [lst for k, lst in db.items() if isinstance(lst, list)]
+    for lst in listas:
+        for item in lst:
+            jugadores = item.get('jugadores') if isinstance(item, dict) and 'jugadores' in item else [item]
+            for j in jugadores or []:
+                nac = str(j.get('nacionalidad', '') or '') if isinstance(j, dict) else ''
+                if nac and nac not in vistas:
+                    vistas.add(nac)
+                    ops.append(nac)
+    return ops
+
+
+def siguiente_id(db: dict) -> int:
+    """Máximo id de clubes y libres + 1 (los ids de la base no se repiten)."""
+    ids = [0]
+    for lst in db.values():
+        if not isinstance(lst, list):
+            continue
+        for item in lst:
+            if not isinstance(item, dict):
+                continue
+            for j in (item.get('jugadores') if 'jugadores' in item else [item]) or []:
+                if isinstance(j, dict):
+                    ids.append(int(j.get('id', 0) or 0))
+    return max(ids) + 1
+
+
+def nuevo_jugador_club(db: dict, liga_clave: str, idx_equipo: int) -> int:
+    """Agrega un jugador (MED, 70, 27 años, nombre genérico del país) al club y devuelve su índice;
+    -1 si la plantilla ya tiene PLANTILLA_MAXIMA. No toca el registro global de nombres."""
+    from alpha_football import market
+    from alpha_football.models import Jugador
+    from alpha_football.nombres import nombre_unico
+    from alpha_football.retiros import PAIS_POR_LIGA
+    equipos = db.get(liga_clave) or []
+    if not (0 <= idx_equipo < len(equipos)):
+        return -1
+    plantilla = equipos[idx_equipo].setdefault('jugadores', [])
+    if len(plantilla) >= market.PLANTILLA_MAXIMA:
+        return -1
+    jid = siguiente_id(db)
+    tipo, _div = _tipo_div(liga_clave)
+    pais = PAIS_POR_LIGA.get(tipo, '')
+    nombre, apellido = nombre_unico(pais, random.Random(jid), reservar=False)
+    j = Jugador(nombre=nombre, apellido=apellido, posicion='MED', ataque=70, defensa=70, fisico=70,
+                tecnica=70, mental=70, moral=70, id=jid, edad=27, nacionalidad=pais).to_dict()
+    j['potencial'] = 70
+    plantilla.append(j)
+    return len(plantilla) - 1
+
+
+def prestigio_de(calif) -> str:
+    """Etiqueta del DT por calificación (mismo corte que entrenadores.prestigio)."""
+    c = int(calif or 0)
+    return "ALTO" if c >= 70 else "MEDIO" if c >= 50 else "BAJO"
+
+
+def _dt_libre_de(club: dict) -> dict:
+    """El DT que tiene hoy el club, con las claves de un DT libre."""
+    nombre, estilo, calif = dt_efectivo(club)
+    if not nombre:
+        from alpha_football.entrenadores import nombre_generado
+        nombre = nombre_generado(random.Random())
+    return {'nombre': nombre, 'estilo': estilo, 'calif': calif,
+            'nacionalidad': str(club.get('dt_nacionalidad', '') or ''), 'edad': int(club.get('dt_edad') or 0)}
+
+
+def quitar_dt(db: dict, club: dict) -> bool:
+    """El DT del club pasa a `_dts_libres` y el club queda sin DT (`dt_sin`); False si ya no tenía."""
+    if club.get('dt_sin'):
+        return False
+    db.setdefault('_dts_libres', []).append(_dt_libre_de(club))
+    for k in ('dt_nombre', 'dt_estilo', 'dt_calif', 'dt_nacionalidad', 'dt_edad'):
+        club.pop(k, None)
+    club['dt_sin'] = True
+    return True
+
+
+def asignar_dt(db: dict, club: dict, idx_libre: int) -> bool:
+    """Trae el DT libre `idx_libre` al club; el que tenía (si tenía) pasa a libres."""
+    libres = db.setdefault('_dts_libres', [])
+    if not (0 <= idx_libre < len(libres)):
+        return False
+    saliente = None if club.get('dt_sin') else _dt_libre_de(club)
+    nuevo = libres.pop(idx_libre)
+    club['dt_nombre'] = str(nuevo.get('nombre', '') or '')
+    club['dt_estilo'] = normalizar_estilo(nuevo.get('estilo'))
+    club['estilo_dt'] = club['dt_estilo']                  # el estilo del club es el de su DT (como el dropdown)
+    club['dt_calif'] = int(nuevo.get('calif') or 0)
+    club['dt_nacionalidad'] = str(nuevo.get('nacionalidad', '') or '')
+    club['dt_edad'] = int(nuevo.get('edad') or 0)
+    club.pop('dt_sin', None)
+    if saliente:
+        libres.append(saliente)
+    return True
+
+
+def rect_campo_p2(k: int) -> pygame.Rect:
+    """Caja del campo k de la 2ª página del jugador: 7 filas por columna (la columna 2 empieza en x=880)."""
+    col, fila = divmod(k, 7)
+    return pygame.Rect(530 + col * 350 + 150, 168 + fila * 40 - 6, 150, 30)
+
+
+def opciones_sel(clave: str, db: dict) -> list:
+    return PERSONALIDADES if clave == 'personalidad' else opciones_nacionalidad(db)
+
+
+def teclear_extra(campo, tecla: int, char: str, jugador, dt, k_edad: str = 'dt_edad') -> bool:
+    """Teclas de los campos nuevos: 'p2:<clave>' (2ª página del jugador) y 'dtx:edad' (edad del DT).
+    Devuelve True si la tecla se atendió; Enter se deja al manejador de siempre (cierra el campo)."""
+    campo = str(campo or '')
+    if tecla in (pygame.K_RETURN, pygame.K_KP_ENTER):
+        return False
+    if campo.startswith('p2:') and jugador is not None:
+        spec = next((c for c in CAMPOS_JUGADOR_P2 if c[0] == campo[3:] and c[2] == 'int'), None)
+        if spec is None:
+            return False
+        clave, maximo = spec[0], spec[4]
+        actual = jugador.get(clave, 0)
+        if tecla == pygame.K_BACKSPACE:
+            fijar_campo_int(jugador, clave, borrar_digito(actual), 0, maximo)
+        else:   # mientras se teclea se admite 0; sanear_jugador lleva al mínimo al salir del campo
+            fijar_campo_int(jugador, clave, teclear_entero(actual, char, 0, maximo, len(str(maximo))), 0, maximo)
+        return True
+    if campo == 'dtx:edad' and dt is not None:
+        actual = dt.get(k_edad, 0)
+        dt[k_edad] = borrar_digito(actual) if tecla == pygame.K_BACKSPACE else teclear_entero(actual, char, 0, 99, 2)
+        return True
+    return False
+
+
+def sanear_edad_dt(dt: dict, clave: str = 'dt_edad') -> None:
+    """Edad del DT: 0 = una al azar; si no, entre 30 y 80."""
+    e = int(dt.get(clave) or 0)
+    dt[clave] = 0 if e == 0 else max(30, min(80, e))
+
+
 def borrar_libre(db: dict, clave: str, idx: int) -> None:
     lista = db.get(clave) or []
     if 0 <= idx < len(lista):
@@ -581,6 +813,10 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
             elif event.type == pygame.KEYDOWN:
                 campo_activo = estado.get('edit_input_activo')
                 if not campo_activo:
+                    continue
+                # v0.4.22.0: campos nuevos (2ª página del jugador, edad del DT) con su propio manejador
+                if teclear_extra(campo_activo, event.key, event.unicode, jugador_sel, dt_sel,
+                                 'edad' if libres else 'dt_edad'):
                     continue
                 if event.key == pygame.K_RETURN or event.key == pygame.K_KP_ENTER:
                     estado['edit_input_activo'] = None
@@ -843,6 +1079,20 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                             estado['edit_jugador_idx'] = nuevo_jugador_libre(db)
                             _a_la_vista(estado, 'edit_squad_offset', estado['edit_jugador_idx'], 10, len(db['_libres']))
                         estado['edit_input_activo'] = None
+                elif seccion == 'jugadores' and equipo_sel:      # v0.4.22.0: crear un jugador en el club elegido
+                    _boton(screen, R_NUEVO, "+ NUEVO JUGADOR", R_NUEVO.collidepoint(mouse_pos), color='verde')
+                    if click_pos and R_NUEVO.collidepoint(click_pos):
+                        nuevo = nuevo_jugador_club(db, estado['edit_liga_sel'], estado['edit_equipo_idx'])
+                        if nuevo < 0:
+                            from alpha_football import market as _mk_ed
+                            _mensaje(estado, f"Plantilla llena ({_mk_ed.PLANTILLA_MAXIMA}).")
+                        else:
+                            estado['edit_jugador_idx'] = nuevo
+                            estado['edit_pag_jugador'] = 1
+                            _a_la_vista(estado, 'edit_squad_offset', nuevo, 5, len(equipo_sel.get('jugadores') or []))
+                            _mensaje(estado, "Jugador creado: edítalo a la derecha.")
+                        estado['edit_input_activo'] = None
+                        click_pos = None
         else:
             draw_text(screen, "Elige la liga que quieres renombrar", (55, 130), size='sm', color='azul')
 
@@ -938,6 +1188,43 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 estado['edit_input_activo'] = None
                 _mensaje(estado, "Borrado de los libres.")
 
+        def dibujar_pag2() -> None:
+            """v0.4.22.0: 2ª página del jugador: atributos sueltos, físico, moral, contrato, personalidad y nacionalidad."""
+            nonlocal click_pos
+            automaticos = ('penales', 'resistencia', 'salario')        # 0 = el juego lo deriva
+            for k, (clave, etiqueta, tipo, _a, _b) in enumerate(CAMPOS_JUGADOR_P2):
+                caja = rect_campo_p2(k)
+                draw_text(screen, etiqueta, (caja.x - 150, caja.y + 6), size='sm', color='blanco')
+                if tipo == 'int':
+                    try:
+                        valor = int(float(jugador_sel.get(clave, 0) or 0))
+                    except (TypeError, ValueError):
+                        valor = 0
+                    campo = f"p2:{clave}"
+                    texto = f"{valor:,}" if clave in ('salario', 'clausula') else str(valor)
+                    if valor == 0 and clave in automaticos and activo != campo:
+                        texto = "auto"
+                    _campo(screen, caja, texto + ("|" if activo == campo else ""), activo == campo, size='sm')
+                    activar(caja, campo)
+                else:
+                    actual = str(jugador_sel.get(clave, '') or '')
+                    _campo(screen, caja, _truncar(actual.capitalize(), 14) or "—", False, size='sm', color='dorado')
+                    if click_pos and caja.collidepoint(click_pos):
+                        jugador_sel[clave] = ciclar_opcion(actual, opciones_sel(clave, db))
+                        estado['edit_input_activo'] = None
+                        click_pos = None
+            draw_text(screen, "Personalidad y nacionalidad: clic para cambiar. En Penales, Resistencia y Salario, 0 = automático.",
+                      (530, 440), size='sm', color='azul')
+            draw_text(screen, "El valor de mercado lo calcula el juego (atributos, edad y potencial).",
+                      (530, 462), size='sm', color='azul')
+
+        # v0.4.22.0: al salir de un campo, lo que quedó fuera de rango (p. ej. un atributo borrado a 0) vuelve a él
+        if not estado.get('edit_input_activo'):
+            if jugador_sel is not None:
+                sanear_jugador(jugador_sel)
+            if dt_sel is not None and seccion == 'entrenadores':
+                sanear_edad_dt(dt_sel, 'edad' if libres else 'dt_edad')
+
         if seccion == 'entrenadores':
             if dt_sel is None:
                 draw_text(screen, "Elige un DT de la lista de la izquierda." if not libres else
@@ -959,7 +1246,8 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                     _campo(screen, R_DT_NOMBRE, propio + ("|" if activo == 'dt_nombre' else ''), activo == 'dt_nombre')
                 else:
                     _campo(screen, R_DT_NOMBRE, f"({nombre or 'uno al azar'})", False, color='azul')
-                activar(R_DT_NOMBRE, 'dt_nombre')
+                if activar(R_DT_NOMBRE, 'dt_nombre') and not libres:
+                    dt_sel.pop('dt_sin', None)            # v0.4.22.0: escribirle un nombre le devuelve el DT al club
                 draw_text(screen, "Estilo táctico:", (530, 265), size='sm', color='blanco')
                 _campo(screen, R_DT_ESTILO, NOMBRE_ESTILO.get(estilo, 'Ancelotismo').upper(),
                        estado.get('edit_dropdown_activo') == 'estilo_dt', size='sm', color='dorado')
@@ -981,6 +1269,52 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                               f"≤ {int(_EN.FRAC_SUELDO_DT * 100)}% de su saldo", (530, 345), size='sm', color='azul')
                 except Exception as e_s:
                     logger.debug(f"Sueldo del DT en el editor: {e_s}")
+                # v0.4.22.0: nacionalidad, edad, prestigio y, en los clubes, quitar / asignar DT
+                k_nac, k_edad = ('nacionalidad', 'edad') if libres else ('dt_nacionalidad', 'dt_edad')
+                nac_actual = str(dt_sel.get(k_nac, '') or '')
+                draw_text(screen, "Nacionalidad (clic cambia):", (530, 370), size='sm', color='blanco')
+                _campo(screen, R_DT_NAC, nac_actual or "(al azar)", False, size='sm',
+                       color='dorado' if nac_actual else 'azul')
+                if click_pos and R_DT_NAC.collidepoint(click_pos):
+                    dt_sel[k_nac] = ciclar_opcion(nac_actual, opciones_nacionalidad(db))
+                    estado['edit_input_activo'] = None
+                    click_pos = None
+                draw_text(screen, "Edad (0 = azar):", (800, 370), size='sm', color='blanco')
+                _campo(screen, R_DT_EDAD, str(int(dt_sel.get(k_edad) or 0)), activo == 'dtx:edad')
+                activar(R_DT_EDAD, 'dtx:edad')
+                draw_text(screen, f"Prestigio: {prestigio_de(dt_sel.get(k_cal) or calif)}", (920, 402), size='sm',
+                          color='dorado')
+                if not libres:
+                    libres_dt = db.get('_dts_libres') or []
+                    estado['edit_dt_libre_idx'] = max(0, min(int(estado.get('edit_dt_libre_idx', 0) or 0),
+                                                             max(0, len(libres_dt) - 1)))
+                    if dt_sel.get('dt_sin'):
+                        draw_text(screen, "Sin DT: la carrera le genera uno.", (700, 372), size='sm', color='rojo')
+                    else:
+                        _boton(screen, R_DT_QUITAR, "QUITAR DT", R_DT_QUITAR.collidepoint(mouse_pos), color='rojo')
+                    _boton(screen, R_DT_PREV, "<", R_DT_PREV.collidepoint(mouse_pos))
+                    _boton(screen, R_DT_NEXT, ">", R_DT_NEXT.collidepoint(mouse_pos))
+                    elegido_l = libres_dt[estado['edit_dt_libre_idx']] if libres_dt else None
+                    _campo(screen, R_DT_LIBRE, _truncar(f"{elegido_l.get('nombre', '')} ({int(elegido_l.get('calif', 0) or 0)})", 28)
+                           if elegido_l else "(sin DT libres)", False, size='sm', color='azul')
+                    _boton(screen, R_DT_ASIGNAR, "ASIGNAR", R_DT_ASIGNAR.collidepoint(mouse_pos), color='verde')
+                    if click_pos:
+                        if R_DT_QUITAR.collidepoint(click_pos) and not dt_sel.get('dt_sin'):
+                            quitar_dt(db, dt_sel)
+                            _mensaje(estado, "DT quitado: pasó a los libres.")
+                            click_pos = None
+                        elif R_DT_PREV.collidepoint(click_pos) and libres_dt:
+                            estado['edit_dt_libre_idx'] = (estado['edit_dt_libre_idx'] - 1) % len(libres_dt)
+                            click_pos = None
+                        elif R_DT_NEXT.collidepoint(click_pos) and libres_dt:
+                            estado['edit_dt_libre_idx'] = (estado['edit_dt_libre_idx'] + 1) % len(libres_dt)
+                            click_pos = None
+                        elif R_DT_ASIGNAR.collidepoint(click_pos):
+                            if asignar_dt(db, dt_sel, estado['edit_dt_libre_idx']):
+                                _mensaje(estado, "DT asignado al club.")
+                            else:
+                                _mensaje(estado, "No hay DT libres para asignar.")
+                            click_pos = None
         elif seccion == 'clubes':
             if not equipo_sel:
                 draw_text(screen, "Elige un club de la lista de la izquierda.", (530, 130), size='md', color='blanco')
@@ -1038,38 +1372,49 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                       (530, 120), size='md', color='dorado')
             if libres:
                 boton_borrar('_libres', estado['edit_jugador_idx'])
-            draw_text(screen, "Nombre:", (530, 170), size='sm', color='blanco')
-            _campo(screen, R_J_NOMBRE, jugador_sel.get('nombre', ''), activo == 'player_name')
-            activar(R_J_NOMBRE, 'player_name')
-            draw_text(screen, "Apellido:", (860, 170), size='sm', color='blanco')
-            _campo(screen, R_J_APELLIDO, jugador_sel.get('apellido', ''), activo == 'player_apellido')
-            activar(R_J_APELLIDO, 'player_apellido')
-            draw_text(screen, "OVR (máx. 99):", (530, 250), size='sm', color='blanco')   # v3.9.0
-            _campo(screen, R_J_OVR, str(jugador_sel.get('overall', 70)), activo == 'player_ovr')
-            activar(R_J_OVR, 'player_ovr')
-            draw_text(screen, "Edad:", (700, 250), size='sm', color='blanco')
-            _campo(screen, R_J_EDAD, str(jugador_sel.get('edad', 25)), activo == 'player_age')
-            activar(R_J_EDAD, 'player_age')
-            draw_text(screen, "Posición:", (860, 250), size='sm', color='blanco')
-            _campo(screen, R_J_POSICION, jugador_sel.get('posicion', 'DEF').upper(),
-                   estado.get('edit_dropdown_activo') == 'posicion', size='sm', color='dorado')
-            draw_text(screen, "▼", (1130, 285), size='sm', color='blanco')
-            if click_pos and R_J_POSICION.collidepoint(click_pos):
-                estado['edit_dropdown_activo'] = None if estado.get('edit_dropdown_activo') == 'posicion' else 'posicion'
+            pag2 = estado.get('edit_pag_jugador', 1) == 2     # v0.4.22.0: 2 páginas del formulario
+            _boton(screen, R_PAG, "◂ PÁG. 1" if pag2 else "PÁG. 2 ▸", R_PAG.collidepoint(mouse_pos))
+            if click_pos and R_PAG.collidepoint(click_pos):
+                pag2 = not pag2
+                estado['edit_pag_jugador'] = 2 if pag2 else 1
                 estado['edit_input_activo'] = None
-            draw_text(screen, "Rasgo Especial:", (530, 335), size='sm', color='blanco')
-            rg = jugador_sel.get('rasgo')
-            _campo(screen, R_J_RASGO, "NINGUNO" if (not rg or rg == "ninguno") else str(rg).upper(),
-                   estado.get('edit_dropdown_activo') == 'rasgo', size='sm', color='dorado')
-            draw_text(screen, "▼", (800, 368), size='sm', color='blanco')
-            if click_pos and R_J_RASGO.collidepoint(click_pos):
-                estado['edit_dropdown_activo'] = None if estado.get('edit_dropdown_activo') == 'rasgo' else 'rasgo'
-                estado['edit_input_activo'] = None
-            # v0.8.x: Potencial (techo de OVR); sin la clave (0) se muestra el OVR.
-            draw_text(screen, "Potencial (máx. 99):", (860, 335), size='sm', color='blanco')
-            _campo(screen, R_J_POTENCIAL, str(jugador_sel.get('potencial') or jugador_sel.get('overall', 70) or 70),
-                   activo == 'player_potencial')
-            activar(R_J_POTENCIAL, 'player_potencial')
+                estado['edit_dropdown_activo'] = None
+                click_pos = None
+            if pag2:
+                dibujar_pag2()
+            else:
+                draw_text(screen, "Nombre:", (530, 170), size='sm', color='blanco')
+                _campo(screen, R_J_NOMBRE, jugador_sel.get('nombre', ''), activo == 'player_name')
+                activar(R_J_NOMBRE, 'player_name')
+                draw_text(screen, "Apellido:", (860, 170), size='sm', color='blanco')
+                _campo(screen, R_J_APELLIDO, jugador_sel.get('apellido', ''), activo == 'player_apellido')
+                activar(R_J_APELLIDO, 'player_apellido')
+                draw_text(screen, "OVR (máx. 99):", (530, 250), size='sm', color='blanco')   # v3.9.0
+                _campo(screen, R_J_OVR, str(jugador_sel.get('overall', 70)), activo == 'player_ovr')
+                activar(R_J_OVR, 'player_ovr')
+                draw_text(screen, "Edad:", (700, 250), size='sm', color='blanco')
+                _campo(screen, R_J_EDAD, str(jugador_sel.get('edad', 25)), activo == 'player_age')
+                activar(R_J_EDAD, 'player_age')
+                draw_text(screen, "Posición:", (860, 250), size='sm', color='blanco')
+                _campo(screen, R_J_POSICION, jugador_sel.get('posicion', 'DEF').upper(),
+                       estado.get('edit_dropdown_activo') == 'posicion', size='sm', color='dorado')
+                draw_text(screen, "▼", (1130, 285), size='sm', color='blanco')
+                if click_pos and R_J_POSICION.collidepoint(click_pos):
+                    estado['edit_dropdown_activo'] = None if estado.get('edit_dropdown_activo') == 'posicion' else 'posicion'
+                    estado['edit_input_activo'] = None
+                draw_text(screen, "Rasgo Especial:", (530, 335), size='sm', color='blanco')
+                rg = jugador_sel.get('rasgo')
+                _campo(screen, R_J_RASGO, "NINGUNO" if (not rg or rg == "ninguno") else str(rg).upper(),
+                       estado.get('edit_dropdown_activo') == 'rasgo', size='sm', color='dorado')
+                draw_text(screen, "▼", (800, 368), size='sm', color='blanco')
+                if click_pos and R_J_RASGO.collidepoint(click_pos):
+                    estado['edit_dropdown_activo'] = None if estado.get('edit_dropdown_activo') == 'rasgo' else 'rasgo'
+                    estado['edit_input_activo'] = None
+                # v0.8.x: Potencial (techo de OVR); sin la clave (0) se muestra el OVR.
+                draw_text(screen, "Potencial (máx. 99):", (860, 335), size='sm', color='blanco')
+                _campo(screen, R_J_POTENCIAL, str(jugador_sel.get('potencial') or jugador_sel.get('overall', 70) or 70),
+                       activo == 'player_potencial')
+                activar(R_J_POTENCIAL, 'player_potencial')
 
         # --- ACCIONES: EXPORTAR, IMPORTAR, RESTAURAR ---
         actions_y = R_ARCHIVO.y - 25
@@ -1088,7 +1433,8 @@ def render(screen: pygame.Surface, estado: dict) -> str | None:
                 estado['edit_mensaje'] = ''
             else:
                 draw_text(screen, msg, (750, actions_y + 83), size='sm',
-                          color='verde' if "éxito" in msg or "cargado" in msg else 'rojo')
+                          color='verde' if ("éxito" in msg or "cargado" in msg or "creado" in msg      # v0.4.22.0
+                                            or "asignado" in msg or "quitado" in msg) else 'rojo')
 
         if click_pos:
             if R_EXPORTAR.collidepoint(click_pos):

@@ -155,6 +155,13 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         if deuda:
             draw_text(screen, f"Deuda con la directiva: {_m(deuda)} (se descuenta al cierre)",
                       (lx + 420, ly + 110), size='sm', color='rojo')
+        try:   # v0.4.17.0: la sanción de la liga a la vista toda la temporada sancionada
+            from alpha_football import sancion_liga as _SL
+            sancion = _SL.activa(estado)
+            if sancion:
+                draw_text(screen, _SL.texto_corto(sancion), (lx, ly + 210), size='sm', color='rojo')
+        except Exception as e_san:
+            logger.error(f"No se pudo mostrar la sanción de la liga: {e_san}")
         if mi.balance < 0:
             rojo = int(dc.get('jornadas_en_rojo', 0) or 0)
             draw_text(screen, f"¡EN ROJO! {rojo}/{F.JORNADAS_ROJO_VENTA} jornadas: al llegar a {F.JORNADAS_ROJO_VENTA} "

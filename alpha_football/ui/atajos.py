@@ -25,9 +25,9 @@ POR_DEFECTO = "H Ayuda · ESC Volver"
 
 # v3.6.0: atajos reales de cada pantalla (leídos de sus KEYDOWN). Formato "Tecla Acción · ... · H Ayuda".
 ATAJOS = {
-    'league_screen': "J Jugar · ← → Pestañas · ↑ ↓ Opción · Enter Abrir · R Resultados · M Correo · O Opciones · H Ayuda · ESC Salir",
+    'league_screen': "J Jugar · D +1 Día · C Cerrar · N Noticias · ← → Pestañas · ↑ ↓ Opción · Enter Abrir · R Resultados · M Correo · O Opciones · H Ayuda · ESC Salir",
     'copa_screen': "1-4 Pestañas · ← → Fecha/Pestaña · C Copa · R Simular resto · H Ayuda · ESC Volver",   # v3.8.0
-    'career_screen': "↑ ↓ Desplazar · H Ayuda · ESC Volver",
+    'career_screen': "↑ ↓ Desplazar · L Logros · H Ayuda · ESC Volver",
     'team_screen': "Flechas Jugador · Espacio Cambiar · Enter OK · A Auto · R Reservas · [ ] Formación · - = Estilo · , . Ment. · H Ayuda · ESC Cancelar",
     'options_screen': "↑ ↓ Opción · ← → Volumen · Enter Activar (GUARDAR en carrera) · H Ayuda · ESC Volver",
     'prepartido_screen': "1-4 Opción · ↑ ↓ Mover · Enter Elegir · H Ayuda · ESC Volver",
@@ -40,6 +40,7 @@ ATAJOS = {
     'otras_ligas_screen': "↑ ↓ País · ← → División · C Copas · H Ayuda · ESC Volver",   # v3.8.0
     'plantilla_screen': "↑ ↓ Jugador · Clic columna Ordenar · S Orden · T Transferible · R Renovar · P Préstamo · H Ayuda · ESC Volver",
     'cantera_screen': "↑ ↓ Canterano · S Subir · L Liberar · Enter Confirmar · H Ayuda · ESC Volver",
+    'calendario_screen': "← → Mes · Clic en un día Simular hasta ahí · O Opciones · H Ayuda · ESC Volver",   # v0.4.14.1
     'buscador_screen': "↑ ↓ Jugador · Tab Campo · Enter Buscar · Filtros · Solo libres · H Ayuda · ESC Volver",
     'favoritos_screen': "↑ ↓ Jugador · Enter Negociar · Supr Quitar · Clic en la caja Buscar · H Ayuda · ESC Volver",
     'historial_pases_screen': "← → Pestaña · ↑ ↓ RePág AvPág Desplazar · H Ayuda · ESC Volver",
@@ -47,12 +48,14 @@ ATAJOS = {
     'objetivos_screen': "I Reglas · H Ayuda · ESC Volver",
     'correo_screen': "↑ ↓ Mensaje · Enter Ir · O Opciones · H Ayuda · ESC Volver",
     'notificaciones_screen': "← → Panel · ↑ ↓ Elegir · Enter Abrir · O Opciones · H Ayuda · ESC Volver",   # v0.4.10.0
+    'noticias_screen': "↑ ↓ Noticia · RePág AvPág Saltar · Enter Ir al botón · O Opciones · H Ayuda · ESC Volver",   # v0.4.23.0
     'despido_screen': "← → Club · Enter Aceptar · H Ayuda",
     'finanzas_screen': "1 2 3 Espaldarazo · H Ayuda · ESC Volver",
     'patrocinios_screen': "← → Espacio · ↑ ↓ Oferta · F Firmar · P Prima · 1 2 Negociar · R Rechazar · X Rescindir · H Ayuda · ESC Volver",
     'negociacion_screen': "← → Tab Botón · Enter Pulsar · 0-9 Monto · H Ayuda · ESC Cancelar",
     'contrato_dt_screen': "← → Oferta · Enter Aceptar · R Rechazar renovación · H Ayuda · ESC Volver",
     'veredicto_screen': "Enter Continuar · H Ayuda",
+    'gala_balon_screen': "Enter Continuar · H Ayuda",   # v0.4.17.0
     'ofertas_dt_screen': "← → ↑ ↓ Botón · Enter Pulsar · H Ayuda · ESC Volver",
 }
 

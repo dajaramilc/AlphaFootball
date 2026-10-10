@@ -28,6 +28,7 @@ from alpha_football.vestuario import PERSONALIDAD_TXT   # v3.1.0
 
 logger = logging.getLogger(__name__)
 from alpha_football.sanciones import sancionado_en_algo  # noqa: E402
+from alpha_football.energia import texto_lesion  # noqa: E402  v0.4.19.0
 
 # v3.6.0: claves de orden por columna ('ovr' queda como alias viejo de 'media' descendente)
 ORDENES = ['pos', 'media', 'edad', 'valor', 'contrato']
@@ -39,13 +40,15 @@ MORAL_AL_TRANSFERIR = 5
 
 R_LISTA = pygame.Rect(16, 80, 820, 616)      # v3.6.0: terminan en y=696 (barra de atajos)
 R_FICHA = pygame.Rect(848, 80, 416, 616)
-FILA_Y0, FILA_H = 120, 26
-FILAS_VISIBLES = (R_LISTA.bottom - 30 - FILA_Y0) // FILA_H   # deja lugar a la ayuda
+FILA_Y0 = 120
+FILAS_VISIBLES = 8                                   # v0.4.18.0: 8 por página (antes 21 filas de una línea)
+FILA_H = (R_LISTA.bottom - 30 - FILA_Y0) // FILAS_VISIBLES   # deja lugar a la ayuda
 # v3.6.0: (clave de orden | None, título, x). Las columnas con clave se ordenan con clic en el encabezado.
-# v3.9.0: JUGADOR 84 / EDAD 236 / MED 310 / POT 362 / VALOR 412: la flecha de orden de EDAD quedaba pegada a "MED".
-COLUMNAS = [('pos', "POS", 32), ('nombre', "JUGADOR", 84), ('edad', "EDAD", 236), ('media', "MED", 310),
-            ('pot', "POT", 362), ('valor', "VALOR", 412), ('contrato', "CONT.", 486), ('moral', "MOR", 560),
-            ('energia', "ENE", 618), (None, "PJ", 672), (None, "G/A", 702), (None, "NOTA", 756), (None, "", 800)]
+# v0.4.18.0: cada jugador ocupa dos líneas: nombre y debajo PJ, goles/asistencias y nota (ya no son columnas).
+COLUMNAS = [('pos', "POS", 32), ('nombre', "JUGADOR", 92), ('edad', "EDAD", 316), ('media', "MED", 378),
+            ('pot', "POT", 436), ('valor', "VALOR", 496), ('contrato', "CONT.", 612), ('moral', "MOR", 684),
+            ('energia', "ENE", 744), (None, "", 796)]
+_COLOR_POS = {'POR': (150, 110, 20), 'DEF': (30, 100, 170), 'MED': (30, 130, 80), 'DEL': (170, 50, 50)}   # v0.4.18.0
 
 
 def _rects() -> dict:
@@ -79,7 +82,7 @@ def _filas_prestamos(estado: dict) -> list:
     """[(jugador o acuerdo pendiente, texto)]: los que tienes a préstamo, los tuyos cedidos y los
     acordados que esperan la ventana (estos con CANCELAR)."""
     from alpha_football import prestamos as PR
-    from alpha_football.traspasos_pendientes import jornada_apertura
+    from alpha_football.traspasos_pendientes import jornada_apertura, texto_apertura
     filas = []
     mi = getattr(estado.get('mi_equipo'), 'nombre', None)
     # con regreso acordado, la fila del jugador pasa a ser la del acuerdo (una sola fila, con CANCELAR)
@@ -88,7 +91,7 @@ def _filas_prestamos(estado: dict) -> list:
         p = j.prestamo
         if j.nombre_completo in fin:
             filas.append((fin[j.nombre_completo], f"REGRESO ACORDADO · {j.nombre_completo[:22]} · a {p['dueno'][:20]}"
-                                                  f" · en J{jornada_apertura(estado)}"))
+                                                  f" · en {texto_apertura(estado, True)}"))
             continue
         filas.append((j, f"A PRÉSTAMO · {j.nombre_completo[:22]} · de {p['dueno'][:20]} · pagas {100 - p['pct_dueno']}%"
                          f" · vuelve J{p['vuelve'][1]} T{p['vuelve'][0]}"))
@@ -96,7 +99,7 @@ def _filas_prestamos(estado: dict) -> list:
         p = j.prestamo
         if j.nombre_completo in fin:
             filas.append((fin[j.nombre_completo], f"REGRESO ACORDADO · {j.nombre_completo[:22]} · desde {eq.nombre[:20]}"
-                                                  f" · en J{jornada_apertura(estado)}"))
+                                                  f" · en {texto_apertura(estado, True)}"))
             continue
         filas.append((j, f"CEDIDO · {j.nombre_completo[:22]} · en {eq.nombre[:20]} · pagas {p['pct_dueno']}%"
                          f" · vuelve J{p['vuelve'][1]} T{p['vuelve'][0]}"))
@@ -105,7 +108,7 @@ def _filas_prestamos(estado: dict) -> list:
             continue
         if mi in (p.get('dueno'), p.get('club')):
             sentido = f"llega de {p['dueno'][:20]}" if p.get('club') == mi else f"se va a {p['club'][:20]}"
-            filas.append((p, f"ACORDADO · {str(p.get('jugador'))[:22]} · {sentido} en J{jornada_apertura(estado)}"))
+            filas.append((p, f"ACORDADO · {str(p.get('jugador'))[:22]} · {sentido} en {texto_apertura(estado, True)}"))
     return filas
 
 
@@ -236,7 +239,7 @@ def _dibujar_ficha(screen, j, titular: bool, mouse_pos, estado: Optional[dict] =
     from alpha_football import sanciones as S
     sanc = "SAN " + " · ".join(f"{c} {S.partidos_sancion(j, c)}" for c in ('liga', 'copa') if S.sancionado(j, c))
     sanc = sanc if S.sancionado_en_algo(j) else ""
-    estado_txt = ("Lesionado " + str(j.lesion_partidos) + " p." if j.lesion_partidos > 0
+    estado_txt = ("Lesionado " + texto_lesion(j.lesion_dias, corto=True) if j.lesion_dias > 0
                   else sanc if sanc
                   else "Titular" if titular else "Suplente")
     amar = f"Amarillas: {S.texto_amarillas(j)}"         # línea propia dentro de la ficha (no entra en la de estado)
@@ -248,7 +251,12 @@ def _dibujar_ficha(screen, j, titular: bool, mouse_pos, estado: Optional[dict] =
         from alpha_football.traspasos_pendientes import pendiente_de
         p = pendiente_de(estado or {}, j)
         if p is not None and p.get('tipo') == 'venta':
-            estado_txt += f" · VENDIDO (se va J{p['jornada']})"
+            if p.get('fecha'):      # v0.4.13.0: la fecha manda; los acuerdos viejos conservan la jornada
+                from datetime import date as _date
+                from alpha_football import calendario as _cal_v
+                estado_txt += f" · VENDIDO (se va {_cal_v.texto_fecha(_date.fromisoformat(p['fecha']), False)})"
+            else:
+                estado_txt += f" · VENDIDO (se va J{p['jornada']})"
     except Exception as e_tp:
         logger.error(f"No se pudo leer el traspaso pendiente: {e_tp}")
     p_pr = getattr(j, 'prestamo', None)
@@ -297,6 +305,11 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             sel = orden[0]
         pos_sel = orden.index(sel)
         scroll = int(estado.get('plantilla_scroll', 0) or 0)
+        if estado.pop('plantilla_centrar', None):      # v0.4.14.1: abierta desde un mensaje: su jugador queda a la vista
+            if pos_sel < scroll:
+                scroll = pos_sel
+            elif pos_sel >= scroll + FILAS_VISIBLES:
+                scroll = pos_sel - FILAS_VISIBLES + 1
         rects = _rects()
 
         mouse_pos = pygame.mouse.get_pos()
@@ -439,19 +452,29 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 pygame.draw.rect(screen, (24, 32, 54), fila, border_radius=4)
             nota = float(getattr(j, 'promedio_nota', 0.0) or 0.0)
             marca, c_marca = ("T", 'dorado') if getattr(j, 'transferible', False) else ("", 'blanco')
-            if j.lesion_partidos > 0:
+            if j.lesion_dias > 0:
                 marca, c_marca = "LES", 'rojo'
             elif sancionado_en_algo(j):                 # liga o copa
                 marca, c_marca = "SAN", 'rojo'
-            valores = [j.posicion, f"{j.nombre[:1]}. {j.apellido}"[:18], str(j.edad), str(j.overall),
-                       str(getattr(j, 'potencial', 0) or '?'), _dinero(_valor(j)),
+            # v0.4.18.0: dos líneas por jugador. Arriba: posición, nombre y los números; abajo: sus partidos.
+            x_pos, x_nombre = COLUMNAS[0][2], COLUMNAS[1][2]
+            ins = pygame.Rect(x_pos, fila.y + (fila.height - 28) // 2, 46, 28)
+            pygame.draw.rect(screen, _COLOR_POS.get(j.posicion, (60, 70, 90)), ins, border_radius=6)
+            draw_text(screen, j.posicion, (ins.x + (ins.width - get_font('sm').size(j.posicion)[0]) // 2, ins.y + 4),
+                      size='sm', color='blanco', shadow=False)
+            draw_text(screen, f"{j.nombre[:1]}. {j.apellido}"[:18], (x_nombre, fila.y + 8), size='md',
+                      color='verde' if idx in titulares else 'blanco', shadow=False)
+            partidos = (f"{j.partidos_jugados} PJ · {_goles(j)}G {getattr(j, 'asistencias', 0)}A · nota {nota:.1f}"
+                        if j.partidos_jugados else "sin partidos")
+            draw_text(screen, partidos, (x_nombre, fila.y + 38), size='sm', color='azul', shadow=False)
+            numeros = [str(j.edad), str(j.overall), str(getattr(j, 'potencial', 0) or '?'), _dinero(_valor(j)),
                        f"{_num(getattr(j, 'contrato_anios', 0))} a", str(_num(getattr(j, 'moral', 0))),
-                       str(_num(getattr(j, 'energia', 100))),
-                       str(j.partidos_jugados), f"{_goles(j)}/{getattr(j, 'asistencias', 0)}",
-                       f"{nota:.1f}" if j.partidos_jugados else "-", marca]
-            for n, ((_c, _t, x), v) in enumerate(zip(COLUMNAS, valores)):
-                color = c_marca if n == len(valores) - 1 else ('verde' if n == 1 and idx in titulares else 'blanco')
-                draw_text(screen, v, (x, fila.y + 2), size='sm', color=color, shadow=False)
+                       str(_num(getattr(j, 'energia', 100)))]
+            for (_c, _t, x), v in zip(COLUMNAS[2:], numeros):
+                draw_text(screen, v, (x, fila.y + (fila.height - 24) // 2), size='md', color='blanco', shadow=False)
+            if marca:
+                draw_text(screen, marca, (COLUMNAS[-1][2], fila.y + (fila.height - 18) // 2), size='sm',
+                          color=c_marca, shadow=False)
         draw_text(screen, "↑↓ elegir · T transferible · R renovar · P préstamo · clic encabezado ordena · verde = titular",
                   (R_LISTA.x + 12, R_LISTA.bottom - 22), size='sm', color='azul', shadow=False)
 

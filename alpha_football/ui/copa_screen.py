@@ -140,12 +140,15 @@ def identidad_club(nombre: str) -> str:
     return ''
 
 
-def guardar_ranking_copas(estado: dict) -> None:
+def guardar_ranking_copas(estado: dict, paises=None) -> None:
     """v2.3.6: guarda la tabla final de cada 1ª división (define los clasificados de la
-    próxima copa). Se llama al cerrar la temporada, antes del ascenso/descenso."""
-    ranking = {}
+    próxima copa). Se llama al cerrar la temporada, antes del ascenso/descenso.
+    v0.4.16.0: con `paises` solo se actualizan esos países (los demás conservan su tabla guardada)."""
+    filtro = set(paises) if paises is not None else None
+    previo = (estado.get('datos_carrera') or {}).get('copa_ranking')
+    ranking = dict(previo) if filtro is not None and isinstance(previo, dict) else {}
     for tipo, liga_x in (estado.get('primera_division') or {}).items():
-        if liga_x is None:
+        if liga_x is None or (filtro is not None and tipo not in filtro):
             continue
         ordenados = sorted(
             liga_x.equipos,
@@ -299,22 +302,24 @@ def avanzar_fase_bracket(estado: dict) -> None:
     simular_copa_fondo(estado)
 
 
-def simular_copa_entera(estado: dict) -> None:
-    """v3.8.0: termina las dos copas (fin de temporada o "simular resto" con el user fuera)."""
+def simular_copa_entera(estado: dict, tipos=None) -> None:
+    """v3.8.0: termina las dos copas (fin de temporada o "simular resto" con el user fuera).
+    v0.4.16.0: con `tipos`, solo esas."""
     try:
-        CP.simular_todo(estado)
+        CP.simular_todo(estado, tipos=tipos)
         actualizar_claves(estado)
         cobrar_premios_copa(estado)
     except Exception as e:
         logger.error(f"Error al simular las copas enteras: {e}")
 
 
-def iniciar_copas_temporada(estado: dict, forzar: bool = False) -> None:
-    """v3.8.0: sortea las dos copas de la temporada actual (alta de carrera / temporada nueva)."""
+def iniciar_copas_temporada(estado: dict, forzar: bool = False, tipos=None) -> None:
+    """v3.8.0: sortea las dos copas de la temporada actual (alta de carrera / temporada nueva).
+    v0.4.16.0: con `tipos`, solo esas."""
     try:
         for k in ('_copas_pool', '_copas_generados', '_hub_copa_sync', '_copa_premio_aviso'):
             estado.pop(k, None)
-        CP.iniciar_temporada(estado, forzar=forzar)
+        CP.iniciar_temporada(estado, forzar=forzar, tipos=tipos)
         actualizar_claves(estado)
     except Exception as e:
         logger.error(f"Error al iniciar las copas de la temporada: {e}")

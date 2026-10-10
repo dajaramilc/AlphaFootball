@@ -30,10 +30,11 @@ from alpha_football import negociacion as N
 logger = logging.getLogger(__name__)
 
 R_LISTA = pygame.Rect(16, 110, 1248, 586)      # v3.6.0: termina en y=696 (barra de atajos)
-FILA_Y0, FILA_H = 148, 26
-FILAS_VISIBLES = (R_LISTA.bottom - 6 - FILA_Y0) // FILA_H
-COLUMNAS = [("CUÁNDO", 32), ("JUGADOR", 130), ("POS", 400), ("MED", 450), ("DE", 510),
-            ("A", 790), ("MONTO", 1080)]
+FILA_Y0 = 148
+FILAS_VISIBLES = 8                                          # v0.4.18.0: 8 por página (antes según la altura del panel)
+FILA_H = (R_LISTA.bottom - 6 - FILA_Y0) // FILAS_VISIBLES
+COLUMNAS = [("CUÁNDO", 32), ("JUGADOR", 218), ("POS", 462), ("MED", 524), ("DE", 584),
+            ("A", 850), ("MONTO", 1150)]                    # v0.4.18.0: más aire, la fecha ocupa dos líneas
 CLAVES = ['cuando', 'jugador', 'posicion', 'media', 'de', 'a', 'monto']   # v4.4.0: campo de cada columna
 NUMERICAS = ('cuando', 'media', 'monto')
 
@@ -51,6 +52,21 @@ def ordenar(pases: list, clave: str, desc: bool) -> list:
     if clave in NUMERICAS:
         return sorted(pases, key=lambda h: int(h.get(clave, 0) or 0), reverse=desc)
     return sorted(pases, key=lambda h: str(h.get(clave, '') or '').lower(), reverse=desc)
+
+
+def texto_cuando(h: dict) -> tuple:
+    """v0.4.18.0: ('sáb 19 sep 2026', 'T1 · J20') con la fecha real del pase. Un registro anterior a
+    v0.4.18.0 (o con la fecha dañada) no la tiene: respalda con ('T1 J20', '')."""
+    temporada, jornada = h.get('temporada', '?'), h.get('jornada', '?')
+    fecha = h.get('fecha')
+    if fecha:
+        try:
+            from datetime import date
+            from alpha_football import calendario as CAL
+            return CAL.texto_fecha(date.fromisoformat(str(fecha))), f"T{temporada} · J{jornada}"
+        except (ValueError, TypeError) as e:
+            logger.error(f"Fecha dañada en el historial de pases ({fecha!r}): {e}")
+    return f"T{temporada} J{jornada}", ""
 
 
 def _rects() -> dict:
@@ -107,7 +123,9 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             draw_button(screen, rects[t], nombre, rects[t].collidepoint(mouse_pos) or t == tab)
             if t == tab:
                 pygame.draw.rect(screen, COLORS['dorado'], rects[t], width=2, border_radius=8)
-        draw_text(screen, f"{len(pases)} pases  ·  rueda / ↑↓ desplaza  ·  ←→ pestaña  ·  clic en columna ordena",
+        paginas = max(1, -(-len(pases) // FILAS_VISIBLES))
+        draw_text(screen, f"{len(pases)} pases  ·  pág. {scroll // FILAS_VISIBLES + 1}/{paginas}  ·  "
+                          f"rueda ↑↓ RePág AvPág  ·  ←→ pestaña  ·  clic en columna ordena",
                   (446, 70), size='sm', color='azul')
         draw_button(screen, rects['volver'], "VOLVER", rects['volver'].collidepoint(mouse_pos))
 
@@ -123,15 +141,24 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             draw_text(screen, "Todavía no hay pases registrados.", (32, FILA_Y0), size='md', color='blanco')
         for i, h in enumerate(pases[scroll:scroll + FILAS_VISIBLES]):
             y = FILA_Y0 + i * FILA_H
-            if h.get('propio'):
-                pygame.draw.rect(screen, (30, 45, 75), pygame.Rect(24, y - 2, R_LISTA.width - 16, FILA_H - 2), border_radius=4)
+            # v0.4.18.0: cada pase en su franja (tuyos más claros) con una línea fina de separación
+            franja = pygame.Rect(24, y, R_LISTA.width - 16, FILA_H - 4)
+            pygame.draw.rect(screen, (30, 45, 75) if h.get('propio') else (24, 32, 54) if i % 2 == 0 else (18, 24, 42),
+                             franja, border_radius=6)
             color = 'verde' if h.get('a') == mi_nombre else ('rojo' if h.get('de') == mi_nombre else 'blanco')
             m = int(h.get('monto', 0) or 0)
-            valores = [f"T{h.get('temporada', '?')} J{h.get('jornada', '?')}", str(h.get('jugador', ''))[:30],
-                       h.get('posicion', ''), str(h.get('media', '')), str(h.get('de', ''))[:30],
-                       str(h.get('a', ''))[:30], f"${m / 1_000_000:.1f}M" if m >= 1_000_000 else f"${m / 1000:.0f}K"]
-            for (_t, x), v in zip(COLUMNAS, valores):
-                draw_text(screen, v, (x, y), size='sm', color=color, shadow=False)
+            y1 = y + (FILA_H - 4 - 24) // 2                       # una sola línea: centrada en la franja
+            fecha, detalle = texto_cuando(h)
+            if detalle:                                           # fecha arriba, temporada y jornada debajo
+                draw_text(screen, fecha, (COLUMNAS[0][1], y + 7), size='md', color=color, shadow=False)
+                draw_text(screen, detalle, (COLUMNAS[0][1], y + 7 + 26), size='sm', color='azul', shadow=False)
+            else:
+                draw_text(screen, fecha, (COLUMNAS[0][1], y1), size='md', color=color, shadow=False)
+            valores = [str(h.get('jugador', ''))[:20], h.get('posicion', ''), str(h.get('media', '')),
+                       str(h.get('de', ''))[:22], str(h.get('a', ''))[:22],
+                       f"${m / 1_000_000:.1f}M" if m >= 1_000_000 else f"${m / 1000:.0f}K"]
+            for (_t, x), v in zip(COLUMNAS[1:], valores):
+                draw_text(screen, v, (x, y1), size='md', color=color, shadow=False)
         return None
     except Exception as e:
         logger.error(f"Error en historial_pases_screen: {e}", exc_info=True)
