@@ -100,8 +100,9 @@ def test_contrato_en_analisis_renovacion_y_fichaje():
     e['neg']['etapa'], e['neg']['monto'] = 'jugador', 1000
     pedido = N.salario_pedido(f, 'fichaje', e['neg']['clausula_mult'])
     e['neg']['salario'] = int(pedido * 0.95)
+    e['liga'].jornada_actual = 1                                # v0.4.13.0: el mercado va por fechas y la J3 (sep) ya no tiene ventana
     assert N.analizar_contrato(e, e['neg'])
-    e['liga'].jornada_actual = 3
+    e['liga'].jornada_actual = 2
     CO.resolver_analisis(e, rng=RngFijo(0.0))
     assert f in mi.jugadores and "acomodarlo" in C.bandeja(e)[0]['cuerpo']
     # Rechazo: correo con lo que pide.
