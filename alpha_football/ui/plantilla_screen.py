@@ -52,13 +52,14 @@ _COLOR_POS = {'POR': (150, 110, 20), 'DEF': (30, 100, 170), 'MED': (30, 130, 80)
 
 
 def _rects() -> dict:
+    ancho_accion = (R_FICHA.width - 60) // 3
     return {
         'orden': pygame.Rect(704, 18, 300, 44),        # v3.9.0: "ORDEN: POSICIÓN (S)" no cabía en 260
         'volver': pygame.Rect(1016, 18, 248, 44),
         'transferible': pygame.Rect(R_FICHA.x + 20, R_FICHA.bottom - 64, R_FICHA.width - 40, 48),
-        'renovar': pygame.Rect(R_FICHA.x + 20, R_FICHA.bottom - 122, (R_FICHA.width - 50) // 2, 48),
-        'lista_prestamo': pygame.Rect(R_FICHA.x + 30 + (R_FICHA.width - 50) // 2, R_FICHA.bottom - 122,
-                                      (R_FICHA.width - 50) // 2, 48),
+        'renovar': pygame.Rect(R_FICHA.x + 20, R_FICHA.bottom - 122, ancho_accion, 48),
+        'lista_prestamo': pygame.Rect(R_FICHA.x + 30 + ancho_accion, R_FICHA.bottom - 122, ancho_accion, 48),
+        'liberar': pygame.Rect(R_FICHA.x + 40 + ancho_accion * 2, R_FICHA.bottom - 122, ancho_accion, 48),
         'prestamos': pygame.Rect(440, 18, 250, 44),     # abre el panel de PRÉSTAMOS
     }
 
@@ -234,6 +235,16 @@ def _dinero(v: int) -> str:
     return f"${v / 1_000_000:.1f}M" if v >= 1_000_000 else f"${v / 1000:.0f}K"
 
 
+def _liberar_seleccionado(estado: dict, jugador) -> None:
+    if estado.get('plantilla_liberar_sel') != getattr(jugador, 'id', None):
+        estado['plantilla_liberar_sel'] = getattr(jugador, 'id', None)
+        return
+    from alpha_football.negociacion import liberar_jugador
+    ok, mensaje = liberar_jugador(estado, jugador)
+    estado.pop('plantilla_liberar_sel', None)
+    estado['plantilla_liberar_msg'] = (mensaje, 'verde' if ok else 'rojo', pygame.time.get_ticks() + 4000)
+
+
 def _dibujar_ficha(screen, j, titular: bool, mouse_pos, estado: Optional[dict] = None) -> None:
     # v3.5.0: la ficha vive en ui/ficha_jugador (compartida con OFERTAS); aquí solo el estado y los botones
     from alpha_football import sanciones as S
@@ -272,20 +283,36 @@ def _dibujar_ficha(screen, j, titular: bool, mouse_pos, estado: Optional[dict] =
     except Exception as e:
         logger.error(f"No se pudo dibujar la ficha: {e}")
     # préstamo en su propia línea (la de estado ya viene llena con sanciones y amarillas)
-    lineas_pr = ([f"A PRÉSTAMO de {p_pr['dueno']}"[:40],
-                  f"Vuelve en la jornada {p_pr['vuelve'][1]} de la temporada {p_pr['vuelve'][0]}"] if p_pr
-                 else ["EN LISTA DE PRÉSTAMO"] if en_lista else [])
-    for k, txt_pr in enumerate(reversed(lineas_pr)):
-        draw_text(screen, txt_pr, (R_FICHA.x + 20, _rects()['renovar'].y - 30 - k * 24), size='sm', color='dorado')
-    r = _rects()['transferible']
+    rects = _rects()
+    confirmar = estado and estado.get('plantilla_liberar_sel') == getattr(j, 'id', None)
+    aviso = None
+    if confirmar:
+        try:
+            from alpha_football.negociacion import dinero_exacto, indemnizacion_liberacion
+            aviso = (f"¿Liberar por {dinero_exacto(indemnizacion_liberacion(j))}? Repite L o clic.", 'rojo')
+        except Exception as e:
+            logger.error(f"No se pudo calcular la indemnización: {e}")
+    elif estado and (msg := estado.get('plantilla_liberar_msg')) and pygame.time.get_ticks() < msg[2]:
+        aviso = (msg[0], msg[1])
+    if aviso:
+        draw_text(screen, aviso[0], (R_FICHA.x + 20, rects['renovar'].y - 30), size='sm', color=aviso[1])
+    else:
+        lineas_pr = ([f"A PRÉSTAMO de {p_pr['dueno']}"[:40],
+                      f"Vuelve en la jornada {p_pr['vuelve'][1]} de la temporada {p_pr['vuelve'][0]}"] if p_pr
+                     else ["EN LISTA DE PRÉSTAMO"] if en_lista else [])
+        for k, txt_pr in enumerate(reversed(lineas_pr)):
+            draw_text(screen, txt_pr, (R_FICHA.x + 20, rects['renovar'].y - 30 - k * 24), size='sm', color='dorado')
+    r = rects['transferible']
     texto = ("PIDE SALIR" if getattr(j, 'pide_salir', False)                  # v4.4.0: bloqueado
              else "QUITAR DE TRANSFERIBLES" if getattr(j, 'transferible', False) else "PONER EN TRANSFERIBLES (T)")
     draw_button(screen, r, texto, r.collidepoint(mouse_pos))
-    rr = _rects()['renovar']
+    rr = rects['renovar']
     draw_button(screen, rr, "RENOVAR (R)", rr.collidepoint(mouse_pos) and not p_pr)
-    rl = _rects()['lista_prestamo']
+    rl = rects['lista_prestamo']
     draw_button(screen, rl, "A PRÉSTAMO" if p_pr else "EN LISTA (P)" if en_lista else "PRÉSTAMO (P)",
                 rl.collidepoint(mouse_pos) and not p_pr)
+    liberar = rects['liberar']
+    draw_button(screen, liberar, "CONFIRMAR (L)" if confirmar else "LIBERAR (L)", liberar.collidepoint(mouse_pos))
 
 
 def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
@@ -333,6 +360,8 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                                                       + (-1 if ev.key == pygame.K_UP else 1))
                     continue
                 if ev.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
+                    if estado.pop('plantilla_liberar_sel', None) is not None:
+                        continue
                     return 'league_screen'
                 if ev.key == pygame.K_p:                          # lista de préstamo
                     from alpha_football.prestamos import alternar_lista
@@ -343,6 +372,8 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                     pos_sel = min(len(orden) - 1, pos_sel + 1)
                 elif ev.key == pygame.K_t:
                     alternar_transferible(jugadores[orden[pos_sel]])
+                elif ev.key == pygame.K_l:
+                    _liberar_seleccionado(estado, jugadores[orden[pos_sel]])
                 elif ev.key == pygame.K_r:
                     if getattr(jugadores[orden[pos_sel]], 'prestamo', None):   # a préstamo: no se renueva
                         continue
@@ -384,6 +415,8 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 estado['plantilla_orden'] = _siguiente_orden(orden_act)
             elif rects['transferible'].collidepoint(click_pos):
                 alternar_transferible(jugadores[orden[pos_sel]])
+            elif rects['liberar'].collidepoint(click_pos):
+                _liberar_seleccionado(estado, jugadores[orden[pos_sel]])
             elif rects['renovar'].collidepoint(click_pos):
                 if not getattr(jugadores[orden[pos_sel]], 'prestamo', None):   # a préstamo: no se renueva
                     from alpha_football.negociacion import iniciar_negociacion
@@ -475,7 +508,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             if marca:
                 draw_text(screen, marca, (COLUMNAS[-1][2], fila.y + (fila.height - 18) // 2), size='sm',
                           color=c_marca, shadow=False)
-        draw_text(screen, "↑↓ elegir · T transferible · R renovar · P préstamo · clic encabezado ordena · verde = titular",
+        draw_text(screen, "↑↓ elegir · T transferible · R renovar · P préstamo · L liberar · clic encabezado ordena · verde = titular",
                   (R_LISTA.x + 12, R_LISTA.bottom - 22), size='sm', color='azul', shadow=False)
 
         _dibujar_ficha(screen, jugadores[orden[pos_sel]], orden[pos_sel] in titulares, mouse_pos, estado)

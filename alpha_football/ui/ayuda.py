@@ -713,6 +713,7 @@ def _ayuda_plantilla(estado: dict) -> list:
         (r['renovar'], "Renovar contrato", "Abre la negociación para extender su contrato (tecla R)."),
         (r['transferible'], "Transferible", "Lo pone en venta o lo quita (tecla T). Ponerlo baja su moral."),
         (r['lista_prestamo'], "Préstamo", "Pone al jugador en la lista de préstamo: los clubes te mandan ofertas de cesión (tecla P)."),
+        (r['liberar'], "Liberar jugador", "Rescinde su contrato: pagas la mitad de los sueldos pendientes y queda como agente libre (tecla L, con confirmación)."),
         (r['prestamos'], "Préstamos", "Tus jugadores a préstamo y los cedidos, con CONCLUIR PRÉSTAMO."),
         (r['volver'], "Volver", "Regresa al hub (también ESC)."),
     ]

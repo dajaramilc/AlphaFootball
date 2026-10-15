@@ -66,6 +66,46 @@ def libres_reales(estado: dict) -> list:
     return [j for j in estado.get('free_agents_list') or [] if getattr(j, 'fin_de_contrato', False)]
 
 
+INDEMNIZACION_LIBERACION = 0.5
+
+
+def indemnizacion_liberacion(jugador) -> int:
+    """Costo de rescindir: la mitad de los sueldos que quedan por contrato."""
+    from alpha_football.finanzas import asegurar_contrato
+    asegurar_contrato(jugador)
+    anios = max(1, int(getattr(jugador, 'contrato_anios', 1) or 1))
+    return int(int(jugador.salario) * anios * INDEMNIZACION_LIBERACION)
+
+
+def liberar_jugador(estado: dict, jugador) -> tuple[bool, str]:
+    """Rescinde el contrato, paga la indemnización y deja al jugador como agente libre."""
+    mi = estado.get('mi_equipo')
+    if mi is None or jugador not in getattr(mi, 'jugadores', []):
+        return False, "El jugador no está en tu plantilla."
+    if getattr(jugador, 'prestamo', None):
+        return False, f"{jugador.nombre_completo} está a préstamo: no se puede liberar."
+    from alpha_football.traspasos_pendientes import pendiente_de
+    if pendiente_de(estado, jugador) is not None:
+        return False, f"{jugador.nombre_completo} ya tiene un acuerdo: no se puede liberar."
+
+    indemnizacion = indemnizacion_liberacion(jugador)
+    from alpha_football import finanzas, prestamos
+    if prestamos.en_lista(estado, jugador):
+        prestamos.alternar_lista(estado, jugador)
+    estado['ofertas_recibidas'] = [oferta for oferta in estado.get('ofertas_recibidas') or []
+                                   if oferta.get('jugador') is not jugador]
+    finanzas.quitar_de_plantilla(mi, jugador)
+    from alpha_football.salidas import limpiar
+    limpiar(jugador)
+    liberar(estado, jugador)
+    mi.balance = int(mi.balance) - indemnizacion
+    finanzas.registrar(estado, 'salarios', indemnizacion)
+    registrar_pase(estado, jugador, mi.nombre, 'Libre (rescisión)', 0, True)
+    estado.setdefault('transfer_log', []).append(
+        f"Rescisión: {jugador.nombre_completo} liberado (indemnización ${indemnizacion:,})")
+    return True, f"{jugador.nombre_completo} fue liberado por {dinero_exacto(indemnizacion)}."
+
+
 def guardar_libres(estado: dict) -> None:
     """v0.4.21.0: copia la bolsa real a datos_carrera['libres'] para que viaje con el guardado. Si la
     partida todavía no armó la lista (recién cargada), no toca lo que ya estaba guardado."""

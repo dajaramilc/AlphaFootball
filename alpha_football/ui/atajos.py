@@ -38,7 +38,7 @@ ATAJOS = {
     'edit_screen': "Tab Sección · ↑ ↓ Lista · → Plantilla · ← Club · Ctrl+S Guardar · Clic Editar · Enter Confirmar texto · H Ayuda · ESC Menú",
     'promo_releg_screen': "Enter Continuar · H Ayuda · ESC Continuar",
     'otras_ligas_screen': "↑ ↓ País · ← → División · C Copas · H Ayuda · ESC Volver",   # v3.8.0
-    'plantilla_screen': "↑ ↓ Jugador · Clic columna Ordenar · S Orden · T Transferible · R Renovar · P Préstamo · H Ayuda · ESC Volver",
+    'plantilla_screen': "↑ ↓ Jugador · Clic columna Ordenar · S Orden · T Transferible · R Renovar · P Préstamo · L Liberar · H Ayuda · ESC Volver",
     'cantera_screen': "↑ ↓ Canterano · S Subir · L Liberar · Enter Confirmar · H Ayuda · ESC Volver",
     'calendario_screen': "← → Mes · Clic en un día Simular hasta ahí · O Opciones · H Ayuda · ESC Volver",   # v0.4.14.1
     'buscador_screen': "↑ ↓ Jugador · Tab Campo · Enter Buscar · Filtros · Solo libres · H Ayuda · ESC Volver",

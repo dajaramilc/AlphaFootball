@@ -108,8 +108,51 @@ def test_pantalla_plantilla():
     print("  test_pantalla_plantilla: OK")
 
 
+def test_liberar_jugador_paga_indemnizacion_y_corta_sueldo():
+    from alpha_football.finanzas import masa_salarial
+    from alpha_football.negociacion import indemnizacion_liberacion, liberar_jugador
+
+    e = estado_carrera()
+    mi = e['mi_equipo']
+    j = mi.jugadores[0]
+    j.salario, j.contrato_anios = 1_000_000, 2
+    saldo, masa = mi.balance, masa_salarial(mi)
+
+    assert indemnizacion_liberacion(j) == 1_000_000
+    ok, _mensaje = liberar_jugador(e, j)
+
+    assert ok
+    assert j not in mi.jugadores
+    assert j in e['free_agents_list'] and j.fin_de_contrato
+    assert mi.balance == saldo - 1_000_000
+    assert masa_salarial(mi) == masa - j.salario
+    print("  test_liberar_jugador_paga_indemnizacion_y_corta_sueldo: OK")
+
+
+def test_plantilla_pide_confirmacion_para_liberar():
+    e = estado_carrera()
+    mi = e['mi_equipo']
+    j = mi.jugadores[0]
+    j.salario, j.contrato_anios = 1_000_000, 2
+    e['plantilla_sel'] = 0
+
+    pygame.event.clear()
+    plantilla_screen.render(screen, e)
+    click(plantilla_screen._rects()['liberar'].center)
+    plantilla_screen.render(screen, e)
+    assert j in mi.jugadores
+    assert e['plantilla_liberar_sel'] == j.id
+
+    click(plantilla_screen._rects()['liberar'].center)
+    plantilla_screen.render(screen, e)
+    assert j not in mi.jugadores
+    print("  test_plantilla_pide_confirmacion_para_liberar: OK")
+
+
 TESTS = [test_ordenar_plantilla, test_alternar_transferible_baja_moral, test_guardado_transferible,
-         test_transferibles_atraen_ofertas, test_pantalla_plantilla]
+         test_transferibles_atraen_ofertas, test_pantalla_plantilla,
+         test_liberar_jugador_paga_indemnizacion_y_corta_sueldo,
+         test_plantilla_pide_confirmacion_para_liberar]
 
 
 if __name__ == '__main__':
