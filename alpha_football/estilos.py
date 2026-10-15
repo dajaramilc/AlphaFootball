@@ -3,7 +3,8 @@
 ALPHA FOOTBALL — Estilos de juego (v3.3.0)
 9 estilos. ESTILO_VENTAJA[a] = estilos a los que `a` le gana (+10% / −9% en el duelo, v3.9.0).
 Anchelottismo no gana ni pierde claro contra nadie (se adapta). Tabla de Diego con las
-contradicciones resueltas según sus textos y equilibrada (v3.3.0 y v3.9.0); Kloppismo es el más fuerte (solo pierde con el Choloismo).
+contradicciones resueltas según sus textos y equilibrada (v3.3.0 y v3.9.0). v0.4.26.0: Kloppismo le gana a 3 estilos como
+los demás, solo pierde con el Haramball y contra el resto tiene una ventaja leve (VENTAJA_LEVE_KLOPP).
 Ver spec 2026-09-23-carrera-dt-design.md.
 """
 from __future__ import annotations
@@ -18,15 +19,18 @@ ESTILO_VENTAJA: dict[str, frozenset] = {
     # Klopp–Cruyff y Flick–Fullback pasan a neutros. Nadie queda con más de ±1 de diferencia.
     "cruyffismo":   frozenset({"flickismo", "artetismo"}),
     "flickismo":    frozenset({"haramball", "artetismo"}),
-    # Kloppismo: el más fuerte, le gana a todos menos al Choloismo (y gasta 20% más de energía).
-    "haramball":    frozenset({"cruyffismo", "dezerbismo"}),
-    "kloppismo":    frozenset({"haramball", "cruyffismo", "flickismo", "artetismo", "dezerbismo",
-                               "fullbackismo"}),
+    # v0.4.26.0: Kloppismo le gana a 3 (como los demás), solo pierde con el Haramball y al resto le saca una
+    # ventaja leve (VENTAJA_LEVE_KLOPP); sigue gastando 20% más de energía.
+    "haramball":    frozenset({"cruyffismo", "dezerbismo", "kloppismo"}),
+    "kloppismo":    frozenset({"flickismo", "artetismo", "fullbackismo"}),
     "artetismo":    frozenset({"haramball", "choloismo", "dezerbismo"}),
-    "choloismo":    frozenset({"cruyffismo", "dezerbismo", "fullbackismo", "kloppismo"}),
+    "choloismo":    frozenset({"cruyffismo", "dezerbismo", "fullbackismo"}),
     "dezerbismo":   frozenset({"flickismo", "fullbackismo"}),
     "fullbackismo": frozenset({"cruyffismo", "haramball"}),
 }
+
+# v0.4.26.0: (bono de Kloppismo, bono del rival) cuando no hay ventaja clara entre ellos (no es Haramball ni una víctima)
+VENTAJA_LEVE_KLOPP: tuple = (1.04, 0.96)
 
 NOMBRE_ESTILO: dict[str, str] = {
     "haramball": "Haramball", "cruyffismo": "Cruyffismo", "flickismo": "Flickismo",
@@ -35,11 +39,11 @@ NOMBRE_ESTILO: dict[str, str] = {
 }
 
 DESC_ESTILO: dict[str, str] = {
-    "haramball": "Bloque bajo y balón largo: muro atrás y segundos balones.",
+    "haramball": "Bloque bajo y balón largo: muro atrás y segundos balones. El único que frena al Kloppismo.",
     "cruyffismo": "Tiki-taka: posesión y pases cortos.",
     "flickismo": "Presión alta y verticalidad rápida.",
     "anchelottismo": "Se adapta a todo: nunca gana ni pierde claro.",
-    "kloppismo": "Gegenpress y caos organizado: le gana a casi todos, pero gasta 20% más de energía.",
+    "kloppismo": "Gegenpress y caos organizado: le gana a 3, solo pierde con el Haramball y al resto le saca ventaja; gasta 20% más de energía.",
     "artetismo": "Posesión disciplinada y balón parado nuclear.",
     "choloismo": "Bloque medio agresivo, duelos y transiciones cortas.",
     "dezerbismo": "Salida suicida desde el portero y tercer hombre.",

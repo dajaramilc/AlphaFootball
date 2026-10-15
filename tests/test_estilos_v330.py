@@ -23,7 +23,7 @@ def test_matriz_sin_contradicciones():
         for b in gana:
             assert a not in ES.ESTILO_VENTAJA.get(b, ()), f"{a} y {b} se ganan mutuamente"
             total += 1
-    assert total == 23   # Kloppismo: +4 victorias, Cholo +1, Haramball y DeZerbi -1
+    assert total == 20   # v0.4.26.0: Kloppismo le gana a 3, Haramball +1 (le gana a Klopp), Cholo ya no le gana
     assert 'anchelottismo' not in ES.ESTILO_VENTAJA
     assert all('anchelottismo' not in g for g in ES.ESTILO_VENTAJA.values())
 
@@ -33,12 +33,12 @@ def test_matriz_de_diego():
     # v3.9.0: Cruyffismo y Fullbackismo equilibrados (+1 victoria y −1 derrota cada uno)
     assert V['cruyffismo'] == {'flickismo', 'artetismo'}
     assert V['flickismo'] == {'haramball', 'artetismo'}
-    assert V['haramball'] == {'cruyffismo', 'dezerbismo'}
-    # Kloppismo le gana a todos menos al Choloismo (Ancelotismo sigue neutro)
-    assert V['kloppismo'] == set(ES.ESTILOS_DT) - {'kloppismo', 'choloismo', 'anchelottismo'}
-    assert 'kloppismo' in V['choloismo']
+    assert V['haramball'] == {'cruyffismo', 'dezerbismo', 'kloppismo'}
+    # v0.4.26.0: Kloppismo le gana a 3 y solo pierde con el Haramball
+    assert V['kloppismo'] == {'flickismo', 'artetismo', 'fullbackismo'}
+    assert [a for a in V if 'kloppismo' in V[a]] == ['haramball']
     assert V['artetismo'] == {'haramball', 'choloismo', 'dezerbismo'}
-    assert V['choloismo'] == {'cruyffismo', 'dezerbismo', 'fullbackismo', 'kloppismo'}
+    assert V['choloismo'] == {'cruyffismo', 'dezerbismo', 'fullbackismo'}
     assert V['dezerbismo'] == {'flickismo', 'fullbackismo'}
     assert V['fullbackismo'] == {'cruyffismo', 'haramball'}
     # Kloppismo es el estilo con más victorias (el más fuerte del juego)
@@ -49,9 +49,14 @@ def test_bono_estilo():
     assert engine.bono_estilo('artetismo', 'haramball') == 1.10      # v3.9.0: ventaja bajada a 10%
     assert engine.bono_estilo('haramball', 'artetismo') == 0.91
     assert engine.bono_estilo('artetismo', 'kloppismo') == 0.91          # Klopp le gana a Arteta
-    assert engine.bono_estilo('choloismo', 'kloppismo') == 1.10          # ... pero no al Cholo
+    assert engine.bono_estilo('haramball', 'kloppismo') == 1.10          # v0.4.26.0: solo el Haramball le gana
+    assert engine.bono_estilo('kloppismo', 'haramball') == 0.91
+    assert engine.bono_estilo('kloppismo', 'choloismo') == 1.04          # sin ventaja clara: ventaja leve de Klopp
+    assert engine.bono_estilo('choloismo', 'kloppismo') == 0.96
+    assert engine.bono_estilo('cruyffismo', 'kloppismo') == 0.96
+    assert engine.bono_estilo('kloppismo', 'kloppismo') == 1.0
     assert engine.bono_estilo('artetismo', 'cruyffismo') == 0.91         # v3.9.0: Cruyff le gana a Arteta
-    assert engine.bono_estilo('anchelottismo', 'kloppismo') == 1.0
+    assert engine.bono_estilo('anchelottismo', 'kloppismo') == 0.96
     assert engine.bono_estilo('desconocido', 'haramball') == 1.0
 
 

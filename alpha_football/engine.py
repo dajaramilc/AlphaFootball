@@ -280,6 +280,11 @@ def bono_estilo(estilo_atk: str, estilo_def: str) -> float:
     v3.9.0: bajado de +15%/-13% (con 9 estilos el contraestilo pesaba más que la media)."""
     if estilo_def in ESTILO_VENTAJA.get(estilo_atk, ()): return 1.10
     if estilo_atk in ESTILO_VENTAJA.get(estilo_def, ()): return 0.91
+    # v0.4.26.0: sin ventaja clara, el Kloppismo igual le saca un poco al rival (salvo el espejo)
+    conocidos = estilo_atk in ESTILOS_DT and estilo_def in ESTILOS_DT
+    if conocidos and estilo_atk != estilo_def and 'kloppismo' in (estilo_atk, estilo_def):
+        from alpha_football.estilos import VENTAJA_LEVE_KLOPP
+        return VENTAJA_LEVE_KLOPP[0] if estilo_atk == 'kloppismo' else VENTAJA_LEVE_KLOPP[1]
     return 1.0
 
 
