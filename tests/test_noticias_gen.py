@@ -284,10 +284,109 @@ def test_equipo_del_ano():
     G.generar_cierre_temporada(e, 1, 'Manchester Billete', {}, [])
     eq = [n for n in _de_tipo(e, 'premio') if "Equipo del año" in n['titular']]
     assert len(eq) == 1 and eq[0]['importancia'] == 4
-    assert len([ln for ln in eq[0]['cuerpo'].split("\n") if ln.strip()]) == 11
+    assert "2026/27" in eq[0]['titular']                                 # el año real, no "temporada 1"
+    lineas = [ln for ln in eq[0]['cuerpo'].split("\n") if ln.strip()]
+    assert len(lineas) == 15                                             # 11 jugadores + 4 títulos de sección
+    # v0.4.25.0: por línea (portero, defensas, medios, atacantes), un jugador por renglón con su club y su nota
+    titulos = [ln for ln in lineas if ln.isupper()]
+    assert titulos == ["PORTERO", "DEFENSAS", "MEDIOS", "ATACANTES"]
+    cuenta = {}
+    actual = None
+    for ln in lineas:
+        if ln.isupper():
+            actual = ln
+            cuenta[actual] = 0
+        else:
+            cuenta[actual] += 1
+            assert ln.count(" · ") == 2                                  # nombre · club · nota
+    assert cuenta == {"PORTERO": 1, "DEFENSAS": 4, "MEDIOS": 3, "ATACANTES": 3}
+    assert "\n\n" in eq[0]['cuerpo']                                     # una línea en blanco entre secciones
     vacio = _estado()                                                    # sin estadísticas: no inventa un equipo
     G.generar_cierre_temporada(vacio, 1, 'X', {}, [])
     assert not [n for n in _de_tipo(vacio, 'premio') if "Equipo del año" in n['titular']]
+
+
+def _liga_con_lider(e, jugados_hasta, pts_lider=70, pts_segundo=60):
+    """Marca como jugadas las jornadas 1..jugados_hasta y deja una tabla con un líder claro."""
+    liga = e['liga']
+    for p in liga.calendario:
+        p.jugado = p.jornada <= jugados_hasta
+        if p.jugado:
+            p.goles_local = p.goles_visitante = 0                        # sin goleadas: no mezclar noticias de resultados
+    for k, eq in enumerate(liga.equipos):
+        eq.puntos, eq.gf, eq.gc = max(0, 40 - k), 10, 10
+    lider, segundo = liga.equipos[0], liga.equipos[1]
+    lider.puntos, segundo.puntos = pts_lider, pts_segundo
+    return liga, lider, segundo
+
+
+def test_titulo_asegurado_sale_en_el_momento_y_no_se_repite():
+    e = _estado()
+    liga, lider, segundo = _liga_con_lider(e, e['liga'].num_jornadas - 1)   # solo falta la última jornada
+    G.generar_jornada(e, rng=random.Random(1))
+    camp = [n for n in _de_tipo(e, 'campeon') if "asegura" in n['titular']]
+    assert len(camp) == 1 and lider.nombre in camp[0]['titular'] and camp[0]['importancia'] == 5
+    assert "puntos" in camp[0]['cuerpo'] and len(camp[0]['titular']) <= 60
+    G.generar_jornada(e, rng=random.Random(1))
+    assert len([n for n in _de_tipo(e, 'campeon') if "asegura" in n['titular']]) == 1
+    # con la liga terminada se proclama campeón (una sola vez) y el cierre de temporada no lo repite
+    for p in liga.calendario:
+        p.jugado = True
+        p.goles_local = p.goles_visitante = 0
+    G.generar_jornada(e, rng=random.Random(1))
+    G.generar_jornada(e, rng=random.Random(1))
+    campeon = [n for n in _de_tipo(e, 'campeon') if "se proclama campeón" in n['titular']]
+    assert len(campeon) == 1 and "2026/27" in campeon[0]['cuerpo']
+    G.generar_cierre_temporada(e, 1, lider, {}, [])
+    assert len([n for n in _de_tipo(e, 'campeon') if "campeón de" in n['titular']]) == 1
+
+
+def test_titulo_no_se_asegura_si_el_segundo_aun_alcanza():
+    e = _estado()
+    liga, lider, segundo = _liga_con_lider(e, 0, pts_lider=70, pts_segundo=60)
+    for p in liga.calendario:                                            # quedan 3 jornadas: 60 + 9 = 69 < 70 → asegurado
+        p.jugado = p.jornada <= liga.num_jornadas - 3
+        if p.jugado:
+            p.goles_local = p.goles_visitante = 0
+    assert G.estado_del_titulo(liga) is not None
+    segundo.puntos = 62                                                  # 62 + 9 = 71 ≥ 70 → todavía se puede perder
+    assert G.estado_del_titulo(liga) is None
+    G.generar_jornada(e, rng=random.Random(1))
+    assert not [n for n in _de_tipo(e, 'campeon') if "asegura" in n['titular'] or "proclama" in n['titular']]
+
+
+def test_copa_se_anuncia_al_jugar_la_final_y_el_cierre_no_la_repite():
+    from alpha_football import competiciones as CP
+    e = _estado()
+    c = e['datos_carrera'].setdefault('copas', {}).setdefault(
+        'champions', {'tipo': 'champions', 'temporada': 1, 'campeon': None})
+    c['campeon'] = 'Real Madrigal'
+    assert G.anunciar_copa(e, c) == 1 and G.anunciar_copa(e, c) == 0
+    n = [x for x in _de_tipo(e, 'campeon') if "Champions" in x['titular']]
+    assert len(n) == 1 and n[0]['importancia'] == 5 and "Real Madrigal" in n[0]['titular']
+    assert "2026/27" in n[0]['cuerpo'] and "temporada 1" not in n[0]['cuerpo']
+    G.generar_cierre_temporada(e, 1, None, {'champions': 'Real Madrigal'}, [])
+    assert len([x for x in _de_tipo(e, 'campeon') if "Champions" in x['titular']]) == 1
+    assert G.anunciar_copa(e, None) == 0 and G.anunciar_copa(e, {'tipo': 'champions'}) == 0
+
+
+def test_descensos_de_otras_ligas_solo_nombran_a_los_mejores():
+    e = _estado()
+    liga_b = e['primera_division']['laliga']
+    nombres = [eq.nombre for eq in liga_b.equipos][:6]
+    for k, eq in enumerate(liga_b.equipos[:6]):
+        eq.estrellas = 2.0 + k * 0.5                                    # el sexto es el de más peso
+    movs = [{'tipo': 'laliga', 'ascendidos': [], 'descendidos': nombres},
+            {'tipo': 'premier', 'ascendidos': ['Club A'], 'descendidos': ['Club C']}]
+    G.generar_cierre_temporada(e, 1, None, {}, movs)
+    resto = [n for n in _de_tipo(e, 'descenso') if n['importancia'] == 4]
+    assert len(resto) == 1
+    texto = resto[0]['titular'] + resto[0]['cuerpo']
+    assert nombres[5] in texto and nombres[4] in texto and nombres[3] in texto and nombres[2] in texto
+    assert nombres[0] not in texto and nombres[1] not in texto            # solo los 4 mejores
+    assert "Ascensos y descensos en el resto" not in resto[0]['titular'] and "suben" not in resto[0]['cuerpo']
+    assert nombres[5] in resto[0]['cuerpo'].split("\n\n")[1].split("\n")[0]    # el de más peso va primero
+    assert G.publicar_descensos_destacados(e, [{'tipo': 'premier', 'descendidos': []}]) == 0
 
 
 def test_un_generador_que_falla_no_frena_a_los_demas():

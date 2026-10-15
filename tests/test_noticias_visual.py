@@ -109,6 +109,29 @@ def test_titular_largo_se_recorta():
     assert V.envolver("", f, 170, 3) == [] and V.envolver(None, f, 170, 3) == []
 
 
+def test_envolver_respeta_los_saltos_de_linea():
+    """v0.4.25.0: el equipo del año y la lista de campeones llevan un nombre por renglón."""
+    f = get_font('sm')
+    cuerpo = "PORTERO\nMarcos Sánchez · Pool de Higado · 7.0\n\nDEFENSAS\nPau Cubardí · Spurs sin Copas · 7.0\n"
+    assert V.envolver(cuerpo, f, 400, 10) == ["PORTERO", "Marcos Sánchez · Pool de Higado · 7.0", "",
+                                              "DEFENSAS", "Pau Cubardí · Spurs sin Copas · 7.0"]
+    assert V.envolver("\n\nSolo una\n\n", f, 400, 5) == ["Solo una"]          # sin blancos al principio ni al final
+    assert V.envolver("A\nB\nC\nD", f, 400, 2) == ["A", "B…"]                # el tope de líneas también corta renglones
+
+
+def test_ajustar_baja_la_letra_cuando_el_titular_no_cabe():
+    corto = "Gol y victoria"
+    nombre, f, lineas = V.ajustar(corto, 170, 2, 'md')
+    assert nombre == 'md' and lineas == [corto]
+    largo = "Confirmado: Marcos Alonso deja Atlético Almirante y ficha por Real Sporting"
+    nombre, f, lineas = V.ajustar(largo, 200, 3, 'md')
+    assert nombre in ('sm', 'xs') and get_font(nombre) is f
+    assert not lineas[-1].endswith("…") and " ".join(lineas) == largo        # cabe entero en una letra más chica
+    nombre, f, lineas = V.ajustar(largo * 3, 100, 2, 'sm')
+    assert nombre == 'xs' and len(lineas) == 2 and lineas[-1].endswith("…")   # ni en la más chica: se recorta
+    assert get_font('xs').get_height() < get_font('sm').get_height()
+
+
 def test_titular_de_60_caracteres_cabe_en_la_tarjeta():
     _con_imagen(None)
     try:

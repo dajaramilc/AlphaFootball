@@ -88,8 +88,40 @@ def gastar(estado: dict, h: int) -> bool:
     antes = int(b['horas'])
     b['horas'] = antes - int(h)
     _anotar_animacion(estado, antes, b['horas'], int(h))
+    if b['horas'] > 0:                                   # v0.4.25.0: cada hora que pasa trae noticias
+        noticias_de_la_hora(estado, None, int(h))
     _tras_pasar_horas(estado)
     return True
+
+
+def _contador_noticias(estado: dict) -> int:
+    return int((estado.get('datos_carrera') or {}).get('noticia_sig_id', 1) or 1)
+
+
+def noticias_de_la_hora(estado: dict, rng: Optional[random.Random] = None, horas: int = 1) -> int:
+    """v0.4.25.0: el último día de fichajes las noticias se actualizan cada hora. Por cada hora que pasa la IA hace
+    una pasada ligera de fichajes (los que cumplen salen como noticia) y los rumores avanzan: se cumplen, se caen o
+    nacen otros. Cada paso va en su propio `try` (la hora pasa igual) y el feed del hub vuelve a empezar por lo
+    último. Devuelve cuántas noticias nuevas salieron."""
+    antes = _contador_noticias(estado)
+    azar = rng or random.Random()
+    for _ in range(max(1, int(horas))):
+        try:
+            from alpha_football.mercado_ia import ronda_fichajes_ia
+            ronda_fichajes_ia(estado, 'hora', azar)
+        except Exception as e:
+            logger.error(f"dia_final: no se pudo hacer la pasada de fichajes de la hora: {e}", exc_info=True)
+        try:
+            from alpha_football import rumores
+            rumores.revisar_hora(estado, azar)
+        except Exception as e:
+            logger.error(f"dia_final: no se pudieron mover los rumores de la hora: {e}", exc_info=True)
+    try:
+        from alpha_football import noticias
+        noticias.reiniciar_feed(estado)
+    except Exception as e:
+        logger.error(f"dia_final: no se pudo reiniciar el feed de noticias: {e}")
+    return max(0, _contador_noticias(estado) - antes)
 
 
 MOTIVOS_HORAS = {HORAS_FICHAJE: "Fichaje concretado", HORAS_VENTA: "Venta concretada"}   # v0.4.18.0
@@ -142,7 +174,7 @@ def prob_oferta_hora(estado: dict) -> float:
 def avanzar_hora(estado: dict, rng: Optional[random.Random] = None) -> dict:
     """Pasa 1 hora (AVANZAR 1 HORA): llegan las respuestas que vencen y puede entrar una oferta por un
     jugador tuyo; a las 0 horas se cierra el mercado. Devuelve {'horas', 'correos', 'ofertas', 'cerro'}."""
-    res = {'horas': 0, 'correos': 0, 'ofertas': 0, 'cerro': False}
+    res = {'horas': 0, 'correos': 0, 'ofertas': 0, 'noticias': 0, 'cerro': False}
     if not activo(estado):
         return res
     from alpha_football import correo as C
@@ -153,6 +185,8 @@ def avanzar_hora(estado: dict, rng: Optional[random.Random] = None) -> dict:
     n0 = len(C.bandeja(estado))
     responder(estado, azar)
     res['correos'] = max(0, len(C.bandeja(estado)) - n0)
+    if b['horas'] > 0:
+        res['noticias'] = noticias_de_la_hora(estado, azar)
     if b['horas'] > 0 and azar.random() < prob_oferta_hora(estado):
         try:
             from alpha_football import dias
@@ -261,6 +295,8 @@ def texto_hora(r: dict) -> str:
         partes.append(f"{int(r['ofertas'])} oferta{'s' if int(r['ofertas']) != 1 else ''}")
     if int(r.get('correos', 0) or 0):
         partes.append(f"{int(r['correos'])} correo{'s' if int(r['correos']) != 1 else ''}")
+    if int(r.get('noticias', 0) or 0):
+        partes.append(f"{int(r['noticias'])} noticia{'s' if int(r['noticias']) != 1 else ''}")
     if r.get('cerro'):
         partes.append("se cerró el mercado")
     return "Pasó 1 hora" + (f": {', '.join(partes)}" if partes else "")

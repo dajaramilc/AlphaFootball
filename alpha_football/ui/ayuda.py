@@ -408,10 +408,10 @@ def _ayuda_hub(estado: dict) -> list:
         its += [
             (_union(barra), "Barra de menú", "Pestañas del hub: ← → para moverte, Enter para abrir. OPCIONES (tecla O) trae GUARDAR."),
             (L.R_SOBRE, "Correo", "El número rojo son los mensajes sin leer. Clic o tecla M para abrir el correo."),
-            (L.R_TABLA, "Tabla", "Posiciones de tu liga; tu club resaltado. Las pestañas NOTICIAS / LIGA / COPA cambian el panel."),
+            (L.R_TABLA, "Tabla", "Abre en NOTICIAS; las pestañas NOTICIAS / LIGA / COPA cambian el panel (LIGA: posiciones, tu club resaltado)."),
             (_union([L.rect_tab_tabla('liga'), L.rect_tab_tabla('copa')]), "LIGA / COPA",
              "Alterna entre la tabla de la liga y la de tu copa internacional."),
-            (L.rect_tab_tabla('noticias'), "NOTICIAS", "Titulares destacados, uno cada 5 s (tecla N). Clic en la tarjeta abre OFICINA > NOTICIAS."),
+            (L.rect_tab_tabla('noticias'), "NOTICIAS", "Las 3 más recientes primero; cada 5 s corren a las viejas y reinician al parar (N). Clic: ver."),
             (L.R_HIST, "Historial", "Tus partidos jugados. Rueda del mouse o ▲ ▼ para desplazarte."),
             (L.R_JUGAR, "JUGAR", "Juega el partido del día. Sin partido es CONTINUAR: los días pasan hasta tu partido, una oferta o un evento."),   # v0.4.14.1
             (L.R_DIA, "+1 DÍA", "Avanza un solo día (tecla D). Solo aparece cuando hoy no hay partido."),
@@ -872,8 +872,8 @@ def _ayuda_notificaciones(estado: dict) -> list:     # v0.4.10.0
 
 def _ayuda_noticias(estado: dict) -> list:     # v0.4.23.0
     from alpha_football.ui import noticias_screen as NS
-    return [(NS.R_LISTA, "Lista", "Noticias vigentes: primero las más importantes. Punto dorado = sin leer. Rueda o ↑ ↓."),
-            (NS.R_DETALLE, "Detalle", "Imagen, titular, jornada y cuerpo de la noticia elegida. Al verla queda leída."),
+    return [(NS.R_LISTA, "Lista", "Noticias vigentes, las más recientes primero (mismo día: las importantes). Punto dorado = sin leer."),
+            (NS.R_DETALLE, "Detalle", "Imagen, titular, fecha y cuerpo de la noticia elegida. Al verla queda leída."),
             (NS.R_ACCION, "Botón", "Algunas noticias traen un atajo (por ejemplo ver los remates): clic o Enter."),
             (NS._volver(), "Volver", "Regresa al hub (también ESC).")]
 

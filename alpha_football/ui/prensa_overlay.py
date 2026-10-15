@@ -2,8 +2,9 @@
 """
 ALPHA FOOTBALL — Conferencia de prensa (v0.4.23.0). Overlay modal sobre el prepartido (previa) y el postpartido.
 No es una pantalla: no tiene destino ni se registra en main. Quien lo usa le entrega las teclas y el clic de su
-cuadro (`manejar`, que los consume) y lo dibuja al final (`dibujar`). Teclado: 1-4 responder (motivador,
-provocador, humilde, agresivo) · S o Esc saltar; tras responder, Enter / Espacio / Esc o CONTINUAR cierra.
+cuadro (`manejar`, que los consume) y lo dibuja al final (`dibujar`). Teclado: 1-4 responder (cada pregunta
+ofrece cuatro tonos de los ocho: motivador, provocador, humilde, agresivo, irónico, diplomático, elogioso y
+"sin comentarios") · S o Esc saltar; tras responder, Enter / Espacio / Esc o CONTINUAR cierra.
 La lógica (efectos, noticias, tensión) vive en `prensa.py`.
 """
 from __future__ import annotations
@@ -35,7 +36,13 @@ _X_TEXTO = 170                         # dónde empieza el texto de la respuesta
 _TECLAS_RESPUESTA = {pygame.K_1: 0, pygame.K_KP1: 0, pygame.K_2: 1, pygame.K_KP2: 1,
                      pygame.K_3: 2, pygame.K_KP3: 2, pygame.K_4: 3, pygame.K_KP4: 3}
 _TECLAS_CERRAR = (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE, pygame.K_ESCAPE, pygame.K_BACKSPACE)
-_ETIQUETA_TONO = {'motivador': "MOTIVADOR", 'provocador': "PROVOCADOR", 'humilde': "HUMILDE", 'agresivo': "AGRESIVO"}
+_ETIQUETA_TONO = {'motivador': "MOTIVADOR", 'provocador': "PROVOCADOR", 'humilde': "HUMILDE", 'agresivo': "AGRESIVO",
+                  'ironico': "IRÓNICO", 'diplomatico': "DIPLOMÁTICO", 'elogioso': "ELOGIOSO", 'evasivo': "EVASIVO"}
+
+
+def tonos_de(ov: dict) -> list:
+    """Los tonos que ofrece esta pregunta (cuatro, en el orden del banco): los que encajan con el momento."""
+    return [t for t in (ov.get('pregunta') or {}).get('respuestas', {}) if t in prensa.TONOS][:4]
 _velo: Optional[pygame.Surface] = None
 
 
@@ -61,8 +68,10 @@ def manejar(estado: dict, teclas: list, click_pos) -> None:
             return
         for k in teclas or []:
             if k in _TECLAS_RESPUESTA:
-                prensa.responder(estado, ov, prensa.TONOS[_TECLAS_RESPUESTA[k]])
-                return
+                tonos = tonos_de(ov)
+                if _TECLAS_RESPUESTA[k] < len(tonos):
+                    prensa.responder(estado, ov, tonos[_TECLAS_RESPUESTA[k]])
+                    return
             if k in (pygame.K_ESCAPE, pygame.K_s):
                 prensa.saltar(estado)
                 return
@@ -70,7 +79,7 @@ def manejar(estado: dict, teclas: list, click_pos) -> None:
             if R_SALTAR.collidepoint(click_pos):
                 prensa.saltar(estado)
                 return
-            for i, tono in enumerate(prensa.TONOS):
+            for i, tono in enumerate(tonos_de(ov)):
                 if rect_respuesta(i).collidepoint(click_pos):
                     prensa.responder(estado, ov, tono)
                     return
@@ -117,7 +126,7 @@ def dibujar(screen, estado: dict, mouse_pos=(0, 0)) -> None:
         y = _lineas(screen, ov.get('pregunta', {}).get('texto', ""), x, R_PANEL.y + 124, ancho, 'md', 'blanco', 2, 28)
         resp = ov.get('respuesta')
         if resp is None:
-            for i, tono in enumerate(prensa.TONOS):
+            for i, tono in enumerate(tonos_de(ov)):
                 r = rect_respuesta(i)
                 draw_button(screen, r, "", r.collidepoint(mouse_pos))
                 draw_text(screen, f"{i + 1} {_ETIQUETA_TONO[tono]}", (r.x + 12, r.centery - 10), size='sm',

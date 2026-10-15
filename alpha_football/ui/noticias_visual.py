@@ -31,18 +31,27 @@ def vaciar_cache() -> None:
 
 def envolver(texto, fuente, ancho: int, max_lineas: int) -> list:
     """Parte `texto` en líneas que caben en `ancho` px; si sobran líneas, la última termina en "…".
+    Los saltos de línea del texto se respetan (un "\n" corta la línea y una línea en blanco queda como "").
     Una palabra más ancha que `ancho` se deja entera en su línea (el recorte lo hace la superficie)."""
-    palabras = str(texto or '').split()
-    lineas, actual = [], ""
-    for p in palabras:
-        prueba = (actual + " " + p).strip()
-        if not actual or fuente.size(prueba)[0] <= ancho:
-            actual = prueba
-        else:
-            lineas.append(actual)
-            actual = p
-    if actual:
+    lineas = []
+    for parrafo in str(texto or '').split('\n'):
+        palabras = parrafo.split()
+        if not palabras:
+            lineas.append("")                      # línea en blanco: separa bloques del cuerpo
+            continue
+        actual = ""
+        for p in palabras:
+            prueba = (actual + " " + p).strip()
+            if not actual or fuente.size(prueba)[0] <= ancho:
+                actual = prueba
+            else:
+                lineas.append(actual)
+                actual = p
         lineas.append(actual)
+    while lineas and not lineas[0]:                # sin líneas en blanco al principio ni al final
+        lineas.pop(0)
+    while lineas and not lineas[-1]:
+        lineas.pop()
     if len(lineas) > max_lineas:
         lineas = lineas[:max_lineas]
         ultima = lineas[-1]
@@ -50,6 +59,22 @@ def envolver(texto, fuente, ancho: int, max_lineas: int) -> list:
             ultima = ultima[:-1]
         lineas[-1] = ultima.rstrip() + "…"
     return lineas
+
+
+_ORDEN_FUENTES = ('lg', 'md', 'sm', 'xs')
+
+
+def ajustar(texto, ancho: int, max_lineas: int, fuente: str = 'sm') -> tuple:
+    """(nombre de la fuente, fuente, líneas): `fuente` si el texto cabe en `max_lineas` sin recortarse; si no, la
+    siguiente más pequeña ('md' → 'sm' → 'xs'). Si en ninguna cabe, la más pequeña con el recorte "…"."""
+    from alpha_football.ui.theme import get_font
+    nombres = _ORDEN_FUENTES[_ORDEN_FUENTES.index(fuente):] if fuente in _ORDEN_FUENTES else (fuente,)
+    for nombre in nombres:
+        f = get_font(nombre)
+        if len(envolver(texto, f, ancho, max_lineas + 1)) <= max_lineas:      # una de más: ¿sobra algo?
+            return nombre, f, envolver(texto, f, ancho, max_lineas)
+    f = get_font(nombres[-1])
+    return nombres[-1], f, envolver(texto, f, ancho, max_lineas)
 
 
 def _color_de(noticia: dict) -> tuple:
@@ -99,8 +124,9 @@ def _etiqueta(s: pygame.Surface, noticia: dict, fuente) -> None:
 
 
 def tarjeta(noticia: dict, w: int, h: int, titular: bool = True, dim: bool = False,
-            fuente: str = 'md', max_lineas: int = 5) -> pygame.Surface:
-    """Tarjeta w × h de la noticia (cacheada). `titular=False` deja solo imagen y etiqueta; `dim` la atenúa."""
+            fuente: str = 'sm', max_lineas: int = 5) -> pygame.Surface:
+    """Tarjeta w × h de la noticia (cacheada). `titular=False` deja solo imagen y etiqueta; `dim` la atenúa.
+    v0.4.25.0: el titular va en letra pequeña y, si aun así no cabe, en la más pequeña."""
     clave = (noticia.get('id'), w, h, bool(titular), bool(dim), fuente, max_lineas)
     s = _CACHE.get(clave)
     if s is not None:
@@ -110,9 +136,8 @@ def tarjeta(noticia: dict, w: int, h: int, titular: bool = True, dim: bool = Fal
     try:
         if titular:
             _degradado(s, h * 2 // 3)
-        f_t = get_font(fuente)
         if titular:
-            lineas = envolver(noticia.get('titular'), f_t, w - 24, max_lineas)
+            _n, f_t, lineas = ajustar(noticia.get('titular'), w - 24, max_lineas, fuente)
             alto_l = f_t.get_linesize()
             y = h - 12 - alto_l * len(lineas)
             for ln in lineas:

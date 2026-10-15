@@ -213,6 +213,26 @@ def _resolver(estado: dict, r: dict, rng: random.Random, humo: bool = False) -> 
         "dan el asunto por cerrado.", importancia=3 if r.get('clase') == 'user' else 2)
 
 
+PROB_RUMOR_HORA = 0.5          # v0.4.25.0: por hora del último día de fichajes (si hay cupo de rumores vivos)
+PROB_RESOLVER_HORA = 0.3       # v0.4.25.0: cada rumor vivo se resuelve (se cumple o se cae) con esta probabilidad por hora
+
+
+def revisar_hora(estado: dict, rng: Optional[random.Random] = None) -> int:
+    """Una hora del último día de fichajes: los rumores vivos pueden resolverse (se cumplen si eran reales y siguen
+    siendo viables, o se desmienten) y puede nacer uno nuevo. Devuelve cuántos se movieron."""
+    if estado.get('liga') is None or estado.get('mi_equipo') is None:
+        return 0
+    azar = rng or random.Random()
+    movidos = 0
+    for r in list(vivos(estado)):
+        if azar.random() < PROB_RESOLVER_HORA:
+            _resolver(estado, r, azar)
+            movidos += 1
+    if azar.random() < PROB_RUMOR_HORA and generar(estado, azar) is not None:
+        movidos += 1
+    return movidos
+
+
 def revisar_jornada(estado: dict, rng: Optional[random.Random] = None) -> None:
     """Cierre de jornada (lo llama noticias.cierre_jornada): los rumores pierden una jornada de plazo y los
     vencidos se resuelven; con el mercado cerrado se apagan todos. Con el mercado abierto puede nacer uno."""

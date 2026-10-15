@@ -320,7 +320,9 @@ def test_cierre_del_otro_continente_a_mitad_de_tu_temporada():
     assert not [x for x in nuevos if x['remitente'] == 'prensa']
     aviso = next(x for x in NO.lista(e) if x['titular'] == "Terminó la temporada en Sudamérica")
     assert (aviso['tipo'], aviso['importancia']) == ('campeon', 4)
-    assert campeon_betplay in aviso['cuerpo'] and m['campeones']['libertadores'] in aviso['cuerpo']
+    # v0.4.25.0: solo los campeones de liga (sin copa, ascensos ni descensos) y con el año real de la temporada
+    assert campeon_betplay in aviso['cuerpo'] and "2026" in aviso['cuerpo']
+    assert not any(x in aviso['cuerpo'] for x in ("Suben", "bajan", "Libertadores:"))
     copa = next(x for x in NO.lista(e) if x['tipo'] == 'campeon' and x['importancia'] == 5)
     assert m['campeones']['libertadores'] in copa['titular'] and "Libertadores" in copa['titular'] + copa['cuerpo']
     assert e['datos_carrera']['copa_ranking']['betplay'][0] == campeon_betplay

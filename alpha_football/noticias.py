@@ -12,6 +12,7 @@ import importlib
 import logging
 import os
 import re
+from datetime import date
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -170,12 +171,60 @@ def antiguedad(estado: dict, noticia: dict, ahora: Optional[tuple] = None) -> in
     return max(0, (t - _entero(noticia.get('temporada'), t)) * n + (j - _entero(noticia.get('jornada'), j)))
 
 
+def _fecha(noticia: dict) -> Optional[date]:
+    """La fecha real de publicación (`fecha_creacion`); None si no la tiene o es ilegible."""
+    try:
+        return date.fromisoformat(str(noticia.get('fecha_creacion')))
+    except ValueError:
+        return None
+
+
+def fecha_texto(noticia: dict, largo: bool = True) -> str:
+    """'sáb 12 sep 2026' (corto: 'sáb 12 sep'). Sin fecha real (partida sin reloj o guardado anterior):
+    'Temporada 2 – Jornada 7' (corto: 'T2 · J7')."""
+    d = _fecha(noticia)
+    if d is not None:
+        from alpha_football import calendario as CAL
+        return CAL.texto_fecha(d, largo)
+    t, j = noticia.get('temporada', '?'), noticia.get('jornada', '?')
+    return f"Temporada {t} – Jornada {j}" if largo else f"T{t} · J{j}"
+
+
+def nombre_anio(continente: str, anio: int) -> str:
+    """'2026/27' en Europa (la temporada cruza el año) y '2027' en Sudamérica (año natural)."""
+    return f"{int(anio)}/{(int(anio) + 1) % 100:02d}" if continente == 'europa' else str(int(anio))
+
+
+def nombre_temporada(estado: dict, temporada, continente: Optional[str] = None) -> str:
+    """El nombre real de la temporada de carrera número `temporada` ('2026/27'), el que se lee en una noticia
+    en vez de 'la temporada 11'. `continente` por defecto es el de tu liga."""
+    try:
+        from alpha_football import calendario as CAL
+        cont = continente or CAL.continente(estado)
+        return nombre_anio(cont, CAL.ANIO_BASE[cont] + _entero(temporada, 1) - 1)
+    except Exception as e:
+        logger.debug(f"noticias: no se pudo nombrar la temporada {temporada!r}: {e}")
+        return str(temporada)
+
+
+def reiniciar_feed(estado: dict) -> None:
+    """El juego se detuvo (terminó un CONTINUAR, pasó una hora del último día): el feed del hub vuelve a
+    empezar por las tres noticias más recientes y de ahí corre hacia las viejas."""
+    estado.pop('feed_t0', None)
+
+
 def activas(estado: dict) -> list:
-    """Las que no caducaron: primero las más importantes y, dentro, las más recientes."""
+    """Las que no caducaron: primero las más recientes (fecha real) y, dentro del mismo día, las más importantes.
+    Sin fecha van al final y se ordenan por jornada."""
     ahora = _ahora(estado)
     vivas = [(antiguedad(estado, n, ahora), n) for n in lista(estado)]
     vivas = [(a, n) for a, n in vivas if a < JORNADAS_VIDA]
-    vivas.sort(key=lambda x: (-x[1]['importancia'], x[0], -x[1]['id']))
+
+    def clave(x):
+        a, n = x
+        d = _fecha(n)
+        return (-(d.toordinal() if d else 0), a, -n['importancia'], -n['id'])
+    vivas.sort(key=clave)
     return [n for _a, n in vivas]
 
 

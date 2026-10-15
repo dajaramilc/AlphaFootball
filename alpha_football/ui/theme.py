@@ -24,6 +24,7 @@ SCREEN_H = 720
 # Tamaños de fuente en píxeles por etiqueta ('sm','md','lg','xl'). Súbelos/bájalos
 # para agrandar o achicar TODOS los textos del juego de una sola vez.
 FONT_SIZES = {
+    'xs': 15,      # v0.4.25.0: titulares largos de noticias y listas apretadas
     'sm': 18,
     'md': 24,
     'lg': 32,

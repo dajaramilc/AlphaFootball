@@ -111,13 +111,26 @@ def test_temporada_descuenta_sueldo_del_dt():
     class Fijo(random.Random):
         def uniform(self, a, b):
             return 1.0
+    from alpha_football import finanzas as F
+
+    def saldo_al_reajustar():
+        """v0.4.26.0: el saldo ya no se arrastra (se reajusta el presupuesto): se mide con el que llega al reajuste."""
+        visto, original = {}, F.presupuesto_nuevo_ia
+
+        def espia(eq, *a, **k):
+            visto[eq.nombre] = int(eq.balance)
+            return original(eq, *a, **k)
+        F.presupuesto_nuevo_ia = espia
+        try:
+            MI.ingresos_fin_temporada(e, rng=Fijo())
+        finally:
+            F.presupuesto_nuevo_ia = original
+        return visto[club.nombre]
     saldo = club.balance
-    MI.ingresos_fin_temporada(e, rng=Fijo())
-    con_dt = club.balance
+    con_dt = saldo_al_reajustar()
     club.balance = saldo
     EN.dts(e)['por_club'].pop(str(club.id))
-    MI.ingresos_fin_temporada(e, rng=Fijo())
-    sin_dt = club.balance
+    sin_dt = saldo_al_reajustar()
     assert sin_dt - con_dt > 0
     print("  test_temporada_descuenta_sueldo_del_dt: OK")
 

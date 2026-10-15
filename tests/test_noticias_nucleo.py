@@ -123,6 +123,37 @@ def test_orden_activas():
     print("  test_orden_activas: OK")
 
 
+def test_orden_activas_lo_mas_reciente_primero():
+    """v0.4.24.0: manda la fecha real (la más reciente arriba); dentro del mismo día, la más importante."""
+    e = estado(jornada=5)
+    e['datos_carrera']['calendario'] = {'dia': '2026-09-10'}
+    vieja_alta = N.publicar(e, 'campeon', "vieja alta", "c", importancia=5)
+    e['datos_carrera']['calendario'] = {'dia': '2026-09-12'}
+    nueva_baja = N.publicar(e, 'otro', "nueva baja", "c", importancia=2)
+    nueva_alta = N.publicar(e, 'otro', "nueva alta", "c", importancia=4)
+    nueva_media = N.publicar(e, 'otro', "nueva media", "c", importancia=3)
+    assert [n['id'] for n in N.activas(e)] == [nueva_alta['id'], nueva_media['id'], nueva_baja['id'],
+                                                vieja_alta['id']]
+    assert [n['id'] for n in N.para_feed(e)] == [nueva_alta['id'], nueva_media['id'], vieja_alta['id']]
+    # una noticia sin fecha (guardado anterior al reloj) no se cuela por encima de las que sí la tienen
+    sin_fecha = N.publicar(e, 'otro', "sin fecha", "c", importancia=5)
+    sin_fecha['fecha_creacion'] = None
+    assert N.activas(e)[-1]['id'] == sin_fecha['id']
+    print("  test_orden_activas_lo_mas_reciente_primero: OK")
+
+
+def test_fecha_texto():
+    e = estado(temporada=2, jornada=7)
+    e['datos_carrera']['calendario'] = {'dia': '2026-09-12'}
+    con = N.publicar(e, 'otro', "a", "b")
+    assert N.fecha_texto(con) == "sáb 12 sep 2026" and N.fecha_texto(con, largo=False) == "sáb 12 sep"
+    sin = N.publicar(estado(temporada=2, jornada=7), 'otro', "a", "b")          # sin reloj: respaldo
+    assert N.fecha_texto(sin) == "Temporada 2 – Jornada 7" and N.fecha_texto(sin, largo=False) == "T2 · J7"
+    rota = {'fecha_creacion': 'no-es-fecha', 'temporada': 1, 'jornada': 3}
+    assert N.fecha_texto(rota) == "Temporada 1 – Jornada 3"
+    print("  test_fecha_texto: OK")
+
+
 def test_la_jornada_se_lee_una_vez_por_consulta():
     # el hub dibuja el feed a 60 FPS: leer la jornada recorre el calendario, no puede hacerse por noticia
     e = estado(jornada=5)

@@ -89,6 +89,27 @@ def _todos_los_equipos(estado: dict) -> list:
     return equipos
 
 
+TECHO_PRESUPUESTO = 350_000_000       # v0.4.25.0: ningún club (el tuyo incluido) guarda más de 350 M€ en caja
+
+
+def limitar_presupuestos(estado: dict) -> int:
+    """Recorta a TECHO_PRESUPUESTO el saldo de todo club de la partida y devuelve cuántos recortó. Es idempotente:
+    sirve de migración al cargar un guardado (los clubes grandes llegaron a juntar 3.000 M€ temporada a temporada)
+    y de red de seguridad cada día y al cobrar los ingresos de fin de temporada."""
+    recortados = 0
+    clubes = _todos_los_equipos(estado) + list(getattr(estado.get('liga'), 'equipos', None) or [])
+    for eq in clubes:
+        try:
+            if int(getattr(eq, 'balance', 0) or 0) > TECHO_PRESUPUESTO:
+                eq.balance = TECHO_PRESUPUESTO
+                recortados += 1
+        except Exception as e:
+            logger.error(f"No se pudo limitar el presupuesto de {getattr(eq, 'nombre', '?')}: {e}")
+    if recortados:
+        logger.info(f"Presupuestos: {recortados} club(es) recortados al techo de {TECHO_PRESUPUESTO:,}.")
+    return recortados
+
+
 def asegurar_contratos(estado: dict) -> None:
     for eq in _todos_los_equipos(estado):
         for j in eq.jugadores:
@@ -359,16 +380,29 @@ def presupuesto_temporada(base: int, saldo: int, resultado: str, campeon_liga: b
                           campeon_copa: bool = False) -> dict:
     """Desglose del presupuesto nuevo. v0.4.14.1: base × (0.40 + objetivo + títulos) × salud, de ×0.44
     (objetivo fallado y en rojo) a ×1.98 (superado, liga, copa y las arcas llenas); la deuda se descuenta
-    entera (piso: 10% de la base)."""
+    entera (piso: 10% de la base). Nunca pasa de TECHO_PRESUPUESTO."""
     base, saldo = int(base), int(saldo)
     salud = factor_salud(saldo, base)
     objetivo = PARTE_OBJETIVO.get(resultado, PARTE_NEUTRA)
     bonos = (BONO_LIGA if campeon_liga else 0.0) + (BONO_COPA if campeon_copa else 0.0)
     mult = (PARTE_FIJA + objetivo + bonos) * salud
     deuda = max(0, -saldo)
-    total = max(int(base * PISO_PRESUPUESTO), int(round(base * mult)) - deuda)
+    total = min(TECHO_PRESUPUESTO, max(int(base * PISO_PRESUPUESTO), int(round(base * mult)) - deuda))
     return {'base': base, 'saldo': saldo, 'salud': salud, 'objetivo': objetivo, 'bonos': bonos,
             'mult': mult, 'deuda': deuda, 'total': total}
+
+
+def presupuesto_nuevo_ia(equipo, tipo: str, division: int, resultado: str = '', campeon_liga: bool = False,
+                         cobertura: int = 0) -> int:
+    """Presupuesto de la temporada que empieza para un club de la IA: la misma fórmula que el user (su base según
+    liga y estrellas, el saldo con que cerró, el objetivo cumplido y el título de liga). Sin dato del objetivo
+    ('' = club sin foto, save viejo) usa la parte neutra.
+    `cobertura` es lo que le falta para pagar sus sueldos en una temporada mala (mercado_ia.cuentas): la directiva
+    no lo deja por debajo. Sin ese piso, el reajuste le quita a la IA el colchón que le daba acumular saldo y los
+    recién descendidos (planilla de 1ª con ingresos de 2ª) quiebran año tras año. Siempre bajo TECHO_PRESUPUESTO."""
+    base = presupuesto_base(equipo, tipo, division)
+    total = presupuesto_temporada(base, int(getattr(equipo, 'balance', 0) or 0), resultado, campeon_liga)['total']
+    return min(TECHO_PRESUPUESTO, max(total, int(cobertura or 0)))
 
 
 def aplicar_presupuesto_temporada(estado: dict) -> Optional[dict]:

@@ -363,7 +363,8 @@ def revisar_dia(estado: dict, fecha: date) -> Optional[str]:
     from alpha_football import temporada as T
     pasos = (('cantera', 'revisar_jornada'), ('patrocinios', 'revisar_jornada'), ('prestamos', 'revisar_jornada'),
              ('temporadas', 'revisar_jornada'),                  # v0.4.16.0: el otro continente juega y cierra por fecha
-             ('premios', 'revisar_jornada'))                     # v0.4.17.0: galas del Balón de Oro y del Sudamericano
+             ('premios', 'revisar_jornada'),                     # v0.4.17.0: galas del Balón de Oro y del Sudamericano
+             ('finanzas', 'limitar_presupuestos'))               # v0.4.25.0: ningún club pasa de 350 M€
     for modulo, funcion in pasos:
         try:
             mod = __import__(f"alpha_football.{modulo}", fromlist=[funcion])

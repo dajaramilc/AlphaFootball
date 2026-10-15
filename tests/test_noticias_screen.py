@@ -190,6 +190,32 @@ def test_hub_abre_noticias_con_enter_y_clic():
     assert L.render(screen, e) == 'noticias_screen'
 
 
+def test_muestra_la_fecha_real_y_no_temporada_jornada():
+    """v0.4.24.0: el detalle y las filas muestran la fecha real; 'Temporada X – Jornada Y' solo si no hay fecha."""
+    e = _estado(2)
+    for n in N.lista(e):
+        n['fecha_creacion'] = '2026-09-12'
+    dibujado = []
+    original = NS.draw_text
+    NS.draw_text = lambda scr, texto, *a, **k: dibujado.append(str(texto))
+    try:
+        assert _frame(e) is None
+    finally:
+        NS.draw_text = original
+    assert "sáb 12 sep 2026" in dibujado                        # detalle de la noticia elegida
+    assert "sáb 12 sep" in dibujado                             # filas de la lista
+    assert not any(t.startswith("Temporada ") for t in dibujado)
+    for n in N.lista(e):
+        n['fecha_creacion'] = None
+    dibujado.clear()
+    NS.draw_text = lambda scr, texto, *a, **k: dibujado.append(str(texto))
+    try:
+        _frame(e)
+    finally:
+        NS.draw_text = original
+    assert any(t.startswith("Temporada ") for t in dibujado)    # sin fecha real: respaldo
+
+
 if __name__ == '__main__':
     TESTS = [v for k, v in sorted(globals().items()) if k.startswith('test_') and callable(v)]
     fail = 0

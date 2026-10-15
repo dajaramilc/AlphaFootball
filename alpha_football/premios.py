@@ -198,9 +198,12 @@ def _entregar(estado: dict, p: dict, gala: bool = True, frenar: bool = True) -> 
         from alpha_football import correo as C, noticias
         otros = "".join(f" {i + 2}º: {x.get('nombre', '?')} ({x.get('equipo', '?')})."
                         for i, x in enumerate(podio[1:3]))
+        # v0.4.25.0: la temporada con su año real ("2036/37"), no con su número de carrera
+        nombre_t = noticias.nombre_temporada(estado, datos.get('temporada', 1),
+                                             'sudamerica' if p.get('premio') == 'sudamericano' else None)
         noticias.publicar(estado, 'premio', f"{cfg['nombre']}: {g.get('nombre', '?')}",
                           f"{g.get('nombre', '?')} ({g.get('equipo', '?')}, {g.get('liga', '?')}) {cfg['frase']} de la "
-                          f"temporada {datos.get('temporada', '?')}: {g.get('goles', 0)} goles, {g.get('asistencias', 0)} "
+                          f"temporada {nombre_t}: {g.get('goles', 0)} goles, {g.get('asistencias', 0)} "
                           f"asistencias y nota {float(g.get('nota', 0) or 0):.2f}.{otros}",
                           importancia=5, accion=C.accion('career_screen', "VER PALMARÉS"))
     except Exception as e:
@@ -211,6 +214,12 @@ def _entregar(estado: dict, p: dict, gala: bool = True, frenar: bool = True) -> 
     # cambia: el palmarés conserva el club con el que lo ganó.
     plantilla = {getattr(j, 'nombre_completo', '') for j in getattr(club, 'jugadores', None) or []} - {''}
     tuyos = [x.get('nombre') for x in podio if x.get('equipo') == mi or x.get('nombre') in plantilla] if mi else []
+    if mi and p.get('premio') == 'balon_oro' and (g.get('equipo') == mi or g.get('nombre') in plantilla):
+        try:    # v0.4.25.0: logro "Balón de Oro en casa"
+            from alpha_football import logros
+            logros.desbloquear(estado, 'balon_oro')
+        except Exception as e:
+            logger.error(f"No se pudo desbloquear el logro del Balón de Oro: {e}")
     if gala and tuyos:
         dc.setdefault('gala_premio_pendiente', []).append(
             {'premio': p['premio'], 'fecha': p.get('fecha_entrega'), 'datos': datos, 'tuyos': tuyos})

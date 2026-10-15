@@ -726,8 +726,9 @@ def _terminar_avance(estado) -> None:
     """Cierra el avance a la vista y deja el resumen de lo que pasó en el aviso de Inicio."""
     av = estado.pop('hub_avance', None)
     if av:
-        from alpha_football import dias as _dias
+        from alpha_football import dias as _dias, noticias as _noticias
         _toast(estado, _dias.texto_resumen(av.get('total') or {}), color='azul')
+        _noticias.reiniciar_feed(estado)       # v0.4.25.0: cada parada, el feed vuelve a las 3 noticias más recientes
 
 
 def _paso_avance(estado, ahora: Optional[int] = None) -> bool:
@@ -808,6 +809,8 @@ def _avanzar_un_dia(estado) -> None:
         from alpha_football import dias as _dias
         if _dias.es_dia_de_continuar(estado):
             _toast(estado, _dias.texto_resumen(_dias.avanzar_dia(estado)), color='azul')
+            from alpha_football import noticias as _noticias
+            _noticias.reiniciar_feed(estado)
     except Exception as e_dias:
         logger.error(f"Error al avanzar un día: {e_dias}")
 
@@ -819,6 +822,8 @@ def _avanzar_hora(estado) -> None:
         estado.pop('confirmar_cierre_mercado', None)
         if _DF.activo(estado):
             _toast(estado, _DF.texto_hora(_DF.avanzar_hora(estado)), color='azul')
+            from alpha_football import noticias as _noticias
+            _noticias.reiniciar_feed(estado)   # v0.4.25.0: cada hora del último día trae noticias nuevas
     except Exception as e_df:
         logger.error(f"Error al avanzar una hora: {e_df}")
 
@@ -953,31 +958,69 @@ def rect_tab_tabla(clave: str) -> pygame.Rect:
 
 
 # --- v0.4.23.0: feed de noticias en el panel de la tabla -------------------------------------------------
-INTERVALO_FEED_MS = 5000          # una noticia a la vez, rota cada 5 s
+INTERVALO_FEED_MS = 5000          # la ventana de tarjetas corre una noticia cada 5 s
 FUNDIDO_MS = 180                  # fundido de entrada al cambiar a la pestaña NOTICIAS
-R_TARJETA_FEED = pygame.Rect(R_TABLA.centerx - 99, R_TABLA.y + 40, 198, 352)    # 9:16 bajo la fila de pestañas
+VISIBLES_FEED = 3                 # v0.4.25.0: tarjetas a la vez (la más reciente a la izquierda)
+HUECO_FEED = 12
+R_TARJETA_FEED = pygame.Rect(R_TABLA.centerx - 99, R_TABLA.y + 40, 198, 352)    # 9:16 bajo la fila de pestañas (la del centro)
+
+
+def rects_feed(n: int) -> list:
+    """Los rectángulos de las `n` (0-3) tarjetas visibles, de izquierda (la más reciente) a derecha y centrados en
+    el panel: con una sola, R_TARJETA_FEED."""
+    n = max(0, min(VISIBLES_FEED, int(n)))
+    ancho, alto = R_TARJETA_FEED.size
+    x0 = R_TABLA.centerx - (n * ancho + max(0, n - 1) * HUECO_FEED) // 2
+    return [pygame.Rect(x0 + k * (ancho + HUECO_FEED), R_TARJETA_FEED.y, ancho, alto) for k in range(n)]
 
 
 def feed_actual(estado: dict, ahora: int) -> tuple:
-    """(noticias del feed, índice vigente). Rota con el reloj (`ahora` en ms). `noticias.para_feed` recorre el
-    calendario, así que la lista se guarda en `estado` y solo se recalcula al rotar o si cambia la lista."""
+    """(noticias del feed, índice de la primera tarjeta visible). Se ven VISIBLES_FEED a la vez, la más reciente a la
+    izquierda: arrancan las 3 últimas y, cada INTERVALO_FEED_MS (`ahora` en ms), la ventana corre una hacia las más
+    viejas; al llegar a la más vieja vuelve a empezar. Vuelve al principio cuando llega una noticia nueva o cuando el
+    juego se detiene (`noticias.reiniciar_feed`). `noticias.para_feed` recorre el calendario, así que la lista se
+    guarda en `estado` y solo se recalcula al rotar o si cambia la lista."""
     from alpha_football import noticias as _N
+    lista = _N.lista(estado)
+    ultima = lista[0]['id'] if lista else None
+    if estado.get('_feed_ultima') != ultima:          # llegó una noticia nueva: se empieza por ella
+        estado['_feed_ultima'] = ultima
+        estado['feed_t0'] = ahora
     t0 = estado.setdefault('feed_t0', ahora)
     paso = max(0, (ahora - t0) // INTERVALO_FEED_MS)
-    lista = _N.lista(estado)
-    clave = (len(lista), lista[0]['id'] if lista else None)
+    clave = (len(lista), ultima)
     cache = estado.get('_feed_cache')
     if not cache or cache[0] != clave or cache[1] != paso:
         cache = (clave, paso, _N.para_feed(estado))
         estado['_feed_cache'] = cache
     feed = cache[2]
-    return feed, (paso % len(feed) if feed else 0)
+    posiciones = max(1, len(feed) - VISIBLES_FEED + 1)
+    return feed, (paso % posiciones if feed else 0)
+
+
+def noticia_del_feed_en(estado: dict, pos, ahora: Optional[int] = None) -> Optional[dict]:
+    """La noticia cuya tarjeta del feed está en `pos` (None si el clic no cae en ninguna)."""
+    feed, s = feed_actual(estado, pygame.time.get_ticks() if ahora is None else int(ahora))
+    visibles = feed[s:s + VISIBLES_FEED]
+    for n, r in zip(visibles, rects_feed(len(visibles))):
+        if r.collidepoint(pos):
+            return n
+    return None
+
+
+TABLA_TAB_INICIAL = 'noticias'     # v0.4.26.0: el panel de INICIO abre en NOTICIAS mientras no se elija otra pestaña
+
+
+def _tabla_tab(estado: dict) -> str:
+    """Pestaña activa del panel de la tabla de INICIO: la elegida o, sin elección todavía, NOTICIAS."""
+    guardada = estado.get('hub_tabla_tab') or TABLA_TAB_INICIAL
+    return guardada if guardada in ('copa', 'noticias') else 'liga'
 
 
 def alternar_noticias(estado: dict, ahora: Optional[int] = None) -> None:
     """Tecla N: noticias ↔ la pestaña anterior de la tabla (LIGA o COPA), con fundido."""
     ahora = pygame.time.get_ticks() if ahora is None else int(ahora)
-    actual = estado.get('hub_tabla_tab')
+    actual = _tabla_tab(estado)
     if actual == 'noticias':
         estado['hub_tabla_tab'] = estado.get('hub_tabla_prev') if estado.get('hub_tabla_prev') in ('liga', 'copa') else 'liga'
     else:
@@ -990,7 +1033,7 @@ def alternar_noticias(estado: dict, ahora: Optional[int] = None) -> None:
 def _fijar_tabla_tab(estado: dict, clave: str, ahora: Optional[int] = None) -> None:
     """Clic en una pestaña de la tabla; LIGA y COPA se recuerdan para volver con la tecla N."""
     if clave == 'noticias':
-        if estado.get('hub_tabla_tab') != 'noticias':
+        if _tabla_tab(estado) != 'noticias':
             alternar_noticias(estado, ahora)
         return
     estado['hub_tabla_tab'] = clave
@@ -998,28 +1041,23 @@ def _fijar_tabla_tab(estado: dict, clave: str, ahora: Optional[int] = None) -> N
 
 
 def _render_feed(screen, estado: dict, ahora: int) -> None:
-    """Contenido del panel de la tabla en la pestaña NOTICIAS: la noticia vigente al centro y, atenuadas a los
-    lados, la anterior y la siguiente."""
+    """Contenido del panel de la tabla en la pestaña NOTICIAS: tres tarjetas a la vez, las más recientes primero
+    (a la izquierda); la ventana corre hacia las más viejas y vuelve a empezar en cada parada del juego."""
     from alpha_football.ui import noticias_visual as V
     draw_text(screen, "NOTICIAS", (32, R_TABLA.y + 10), size='md', color='azul')
-    feed, i = feed_actual(estado, ahora)
+    feed, s = feed_actual(estado, ahora)
     cuerpo = pygame.Rect(R_TABLA.x, R_TABLA.y + 40, R_TABLA.width, R_TABLA.height - 40)
     if not feed:
         draw_text(screen, "Sin noticias destacadas.", (R_TABLA.centerx - 110, R_TABLA.centery - 20), size='md', color='blanco')
         draw_text(screen, "Se publican con cada jornada.", (R_TABLA.centerx - 118, R_TABLA.centery + 14), size='sm', color='azul')
     else:
-        draw_text(screen, f"{i + 1} / {len(feed)}", (172, R_TABLA.y + 14), size='sm', color='azul', shadow=False)
-        ancho, alto = R_TARJETA_FEED.size
-        if len(feed) > 1:
-            previo = screen.get_clip()
-            screen.set_clip(pygame.Rect(R_TABLA.x + 8, R_TARJETA_FEED.y, R_TABLA.width - 16, alto))
-            screen.blit(V.tarjeta(feed[(i - 1) % len(feed)], ancho, alto, titular=False, dim=True),
-                        (R_TARJETA_FEED.x - 150, R_TARJETA_FEED.y))
-            screen.blit(V.tarjeta(feed[(i + 1) % len(feed)], ancho, alto, titular=False, dim=True),
-                        (R_TARJETA_FEED.x + 150, R_TARJETA_FEED.y))
-            screen.set_clip(previo)
-        screen.blit(V.tarjeta(feed[i], ancho, alto), R_TARJETA_FEED.topleft)
-        pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), R_TARJETA_FEED, width=2)
+        visibles = feed[s:s + VISIBLES_FEED]
+        cuenta = (f"{len(feed)} noticia{'s' if len(feed) != 1 else ''}" if len(feed) <= VISIBLES_FEED
+                  else f"{s + 1}-{s + len(visibles)} / {len(feed)}")
+        draw_text(screen, cuenta, (172, R_TABLA.y + 14), size='sm', color='azul', shadow=False)
+        for noticia, r in zip(visibles, rects_feed(len(visibles))):
+            screen.blit(V.tarjeta(noticia, r.w, r.h), r.topleft)
+            pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), r, width=2)
     t = ahora - int(estado.get('feed_fade_ms', -FUNDIDO_MS) or 0)
     if 0 <= t < FUNDIDO_MS:          # fundido de entrada: un velo del color del panel que se va aclarando
         velo = pygame.Surface(cuerpo.size, pygame.SRCALPHA)
@@ -1066,7 +1104,7 @@ def _render_inicio(screen, estado, liga, mi_equipo, info, jugados, mouse_pos, cl
     dorado = COLORS.get('dorado', (255, 215, 0))
 
     # --- Tabla de posiciones (v3.8.0: pestañas LIGA / COPA) ---
-    tabla_tab = estado.get('hub_tabla_tab') if estado.get('hub_tabla_tab') in ('copa', 'noticias') else 'liga'   # v0.4.23.0: + noticias
+    tabla_tab = _tabla_tab(estado)   # v0.4.23.0: + noticias; v0.4.26.0: NOTICIAS es la pestaña inicial
     try:
         draw_panel(screen, R_TABLA)
         _dibujar_tabs_tabla(screen, tabla_tab, mouse_pos)
@@ -1288,11 +1326,9 @@ def _render_inicio(screen, estado, liga, mi_equipo, info, jugados, mouse_pos, cl
             _fijar_tabla_tab(estado, 'liga')
         elif rect_tab_tabla('copa').collidepoint(click_pos):
             _fijar_tabla_tab(estado, 'copa')
-        elif tabla_tab == 'noticias' and R_TARJETA_FEED.collidepoint(click_pos):
-            feed, i_feed = feed_actual(estado, pygame.time.get_ticks())
-            if feed:
-                from alpha_football.ui import noticias_screen as _NS
-                return _NS.abrir(estado, feed[i_feed]['id'])
+        elif tabla_tab == 'noticias' and noticia_del_feed_en(estado, click_pos) is not None:
+            from alpha_football.ui import noticias_screen as _NS
+            return _NS.abrir(estado, noticia_del_feed_en(estado, click_pos)['id'])
         elif l1 == "ÚLTIMO DÍA" and R_HORA.collidepoint(click_pos):      # v0.4.14.0
             estado['hub_foco'] = 0
             _avanzar_hora(estado)
@@ -1442,6 +1478,14 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 migrar_economia(estado)           # v4.6.0: save viejo: sueldos ×1.6 una sola vez
         except Exception as e_con:
             logger.error(f"Error al asignar contratos: {e_con}")
+        try:  # v0.4.25.0: partidas guardadas con clubes por encima del techo (hoy 350 M€; el reloj lo repite cada día)
+            dc = estado.setdefault('datos_carrera', {})
+            if not dc.get('techo_presupuesto_v0425'):
+                from alpha_football.finanzas import limitar_presupuestos
+                limitar_presupuestos(estado)
+                dc['techo_presupuesto_v0425'] = True
+        except Exception as e_techo:
+            logger.error(f"Error al limitar los presupuestos: {e_techo}")
         try:  # v2.8.0 (v4.6.0: después de migrar sueldos): objetivo de la temporada (una vez por temporada / club)
             from alpha_football.directiva import definir_objetivo
             definir_objetivo(estado)

@@ -80,7 +80,9 @@ def test_cada_hora_puede_entrar_una_oferta_con_el_10_o_el_25_por_ciento():
     assert DF.prob_oferta_hora(e) == 0.25
     llamadas = []
     original = D._entregar_oferta
+    original_noticias = DF.noticias_de_la_hora
     D._entregar_oferta = lambda estado, exterior: llamadas.append(exterior) or 1
+    DF.noticias_de_la_hora = lambda *a, **k: 0                          # 4.000 horas: las noticias no son de esta prueba
     try:
         for transf, esperado in ((False, 0.10), (True, 0.25)):
             e['mi_equipo'].jugadores[3].transferible = transf
@@ -92,6 +94,49 @@ def test_cada_hora_puede_entrar_una_oferta_con_el_10_o_el_25_por_ciento():
             assert not any(llamadas)                                       # son ofertas locales, no del exterior
     finally:
         D._entregar_oferta = original
+        DF.noticias_de_la_hora = original_noticias
+
+
+def test_cada_hora_trae_noticias_y_reinicia_el_feed():
+    """v0.4.25.0: el último día las noticias se actualizan cada hora (pasada ligera de fichajes + rumores)."""
+    from alpha_football import mercado_ia as MIA, rumores as RU, noticias as NO
+    e, _ = _en_el_ultimo_dia()
+    modos, rumores_horas = [], []
+    orig_ronda, orig_rum = MIA.ronda_fichajes_ia, RU.revisar_hora
+
+    def _ronda(estado, modo='ventana', rng=None):
+        modos.append(modo)
+        NO.publicar(estado, 'fichaje', f"Fichaje {len(modos)}", "Cuerpo", importancia=4)
+        return []
+    MIA.ronda_fichajes_ia = _ronda
+    RU.revisar_hora = lambda estado, rng=None: rumores_horas.append(1) or 0
+    try:
+        e['feed_t0'] = 123
+        DF._bloque(e)['horas'] = 10
+        r = DF.avanzar_hora(e, random.Random(2))
+        assert modos == ['hora'] and rumores_horas == [1]               # una pasada por hora, ligera
+        assert r['horas'] == 1 and r['noticias'] == 1
+        assert 'feed_t0' not in e                                        # el hub vuelve a las más recientes
+        assert "1 noticia" in DF.texto_hora(r)
+        assert "noticia" not in DF.texto_hora({'horas': 1, 'noticias': 0})
+        assert DF.gastar(e, DF.HORAS_FICHAJE)                            # un fichaje cuesta 3 horas: 3 pasadas
+        assert modos == ['hora'] * 4
+    finally:
+        MIA.ronda_fichajes_ia, RU.revisar_hora = orig_ronda, orig_rum
+
+
+def test_la_ultima_hora_no_hace_pasada_porque_cierra_la_ronda_de_cierre():
+    from alpha_football import mercado_ia as MIA
+    e, _ = _en_el_ultimo_dia()
+    modos = []
+    orig = MIA.ronda_fichajes_ia
+    MIA.ronda_fichajes_ia = lambda estado, modo='ventana', rng=None: modos.append(modo) or []
+    try:
+        DF._bloque(e)['horas'] = 1
+        r = DF.avanzar_hora(e, random.Random(2))
+        assert r['cerro'] and modos == ['ventana']                       # solo la ronda de cierre
+    finally:
+        MIA.ronda_fichajes_ia = orig
 
 
 def test_cerrar_retira_ofertas_cae_los_analisis_hace_la_ronda_y_no_se_repite():

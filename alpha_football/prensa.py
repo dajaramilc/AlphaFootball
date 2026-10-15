@@ -15,15 +15,30 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-TONOS = ('motivador', 'provocador', 'humilde', 'agresivo')
+# v0.4.25.0: ocho tonos; cada pregunta ofrece cuatro de ellos, los que encajan con el momento
+TONOS = ('motivador', 'provocador', 'humilde', 'agresivo', 'ironico', 'diplomatico', 'elogioso', 'evasivo')
 FACTOR_TENSION = 1.6                  # factor de tarjetas del siguiente partido tras una respuesta agresiva
-MOTIVOS = ('copa_final', 'copa_semi', 'clasico', 'titulo', 'descenso', 'lider')    # por prioridad
+MOTIVOS = ('copa_final', 'copa_semi', 'clasico', 'titulo', 'descenso', 'lider',      # por prioridad
+           'debut', 'cierre', 'racha_mala', 'racha_buena', 'lesionados', 'favorito', 'david', 'rival_directo',
+           'figura', 'copa_ronda')
+# solo se eligen si lo demás no pide conferencia; las goleadas se deciden con el marcador (postpartido)
+_BAJA_PRIORIDAD = ('lider', 'debut', 'cierre', 'racha_mala', 'racha_buena', 'lesionados', 'favorito', 'david',
+                   'rival_directo', 'figura', 'copa_ronda')
+UMBRAL_GOLEADA = 3                    # diferencia de goles para que el postpartido hable de una goleada
+RACHA_BUENA = 3                       # victorias seguidas
+RACHA_MALA = 2                        # derrotas seguidas (o SIN_GANAR partidos sin ganar)
+SIN_GANAR = 4
+MIN_LESIONADOS = 3
+MIN_GOLES_FIGURA = 5
 MOTIVO_TEXTO = {'copa_final': "Final de copa", 'copa_semi': "Semifinal de copa", 'clasico': "Clásico",
                 'titulo': "Pelea por el título", 'descenso': "Lucha por la permanencia", 'lider': "Líder de la liga"}
-_MORAL_PROPIA = {'motivador': 2, 'humilde': 1}
+_MORAL_PROPIA = {'motivador': 2, 'humilde': 1, 'ironico': 1, 'diplomatico': 1}
+_MORAL_RIVAL_IRONICO = -1             # el irónico pincha un poco al rival
+_MORAL_ELOGIO = 3                     # el elogio sube la moral de la figura de la pregunta
 _MORAL_RIVAL = -2                     # provocador
 _MORAL_POR_DT_RIVAL = -1              # el DT rival declara en la previa
-_IMPORTANCIA = {'provocador': 4, 'motivador': 3, 'agresivo': 3, 'humilde': 2}
+_IMPORTANCIA = {'provocador': 4, 'motivador': 3, 'agresivo': 3, 'humilde': 2, 'ironico': 3, 'diplomatico': 2,
+                'elogioso': 2, 'evasivo': 1}
 _TOPE_HECHAS = 80                     # conferencias recordadas en datos_carrera (las más viejas salen)
 
 
@@ -363,6 +378,22 @@ BANCO = {
     },
 }
 
+# v0.4.25.0: banco ampliado (preguntas nuevas para los motivos de siempre + motivos contextuales nuevos)
+from alpha_football.prensa_banco import BANCO_EXTRA, PREGUNTAS_EXTRA, MOTIVO_TEXTO_EXTRA   # noqa: E402
+
+
+def _fusionar_banco() -> None:
+    for motivo, grupos in PREGUNTAS_EXTRA.items():
+        BANCO[motivo]['pre'].extend(grupos.get('pre', []))
+        for resultado, preguntas in (grupos.get('post') or {}).items():
+            BANCO[motivo]['post'].setdefault(resultado, []).extend(preguntas)
+    for motivo, grupos in BANCO_EXTRA.items():
+        BANCO[motivo] = grupos
+    MOTIVO_TEXTO.update(MOTIVO_TEXTO_EXTRA)
+
+
+_fusionar_banco()
+
 # Lo que dice el DT rival en la previa (se muestra en el overlay; su costo es -1 de moral si respondes).
 DECLARACIONES_RIVAL = (
     "No tenemos nada que temer de {club}. Vamos a imponer nuestro juego.",
@@ -459,53 +490,145 @@ def _ya_hecha(estado: dict, clave: str, fase: str) -> bool:
 
 
 # ------------------------------------------------------------------ cuándo se ofrece
-def motivo_partido(estado: dict, local, visitante, modo: str, pos: Optional[int] = None) -> Optional[str]:
+def _contador(estado: dict, clave: str) -> int:
+    """Un contador de logros.contadores (rachas): 0 si el guardado es viejo o no existe."""
+    try:
+        c = ((estado.get('datos_carrera') or {}).get('logros') or {}).get('contadores') or {}
+        return int(c.get(clave) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _tu_figura(mi) -> Optional[object]:
+    """El jugador de tu plantel que más goles lleva en la temporada (a igualdad, el de más media)."""
+    jugadores = list(getattr(mi, 'jugadores', None) or [])
+    if not jugadores:
+        return None
+    return max(jugadores, key=lambda j: (int(getattr(j, 'goles', 0) or 0), int(getattr(j, 'overall', 0) or 0)))
+
+
+def contexto(estado: dict, local, visitante, modo: str, pos: Optional[int] = None) -> dict:
+    """Lo que la conferencia sabe del momento (los datos que rellenan las preguntas y deciden el motivo): puesto tuyo y
+    del rival, rachas, lesionados, tu figura y la ronda de copa. Nunca lanza: lo que no se pueda leer queda en 0."""
+    ctx = {'puesto': 0, 'rival_puesto': 0, 'n': 0, 'jornada': 0, 'quedan': 99, 'racha': _contador(estado, 'racha'),
+           'derrotas': _contador(estado, 'derrotas_seguidas'), 'sin_ganar': _contador(estado, 'sin_ganar'),
+           'lesionados': 0, 'jugador': '', 'jugador_id': '', 'goles_figura': 0, 'fase': ''}
+    try:
+        liga, mi = estado.get('liga'), estado.get('mi_equipo')
+        if mi is not None:
+            ctx['lesionados'] = sum(1 for j in getattr(mi, 'jugadores', None) or []
+                                    if int(getattr(j, 'lesion_dias', 0) or 0) > 0)
+            figura = _tu_figura(mi)
+            if figura is not None:
+                ctx['jugador'] = str(getattr(figura, 'apellido', '') or getattr(figura, 'nombre', ''))
+                ctx['jugador_id'] = str(getattr(figura, 'id', ''))
+                ctx['goles_figura'] = int(getattr(figura, 'goles', 0) or 0)
+        if modo == 'copa':
+            ctx['fase'] = str((estado.get('partido_copa_dict') or {}).get('fase', '') or '')
+        if modo == 'liga' and liga is not None and mi is not None and getattr(liga, 'equipos', None):
+            tabla = sorted(liga.equipos, key=lambda x: (getattr(x, 'puntos', 0), getattr(x, 'gf', 0) - getattr(x, 'gc', 0),
+                                                        getattr(x, 'gf', 0)), reverse=True)
+            ctx['n'] = len(tabla)
+            ctx['puesto'] = int(pos) if pos else next((i + 1 for i, x in enumerate(tabla) if x.id == mi.id), 0)
+            rival = _rival_de(estado, local, visitante)
+            ctx['rival_puesto'] = next((i + 1 for i, x in enumerate(tabla)
+                                        if rival is not None and x.id == getattr(rival, 'id', None)), 0)
+            ctx['jornada'] = _jornada_de_liga(estado)
+            ctx['quedan'] = int(getattr(liga, 'num_jornadas', 0) or 0) - ctx['jornada'] + 1
+            ctx['diferencia_lider'] = getattr(tabla[0], 'puntos', 0) - getattr(mi, 'puntos', 0)
+    except Exception as e:
+        logger.error(f"prensa: no se pudo leer el contexto de la conferencia: {e}")
+    return ctx
+
+
+def _motivo_contextual(ctx: dict, fase: str) -> Optional[str]:
+    """Los motivos de contexto (v0.4.25.0), por prioridad. Se llaman solo cuando no hay título, descenso ni liderato."""
+    n, puesto, rival, jornada = ctx['n'], ctx['puesto'], ctx['rival_puesto'], ctx['jornada']
+    if jornada == 1:
+        return 'debut'
+    if 0 < ctx['quedan'] <= 2:
+        return 'cierre'
+    if ctx['derrotas'] >= RACHA_MALA or ctx['sin_ganar'] >= SIN_GANAR:
+        return 'racha_mala'
+    if ctx['racha'] >= RACHA_BUENA:
+        return 'racha_buena'
+    if fase == 'pre' and ctx['lesionados'] >= MIN_LESIONADOS:
+        return 'lesionados'
+    if jornada >= 4 and puesto and rival:
+        if puesto <= 4 and rival >= n - 3:
+            return 'favorito'
+        if puesto > n // 2 and rival <= 3:
+            return 'david'
+        if abs(puesto - rival) == 1 and (puesto <= 4 or puesto >= n - 4):
+            return 'rival_directo'
+    if jornada >= 5 and ctx['goles_figura'] >= MIN_GOLES_FIGURA:
+        return 'figura'
+    return None
+
+
+def motivo_partido(estado: dict, local, visitante, modo: str, pos: Optional[int] = None,
+                   fase: str = 'pre') -> Optional[str]:
     """Por qué este partido merece una conferencia (o None). `pos` pisa el puesto de liga del user (el post-partido
-    usa el de antes del partido). Nunca en amistosos. Los motivos de tabla solo valen en liga."""
+    usa el de antes del partido). Nunca en amistosos. Los motivos de tabla solo valen en liga; en copa, la final y
+    la semifinal tienen los suyos y cualquier otra ronda es 'copa_ronda'. `fase` ('pre' | 'post'): la enfermería
+    llena solo se pregunta en la previa."""
     try:
         if modo == 'amistoso':
             return None
         if modo == 'copa':
-            fase = str((estado.get('partido_copa_dict') or {}).get('fase', '')).lower()
-            if re.search(r'\bfinal\b', fase):
+            fase_copa = str((estado.get('partido_copa_dict') or {}).get('fase', '')).lower()
+            if re.search(r'\bfinal\b', fase_copa):
                 return 'copa_final'
-            if 'semi' in fase:
+            if 'semi' in fase_copa:
                 return 'copa_semi'
         from alpha_football.data.clasicos import es_clasico
         if es_clasico(local, visitante):
             return 'clasico'
+        if modo == 'copa':
+            return 'copa_ronda'
         if modo != 'liga':
             return None
         liga, mi = estado.get('liga'), estado.get('mi_equipo')
         if liga is None or mi is None or not getattr(liga, 'equipos', None):
             return None
-        tabla = sorted(liga.equipos, key=lambda x: (getattr(x, 'puntos', 0), getattr(x, 'gf', 0) - getattr(x, 'gc', 0),
-                                                    getattr(x, 'gf', 0)), reverse=True)
-        n = len(tabla)
-        puesto = int(pos) if pos else next((i + 1 for i, x in enumerate(tabla) if x.id == mi.id), 0)
+        ctx = contexto(estado, local, visitante, modo, pos)
+        puesto, n, jornada, quedan = ctx['puesto'], ctx['n'], ctx['jornada'], ctx['quedan']
         if not puesto:
             return None
-        diferencia = getattr(tabla[0], 'puntos', 0) - getattr(mi, 'puntos', 0)
-        jornada = _jornada_de_liga(estado)
-        quedan = int(getattr(liga, 'num_jornadas', 0) or 0) - jornada + 1
+        diferencia = ctx.get('diferencia_lider', 0)
         if quedan <= 6 and (puesto == 1 or diferencia <= 3):
             return 'titulo'
         if getattr(liga, 'division', 1) == 1 and puesto >= n - 1 and jornada >= 4:
             return 'descenso'
         if puesto == 1 and jornada >= 4:
             return 'lider'
+        return _motivo_contextual(ctx, fase)
     except Exception as e:
         logger.error(f"prensa: no se pudo evaluar el motivo del partido: {e}")
     return None
 
 
-def _pregunta(motivo: str, fase: str, resultado: Optional[str], clave: str, club: str, rival: str) -> dict:
-    """La pregunta (determinista por partido y fase) con `{rival}` y `{club}` ya rellenados."""
+def _marcas(ctx: Optional[dict], club: str, rival: str) -> dict:
+    """Las marcas {…} de las preguntas con su texto (con valores por defecto que suenan bien si falta el dato)."""
+    ctx = ctx or {}
+    return {'rival': rival, 'club': club, 'jugador': ctx.get('jugador') or "tu goleador",
+            'fase': ctx.get('fase') or "la copa", 'puesto': f"{ctx.get('puesto') or '?'}º",
+            'racha': str(ctx.get('racha') or RACHA_BUENA), 'lesionados': str(ctx.get('lesionados') or MIN_LESIONADOS)}
+
+
+def _pregunta(motivo: str, fase: str, resultado: Optional[str], clave: str, club: str, rival: str,
+              ctx: Optional[dict] = None) -> dict:
+    """La pregunta (determinista por partido y fase) con sus marcas ya rellenadas."""
     grupo = BANCO[motivo]['pre'] if fase == 'pre' else BANCO[motivo]['post'][resultado or 'empata']
     q = copy.deepcopy(random.Random(f"{clave}:{fase}").choice(grupo))
+    marcas = _marcas(ctx, club, rival)
+    # el elogio solo sube la moral de tu figura si la pregunta habla de ella ({jugador}); si no, es para el plantel
+    q['usa_jugador'] = any('{jugador}' in t for t in [q['texto'], *q['respuestas'].values()])
 
     def _llenar(texto: str) -> str:
-        return texto.replace('{rival}', rival).replace('{club}', club)
+        for k, v in marcas.items():
+            texto = texto.replace('{' + k + '}', v)
+        return texto
     q['texto'] = _llenar(q['texto'])
     q['respuestas'] = {t: _llenar(x) for t, x in q['respuestas'].items()}
     return q
@@ -526,17 +649,22 @@ def evaluar_pre(estado: dict, local, visitante, modo: str) -> Optional[dict]:
         if estado.get('prensa_pre_visto') == clave:      # ya se vio que este partido no tiene motivo
             return None
         estado.pop('prensa_overlay', None)               # una conferencia de otro partido que quedó colgada
-        motivo = motivo_partido(estado, local, visitante, modo)
-        if not motivo:
+        motivo = motivo_partido(estado, local, visitante, modo, fase='pre')
+        if not motivo or not (BANCO.get(motivo) or {}).get('pre'):
             estado['prensa_pre_visto'] = clave
             return None
         mi, rival = estado.get('mi_equipo'), _rival_de(estado, local, visitante)
         club, nombre_rival = getattr(mi, 'nombre', 'tu club'), getattr(rival, 'nombre', 'el rival')
         dt = _nombre_dt(estado, rival)
         frase = random.Random(f"{clave}:dt").choice(DECLARACIONES_RIVAL).replace('{club}', club)
+        ctx = contexto(estado, local, visitante, modo)
+        pregunta = _pregunta(motivo, 'pre', None, clave, club, nombre_rival, ctx)
+        pregunta_jugador = bool(pregunta.get('usa_jugador'))
         estado['prensa_overlay'] = {
             'fase': 'pre', 'clave': clave, 'modo': modo, 'motivo': motivo,
-            'pregunta': _pregunta(motivo, 'pre', None, clave, club, nombre_rival),
+            'pregunta': pregunta,
+            'jugador': ctx.get('jugador', '') if pregunta_jugador else '',
+            'jugador_id': ctx.get('jugador_id', '') if pregunta_jugador else '',
             'rival': nombre_rival, 'rival_id': str(getattr(rival, 'id', '')), 'club': club,
             'dt_rival': dt or f"El entrenador de {nombre_rival}", 'declaracion': frase,
             'resultado': None, 'marcador': None, 'respuesta': None}
@@ -555,17 +683,24 @@ def evaluar_post(estado: dict, local, visitante, gl: int, gv: int, modo: str,
         clave = _clave(estado, local, visitante, modo)
         if _ya_hecha(estado, clave, 'post'):
             return None
-        motivo = motivo_partido(estado, local, visitante, modo, pos=pos_antes)
-        if not motivo:
-            return None
+        motivo = motivo_partido(estado, local, visitante, modo, pos=pos_antes, fase='post')
         mi, rival = estado.get('mi_equipo'), _rival_de(estado, local, visitante)
         es_local = _es_mi(estado, local)
         gf, gc = (int(gl), int(gv)) if es_local else (int(gv), int(gl))
         resultado = 'gana' if gf > gc else ('pierde' if gf < gc else 'empata')
+        if abs(gf - gc) >= UMBRAL_GOLEADA and (motivo is None or motivo in _BAJA_PRIORIDAD):
+            motivo = 'goleada_favor' if gf > gc else 'goleada_contra'      # el marcador manda sobre el contexto menor
+        if not motivo or not (BANCO.get(motivo, {}).get('post') or {}).get(resultado):
+            return None
         club, nombre_rival = getattr(mi, 'nombre', 'tu club'), getattr(rival, 'nombre', 'el rival')
+        ctx = contexto(estado, local, visitante, modo, pos_antes)
+        pregunta = _pregunta(motivo, 'post', resultado, clave, club, nombre_rival, ctx)
+        pregunta_jugador = bool(pregunta.get('usa_jugador'))
         estado['prensa_overlay'] = {
             'fase': 'post', 'clave': clave, 'modo': modo, 'motivo': motivo,
-            'pregunta': _pregunta(motivo, 'post', resultado, clave, club, nombre_rival),
+            'pregunta': pregunta,
+            'jugador': ctx.get('jugador', '') if pregunta_jugador else '',
+            'jugador_id': ctx.get('jugador_id', '') if pregunta_jugador else '',
             'rival': nombre_rival, 'rival_id': str(getattr(rival, 'id', '')), 'club': club,
             'dt_rival': None, 'declaracion': None,
             'resultado': resultado, 'marcador': f"{gf}-{gc}", 'respuesta': None}
@@ -611,15 +746,30 @@ def _publicar(estado: dict, titular: str, cuerpo: str, importancia: int, clave: 
                 equipos=equipos, clave=clave)
 
 
-def _titular_de(tono: str, club: str, objetivo: str) -> str:
+def _titular_de(tono: str, club: str, objetivo: str, jugador: str = '') -> str:
     from alpha_football import noticias as _n
+    elogio = ((f"El DT de {club} elogia a {jugador}", f"{club}: el DT elogia a {jugador}")
+              if jugador else ())
     formas = {
         'motivador': (f"El DT de {club} levanta la moral del vestuario", f"{club}: el DT levanta la moral"),
         'provocador': (f"El DT de {club} provoca a {objetivo}", f"{club} provoca al rival"),
         'humilde': (f"El DT de {club} pide humildad y respeto", f"{club}: el DT pide humildad"),
         'agresivo': (f"El DT de {club} promete un partido muy duro", f"{club}: promete un partido duro"),
+        'ironico': (f"El DT de {club} responde con ironía", f"{club}: el DT ironiza"),
+        'diplomatico': (f"El DT de {club} pide calma y respeto", f"{club}: el DT pide calma"),
+        'elogioso': elogio + (f"El DT de {club} elogia a su plantel", f"{club}: el DT elogia al plantel"),
+        'evasivo': (f"El DT de {club} evita responder", f"{club}: el DT evita hablar"),
     }[tono]
     return _n.titular(*formas)
+
+
+def _jugador_de(estado: dict, conf: dict):
+    """El jugador de tu plantel por el que preguntaron (None si la pregunta no lo menciona)."""
+    jid = str(conf.get('jugador_id') or '')
+    mi = estado.get('mi_equipo')
+    if not jid or mi is None:
+        return None
+    return next((j for j in getattr(mi, 'jugadores', None) or [] if str(getattr(j, 'id', '')) == jid), None)
 
 
 def responder(estado: dict, conferencia: Optional[dict] = None, tono: str = 'humilde') -> dict:
@@ -628,7 +778,7 @@ def responder(estado: dict, conferencia: Optional[dict] = None, tono: str = 'hum
     vacio = {'texto': '', 'efectos': []}
     try:
         conf = conferencia if conferencia is not None else estado.get('prensa_overlay')
-        if not conf or tono not in TONOS:
+        if not conf or tono not in TONOS or tono not in (conf.get('pregunta') or {}).get('respuestas', {}):
             return vacio
         if conf.get('respuesta'):
             return conf['respuesta']
@@ -637,8 +787,11 @@ def responder(estado: dict, conferencia: Optional[dict] = None, tono: str = 'hum
         texto = conf['pregunta']['respuestas'][tono]
         efectos, objetivo_nombre = [], rival
         if conf['fase'] == 'pre' and conf.get('declaracion') and mi is not None:
-            mover_moral(mi.jugadores, _MORAL_POR_DT_RIVAL)
-            efectos.append(f"Las palabras de {conf['dt_rival']} te cuestan {_MORAL_POR_DT_RIVAL} de moral")
+            if tono == 'diplomatico':             # responder con altura le quita el golpe a las palabras del DT rival
+                efectos.append(f"Respondes con calma: las palabras de {conf['dt_rival']} no afectan a tu vestuario")
+            else:
+                mover_moral(mi.jugadores, _MORAL_POR_DT_RIVAL)
+                efectos.append(f"Las palabras de {conf['dt_rival']} te cuestan {_MORAL_POR_DT_RIVAL} de moral")
             from alpha_football import noticias as _n
             _publicar(estado, _n.titular(f"{conf['dt_rival']} manda un mensaje antes del partido",
                                          f"El DT de {rival} manda un mensaje"),
@@ -647,25 +800,37 @@ def responder(estado: dict, conferencia: Optional[dict] = None, tono: str = 'hum
         if tono in _MORAL_PROPIA and mi is not None:
             mover_moral(mi.jugadores, _MORAL_PROPIA[tono])
             efectos.append(f"+{_MORAL_PROPIA[tono]} de moral en tu plantel")
-        elif tono == 'provocador':
+        if tono in ('provocador', 'ironico'):
+            delta = _MORAL_RIVAL if tono == 'provocador' else _MORAL_RIVAL_IRONICO
             objetivo = (_buscar_equipo(estado, conf.get('rival_id')) if conf['fase'] == 'pre'
                         else _siguiente_rival(estado))
             if objetivo is not None and getattr(objetivo, 'jugadores', None):
-                _castigar(estado, objetivo, _MORAL_RIVAL)
+                _castigar(estado, objetivo, delta)
                 objetivo_nombre = objetivo.nombre
-                efectos.append(f"{_MORAL_RIVAL} de moral en {objetivo.nombre} hasta que juegues contra ellos")
-            else:
+                efectos.append(f"{delta} de moral en {objetivo.nombre} hasta que juegues contra ellos")
+            elif tono == 'provocador':
                 efectos.append("No te queda un rival al que provocar")
         elif tono == 'agresivo':
             _prensa(estado)['tension'] = FACTOR_TENSION
             efectos.append("Más tarjetas en tu próximo partido, para los dos equipos")
+        elif tono == 'elogioso' and mi is not None:
+            figura = _jugador_de(estado, conf)
+            if figura is not None:
+                mover_moral([figura], _MORAL_ELOGIO)
+                nombre_figura = getattr(figura, 'apellido', '') or getattr(figura, 'nombre', '')
+                efectos.append(f"+{_MORAL_ELOGIO} de moral en {nombre_figura}")
+            else:
+                mover_moral(mi.jugadores, 1)
+                efectos.append("+1 de moral en tu plantel")
+        elif tono == 'evasivo':
+            efectos.append("No dices nada que pueda traerte problemas")
         if conf['fase'] == 'pre':
-            contexto = f"Antes del partido ante {rival} ({MOTIVO_TEXTO[conf['motivo']].lower()})"
+            cuando = f"Antes del partido ante {rival} ({MOTIVO_TEXTO[conf['motivo']].lower()})"
         else:
             verbo = {'gana': "ganar", 'empata': "empatar", 'pierde': "perder"}[conf['resultado']]
-            contexto = f"Tras {verbo} {conf['marcador']} ante {rival}"
-        _publicar(estado, _titular_de(tono, club, objetivo_nombre),
-                  f"{contexto}, el DT de {club} dijo: «{texto}»", _IMPORTANCIA[tono],
+            cuando = f"Tras {verbo} {conf['marcador']} ante {rival}"
+        _publicar(estado, _titular_de(tono, club, objetivo_nombre, conf.get('jugador') if tono == 'elogioso' else ''),
+                  f"{cuando}, el DT de {club} dijo: «{texto}»", _IMPORTANCIA[tono],
                   f"prensa:{conf['clave']}:{conf['fase']}", [mi, conf.get('rival_id')])
         conf['respuesta'] = {'tono': tono, 'texto': texto, 'efectos': efectos}
         _marcar_hecha(estado, conf['clave'], conf['fase'])

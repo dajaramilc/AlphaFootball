@@ -296,6 +296,28 @@ def procesar_eventos_volumen(estado: dict, eventos_frame: list) -> list:
     return eventos_a_eliminar
 
 
+def filtrar_eventos_musica(estado: dict, eventos_frame: list) -> list:
+    """v0.4.24.0: el aviso de música no instalada ve primero cada evento del frame; devuelve los NO consumidos.
+    Abierto, la pantalla no recibe teclas ni clics (QUIT y los eventos de audio pasan)."""
+    if not estado.get('aviso_musica'):
+        return list(eventos_frame)
+    try:
+        from alpha_football.ui import musica_overlay as _musica
+    except Exception as e_imp:
+        logger.error(f"No se pudo cargar el aviso de música: {e_imp}")
+        estado.pop('aviso_musica', None)
+        return list(eventos_frame)
+    quedan = []
+    for ev in eventos_frame:
+        try:
+            if _musica.manejar_evento(estado, ev):
+                continue
+        except Exception as e_ev:
+            logger.error(f"Error del aviso de música con un evento: {e_ev}")
+        quedan.append(ev)
+    return quedan
+
+
 def filtrar_eventos_ayuda(estado: dict, eventos_frame: list) -> list:
     """v3.9.0: la ayuda (tecla H) ve primero cada evento del frame; devuelve los NO consumidos.
     Con la ayuda abierta se consume todo (salvo QUIT): la pantalla no recibe clics ni teclas."""
@@ -581,6 +603,11 @@ def main():
             logger.info("Música de fondo iniciada.")
         except Exception as e_audio:
             logger.warning(f"No se pudo inicializar la música: {e_audio}. El juego correrá en silencio.")
+        try:    # v0.4.24.0: sin pistas en la carpeta de música, aviso al iniciar con cómo conseguirlas
+            from alpha_football.ui import musica_overlay
+            musica_overlay.preparar(estado)
+        except Exception as e_aviso_musica:
+            logger.error(f"No se pudo preparar el aviso de música: {e_aviso_musica}")
 
         # Importar los renderers de pantalla UNA SOLA VEZ (antes se hacía `from ... import`
         # dentro del bucle, en cada frame). Se cargan tras pygame.init() para evitar problemas
@@ -616,6 +643,8 @@ def main():
 
             # v3.9.0: ayuda con la tecla H. Va antes que todo: con la ayuda abierta la pantalla
             # no recibe eventos (tampoco los atajos de volumen).
+            # v0.4.24.0: el aviso de música no instalada va antes que la ayuda (es modal).
+            _cached_frame_events = filtrar_eventos_musica(estado, _cached_frame_events)
             _cached_frame_events = filtrar_eventos_ayuda(estado, _cached_frame_events)
             # v4.2.0: M = correo, O = opciones (en carrera)
             _cached_frame_events = procesar_atajos_globales(estado, _cached_frame_events)
@@ -665,6 +694,14 @@ def main():
                     _atajos.dibujar(screen, current_screen, estado)
                 except Exception as e_barra:
                     logger.error(f"Error al dibujar la barra de atajos: {e_barra}")
+
+            # v0.4.24.0: aviso de música no instalada, encima de todo (veló la pantalla y la barra)
+            if estado.get('aviso_musica'):
+                try:
+                    from alpha_football.ui import musica_overlay as _musica
+                    _musica.dibujar(screen, estado)
+                except Exception as e_musica:
+                    logger.error(f"Error al dibujar el aviso de música: {e_musica}")
 
             # v0.4.11.0: lo que se abrió desde un mensaje vuelve a ese mensaje
             try:

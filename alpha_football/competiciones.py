@@ -1155,6 +1155,18 @@ def _avanzar_copa(estado: dict, c: Optional[dict], rng, jornada: Optional[int], 
         _armar_siguiente(c, rng)
         if espera_user:
             break
+    _anunciar_campeon(estado, c)
+
+
+def _anunciar_campeon(estado: dict, c: Optional[dict]) -> None:
+    """v0.4.25.0: la noticia del campeón sale en cuanto se juega la final, no al cerrar la temporada. Nunca tumba la copa."""
+    if not c or not c.get('campeon') or estado.get('liga') is None:
+        return
+    try:
+        from alpha_football import noticias_gen
+        noticias_gen.anunciar_copa(estado, c)
+    except Exception as e:
+        logger.error(f"competiciones: no se pudo anunciar al campeón de la {c.get('tipo')}: {e}", exc_info=True)
 
 
 def avanzar(estado: dict, rng=None) -> None:
@@ -1242,6 +1254,7 @@ def registrar_resultado_user(estado: dict, partido_id: str, gl: int, gv: int, pe
             rng = random.Random()
             _resolver_llaves(c, rng)
             _armar_siguiente(c, rng)
+            _anunciar_campeon(estado, c)
             return
     logger.warning(f"competiciones: partido {partido_id} no encontrado")
 

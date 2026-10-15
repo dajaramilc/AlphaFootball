@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-ALPHA FOOTBALL — Logros del DT (v0.4.23.0).
-Nueve hitos de la carrera. Cada uno que se desbloquea queda en `datos_carrera['logros']` y publica una noticia
+ALPHA FOOTBALL — Logros del DT (v0.4.25.0: de 9 a 29 hitos).
+Hitos de la carrera. Cada uno que se desbloquea queda en `datos_carrera['logros']` y publica una noticia
 'logro' de importancia 5 con un botón que abre HISTORIAL DE CARRERA. Lógica pura sobre `estado`: nada de pygame
 (el overlay vive en ui/career_screen.py).
 
     datos_carrera['logros'] = {'obtenidos': {id: {'temporada', 'jornada'}},
-                               'contadores': {'pj', 'racha', 'clasicos_seguidos'}}
+                               'contadores': {'pj', 'racha', 'clasicos_seguidos', 'victorias', 'invicto',
+                                              'derrotas_seguidas', 'sin_ganar', 'porteria_cero',
+                                              'visitante_ganados'}}
 """
 from __future__ import annotations
 
@@ -20,20 +22,49 @@ logger = logging.getLogger(__name__)
 # (id, título, descripción)
 LOGROS = [
     ('titulo_liga', "Campeón de liga", "Gana un título de liga."),
+    ('bicampeon', "Bicampeón", "Gana 2 títulos de liga."),
+    ('tricampeon', "Tricampeón", "Gana 3 títulos de liga."),
     ('final_continental', "Final continental", "Llega a una final de copa internacional."),
+    ('campeon_continental', "Campeón continental", "Gana la copa internacional de tu continente."),
+    ('balon_oro', "Balón de Oro en casa", "Un jugador de tu club gana el Balón de Oro."),
     ('pj_50', "50 partidos", "Dirige 50 partidos oficiales (liga y copa)."),
     ('pj_100', "100 partidos", "Dirige 100 partidos oficiales (liga y copa)."),
     ('pj_200', "200 partidos", "Dirige 200 partidos oficiales (liga y copa)."),
+    ('pj_300', "300 partidos", "Dirige 300 partidos oficiales (liga y copa)."),
+    ('pj_500', "500 partidos", "Dirige 500 partidos oficiales (liga y copa)."),
+    ('victorias_50', "50 victorias", "Gana 50 partidos oficiales."),
+    ('victorias_100', "100 victorias", "Gana 100 partidos oficiales."),
+    ('racha_5', "Cinco de cinco", "Gana 5 partidos oficiales seguidos."),
     ('racha_8', "Racha de ocho", "Gana 8 partidos oficiales seguidos."),
+    ('racha_12', "Imparable", "Gana 12 partidos oficiales seguidos."),
+    ('invicto_10', "Diez sin perder", "Pasa 10 partidos oficiales seguidos sin perder."),
+    ('invicto_20', "La muralla", "Pasa 20 partidos oficiales seguidos sin perder."),
+    ('manita', "La manita", "Gana un partido oficial por 5 goles de diferencia o más."),
+    ('muro_5', "El muro", "Deja la portería a cero en 5 partidos oficiales seguidos."),
+    ('viajero_5', "Ganador de visitante", "Gana 5 partidos oficiales seguidos como visitante."),
     ('salvado', "Salvado sobre la hora", "Sal de la zona de descenso en la última jornada de la liga."),
     ('clasicos_3', "Dueño del clásico", "Gana 3 clásicos seguidos."),
+    ('clasicos_5', "Rey de los clásicos", "Gana 5 clásicos seguidos."),
     ('fichaje_84', "Fichaje de lujo", "Ficha a un jugador de media 84 o más."),
+    ('goleador_30', "Goleador de 30", "Que uno de tus jugadores marque 30 goles en una temporada."),
+    ('millonario', "Caja fuerte", "Junta 1.000 millones de euros en la caja del club."),
+    ('temporadas_5', "Cinco temporadas", "Completa 5 temporadas al frente del club."),
+    ('temporadas_10', "Una década", "Completa 10 temporadas al frente del club."),
 ]
 _INFO = {i: (titulo, desc) for i, titulo, desc in LOGROS}
-_UMBRAL_PJ = (('pj_50', 50), ('pj_100', 100), ('pj_200', 200))
-_RACHA = 8
-_CLASICOS = 3
+# (logro, contador, umbral): se desbloquea cuando el contador llega al umbral
+_UMBRALES = (('pj_50', 'pj', 50), ('pj_100', 'pj', 100), ('pj_200', 'pj', 200), ('pj_300', 'pj', 300),
+             ('pj_500', 'pj', 500), ('victorias_50', 'victorias', 50), ('victorias_100', 'victorias', 100),
+             ('racha_5', 'racha', 5), ('racha_8', 'racha', 8), ('racha_12', 'racha', 12),
+             ('invicto_10', 'invicto', 10), ('invicto_20', 'invicto', 20), ('muro_5', 'porteria_cero', 5),
+             ('viajero_5', 'visitante_ganados', 5), ('clasicos_3', 'clasicos_seguidos', 3),
+             ('clasicos_5', 'clasicos_seguidos', 5))
+_CONTADORES = ('pj', 'racha', 'clasicos_seguidos', 'victorias', 'invicto', 'derrotas_seguidas', 'sin_ganar',
+               'porteria_cero', 'visitante_ganados')
+_DIFERENCIA_MANITA = 5
 _MEDIA_LUJO = 84
+_GOLES_GOLEADOR = 30
+_CAJA_MILLONARIO = 1_000_000_000
 _ACCION = {'pantalla': 'career_screen', 'texto': "VER LOGROS"}
 
 
@@ -49,7 +80,7 @@ def logros(estado: dict) -> dict:
         est['obtenidos'] = {}
     if not isinstance(est.get('contadores'), dict):
         est['contadores'] = {}
-    for clave in ('pj', 'racha', 'clasicos_seguidos'):
+    for clave in _CONTADORES:
         try:
             est['contadores'][clave] = int(est['contadores'].get(clave) or 0)
         except (TypeError, ValueError):
@@ -121,15 +152,20 @@ def registrar_partido(estado: dict, local, visitante, gl: int, gv: int, modo: st
         gano = gf > gc
         c = logros(estado)['contadores']
         c['pj'] += 1
+        c['victorias'] += 1 if gano else 0
         c['racha'] = c['racha'] + 1 if gano else 0              # un empate o una derrota corta la racha
+        c['invicto'] = c['invicto'] + 1 if gf >= gc else 0
+        c['derrotas_seguidas'] = c['derrotas_seguidas'] + 1 if gf < gc else 0
+        c['sin_ganar'] = 0 if gano else c['sin_ganar'] + 1
+        c['porteria_cero'] = c['porteria_cero'] + 1 if gc == 0 else 0
+        if not es_local:                                         # solo los partidos de visitante cuentan para esta racha
+            c['visitante_ganados'] = c['visitante_ganados'] + 1 if gano else 0
         from alpha_football.data.clasicos import es_clasico
         if es_clasico(local, visitante):                         # los partidos que no son clásico no tocan la cuenta
             c['clasicos_seguidos'] = c['clasicos_seguidos'] + 1 if gano else 0
-        candidatos = [i for i, umbral in _UMBRAL_PJ if c['pj'] >= umbral]
-        if c['racha'] >= _RACHA:
-            candidatos.append('racha_8')
-        if c['clasicos_seguidos'] >= _CLASICOS:
-            candidatos.append('clasicos_3')
+        candidatos = [i for i, contador, umbral in _UMBRALES if c[contador] >= umbral]
+        if gf - gc >= _DIFERENCIA_MANITA:
+            candidatos.append('manita')
         if modo == 'liga' and _salvado(estado, pos_antes):
             candidatos.append('salvado')
         for logro_id in candidatos:
@@ -140,10 +176,18 @@ def registrar_partido(estado: dict, local, visitante, gl: int, gv: int, modo: st
     return nuevos
 
 
+def _normal(texto) -> str:
+    return unicodedata.normalize('NFKD', str(texto or '')).encode('ascii', 'ignore').decode().lower()
+
+
 def _es_final(texto) -> bool:
     """'Final', 'Finalista', 'Subcampeón' o 'Campeón' sí; 'Semifinal' y el resto no."""
-    t = unicodedata.normalize('NFKD', str(texto or '')).encode('ascii', 'ignore').decode().lower()
-    return bool(re.search(r'\bfinal(ista)?\b|campe', t))
+    return bool(re.search(r'\bfinal(ista)?\b|campe', _normal(texto)))
+
+
+def _es_campeon(texto) -> bool:
+    """'Campeón' sí; 'Subcampeón', 'Finalista' y el resto no."""
+    return bool(re.search(r'\bcampe', _normal(texto)))
 
 
 def _hay_fichaje_de_lujo(estado: dict) -> bool:
@@ -157,16 +201,37 @@ def _hay_fichaje_de_lujo(estado: dict) -> bool:
         and int(p.get('media', 0) or 0) >= _MEDIA_LUJO for p in historial)
 
 
+def _titulos_de_liga(historial: list) -> int:
+    return sum(1 for h in historial if h.get('pos') == 1)
+
+
+def _hay_goleador(estado: dict) -> bool:
+    jugadores = getattr(estado.get('mi_equipo'), 'jugadores', None) or []
+    return any(int(getattr(j, 'goles', 0) or 0) >= _GOLES_GOLEADOR for j in jugadores)
+
+
+def _caja(estado: dict) -> int:
+    return int(getattr(estado.get('mi_equipo'), 'balance', 0) or 0)
+
+
 def revisar(estado: dict, temporada: Optional[int] = None, jornada: Optional[int] = None) -> list:
-    """Los logros que salen de mirar el estado (título de liga, final continental, fichaje de lujo).
-    Se llama al cerrar cada jornada y al cerrar la temporada; devuelve los ids recién desbloqueados."""
+    """Los logros que salen de mirar el estado (títulos, finales y copas, fichaje de lujo, goleador, caja,
+    temporadas cumplidas). Se llama al cerrar cada jornada y al cerrar la temporada; devuelve los ids
+    recién desbloqueados. 'balon_oro' lo desbloquea la gala del premio (premios.py), no esta revisión."""
     nuevos: list = []
     historial = [h for h in (estado.get('historial') or []) if isinstance(h, dict)]
+    fases = [h.get('libertadores') for h in historial] + [estado.get('copa_mejor_fase_temp')]
     comprobaciones = (
-        ('titulo_liga', lambda: any(h.get('pos') == 1 for h in historial)),
-        ('final_continental', lambda: any(_es_final(t) for t in
-                                          [h.get('libertadores') for h in historial] + [estado.get('copa_mejor_fase_temp')])),
+        ('titulo_liga', lambda: _titulos_de_liga(historial) >= 1),
+        ('bicampeon', lambda: _titulos_de_liga(historial) >= 2),
+        ('tricampeon', lambda: _titulos_de_liga(historial) >= 3),
+        ('final_continental', lambda: any(_es_final(t) for t in fases)),
+        ('campeon_continental', lambda: any(_es_campeon(t) for t in fases)),
         ('fichaje_84', lambda: _hay_fichaje_de_lujo(estado)),
+        ('goleador_30', lambda: _hay_goleador(estado)),
+        ('millonario', lambda: _caja(estado) >= _CAJA_MILLONARIO),
+        ('temporadas_5', lambda: len(historial) >= 5),
+        ('temporadas_10', lambda: len(historial) >= 10),
     )
     for logro_id, se_cumple in comprobaciones:
         try:

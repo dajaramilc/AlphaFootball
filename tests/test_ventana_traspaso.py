@@ -54,8 +54,9 @@ def test_ia_no_revende_en_la_misma_ventana():
         ronda_fichajes_ia(e, 'pretemporada', random.Random(_))
     pases = [h for h in e['datos_carrera']['historial_pases'] if not h['propio']]
     assert pases, "la IA debería fichar algo"
-    # nadie cambió de club dos veces en la ventana
-    nombres = [h['jugador'] for h in pases]
+    # nadie cambió de club dos veces en la ventana (v0.4.21.0: soltar a un sobrante deja un pase "a Libre" y su
+    # fichaje posterior otro "de Libre"; lo que cuenta son las llegadas a un club)
+    nombres = [h['jugador'] for h in pases if not str(h['a']).startswith('Libre')]
     assert len(nombres) == len(set(nombres)), [n for n in nombres if nombres.count(n) > 1]
     print("  test_ia_no_revende_en_la_misma_ventana: OK")
 

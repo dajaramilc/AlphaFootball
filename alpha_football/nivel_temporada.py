@@ -163,6 +163,7 @@ def preparar(estado: dict, paises=None) -> None:
     foto_pm = (foto.get('pos_max') or {}) if foto.get('temporada') == temporada_fin else {}
     fallo_user = objetivo_fallado_user(estado)
     plan = {}
+    resultados = {}      # v0.4.26.0: {club: [resultado, campeón de liga]} para su presupuesto de la temporada nueva
     for liga, tipo, division in _ligas(estado, paises):
         medias = medias_por_puesto(liga)
         nj = _num_jornadas(liga)
@@ -174,12 +175,18 @@ def preparar(estado: dict, paises=None) -> None:
                     fallo = fallo_user
                 else:
                     pm = foto_pm.get(eq.nombre) or pos_max_ia(liga, tipo, division, eq, rk)
-                    fallo = tabla.index(eq) + 1 > int(pm)
+                    puesto = tabla.index(eq) + 1
+                    fallo = puesto > int(pm)
+                    # mismo criterio que la directiva con el user (directiva.evaluar_temporada)
+                    resultados[eq.nombre] = ['superado' if puesto < int(pm) else 'fallado' if fallo else 'cumplido',
+                                             int(division or 1) == 1 and puesto == 1]
                 plan[id(eq)] = {'medias': medias, 'num_jornadas': nj, 'objetivo_fallado': bool(fallo),
                                 'grande': int(division or 1) == 1 and rk.index(eq) < len(rk) // 2}
             except Exception as e_eq:
                 logger.error(f"No se pudo preparar el nivel de {getattr(eq, 'nombre', '?')}: {e_eq}")
     estado['_nivel_plan'] = plan
+    # va a datos_carrera (se guarda): mercado_ia.ingresos_fin_temporada lo consume al reajustar el presupuesto
+    dc['resultados_ia'] = {**(dc.get('resultados_ia') or {}), **resultados}
     estado['_nivel_tmp'] = {}
     estado['_nivel_movidos'] = set()
     estado.pop('_nivel_user', None)

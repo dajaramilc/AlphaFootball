@@ -59,6 +59,7 @@ BRECHA_SANEO = 6               # v0.4.20.0: el suplente que se vende debe estar 
 FRACCION_VENTANA = 0.6         # parte del saldo que un club gasta en un fichaje con el mercado abierto
 PROB_CLUB_VENTANA = 0.25       # clubes que buscan refuerzo por jornada con el mercado abierto
 PROB_CLUB_INICIO = 0.50        # v0.4.11.0: en la ventana de inicio (reemplaza a la ronda de pretemporada)
+PROB_CLUB_HORA = 0.006         # v0.4.25.0: por club y por hora del último día de fichajes (la ronda de cierre sigue)
 MEJORA_MINIMA = 2             # el fichaje debe superar al titular más flojo por 2+
 
 
@@ -104,13 +105,17 @@ def ingresos_fin_temporada(estado: dict, rng: Optional[random.Random] = None, pa
     """
     v4.6.0: al empezar la temporada cada club de la IA cobra sus ingresos (patrocinio + taquilla,
     como el user) y paga su masa salarial. El que queda en rojo quiebra (quiebra_ia).
+    v0.4.26.0: tras cobrar y pagar, todo club reajusta su presupuesto de la temporada como el user (el saldo
+    no se arrastra: base × objetivo × salud, con techo y sin bajar de lo que cubre sus sueldos de una temporada
+    mala); la quiebra se decide antes, con el saldo real.
     Devuelve los nombres de los clubes que quebraron.
     """
-    from alpha_football.finanzas import ingresos_esperados, masa_salarial
+    from alpha_football.finanzas import ingresos_esperados, masa_salarial, presupuesto_nuevo_ia
     from alpha_football.entrenadores import dt_de, sueldo as sueldo_dt
     azar = rng or random.Random()
     mi_equipo = estado.get('mi_equipo')
     quebrados = []
+    resultados = (estado.get('datos_carrera') or {}).get('resultados_ia') or {}   # lo guardó nivel_temporada.preparar
     filtro = set(paises) if paises is not None else None     # v0.4.16.0: el cierre de un continente
     try:    # v0.4.20.0: antes de pagar, el que no llega vende suplentes (los recién descendidos, sobre todo)
         sanear_ia(estado, azar, paises)
@@ -129,6 +134,18 @@ def ingresos_fin_temporada(estado: dict, rng: Optional[random.Random] = None, pa
                           - sueldo_dt(dt_de(estado, eq)))          # v4.6.0: + el sueldo de su DT
             if eq.balance < -COLCHON_QUIEBRA_IA * ingreso:
                 quebrados.append(eq)
+            try:    # v0.4.26.0: el presupuesto de la temporada nueva (se consume el resultado: no pasa a la siguiente)
+                resultado, campeon = resultados.pop(eq.nombre, ('', False))
+                ing_esp, gasto, _margen = cuentas(estado, eq, tipo, division)
+                hueco = max(0, gasto - int(ing_esp * VARIACION_INGRESOS_IA[0]))    # sueldos de una temporada mala
+                eq.balance = presupuesto_nuevo_ia(eq, tipo, division, resultado, bool(campeon), cobertura=hueco)
+            except Exception as e_pres:
+                logger.error(f"No se pudo reajustar el presupuesto de {getattr(eq, 'nombre', '?')}: {e_pres}")
+    try:    # v0.4.25.0: tras cobrar, ningún club pasa del techo de presupuesto
+        from alpha_football.finanzas import limitar_presupuestos
+        limitar_presupuestos(estado)
+    except Exception as e_techo:
+        logger.error(f"No se pudo aplicar el techo de presupuesto: {e_techo}")
     for eq in quebrados:
         try:
             quiebra_ia(estado, eq, azar)
@@ -626,9 +643,10 @@ def ronda_fichajes_ia(estado: dict, modo: str = 'ventana',
     log = []
     saneo = []
     try:    # v0.4.20.0: antes de comprar, plantillas completas y los que no llegan a fin de año venden
-        asegurar_minimo_ia(estado)
-        resolver_remates(estado, azar)       # v0.4.21.0: sin reloj, los plazos vencen aquí
-        saneo = sanear_ia(estado, azar)      # ya quedó en mercado_ia_log
+        if modo != 'hora':
+            asegurar_minimo_ia(estado)
+            resolver_remates(estado, azar)       # v0.4.21.0: sin reloj, los plazos vencen aquí
+            saneo = sanear_ia(estado, azar)      # ya quedó en mercado_ia_log
     except Exception as e_san:
         logger.error(f"No se pudo sanear a la IA antes de la ronda: {e_san}")
     for comprador, tipo_c, div_c in compradores:
@@ -638,7 +656,7 @@ def ronda_fichajes_ia(estado: dict, modo: str = 'ventana',
         if modo == 'pretemporada':
             intentos, fraccion = (3 if es_asc else 2), 0.9
         else:
-            if azar.random() > (PROB_CLUB_INICIO if en_inicio else PROB_CLUB_VENTANA):
+            if azar.random() > (PROB_CLUB_HORA if modo == 'hora' else PROB_CLUB_INICIO if en_inicio else PROB_CLUB_VENTANA):
                 continue
             intentos, fraccion = (2 if es_asc and en_inicio else 1), FRACCION_VENTANA
         try:    # v0.4.21.0: primero mira la bolsa de agentes libres (gratis); si firma a uno, ya hizo su movimiento

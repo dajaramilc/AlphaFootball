@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 ALPHA FOOTBALL — Noticias (v0.4.23.0). OFICINA > NOTICIAS.
-Lista de las noticias vigentes a la izquierda (primero las más importantes, dentro las más recientes) y el
-detalle a la derecha: imagen 9:16 de la categoría, etiqueta, titular, "Temporada X – Jornada Y" y el cuerpo.
+Lista de las noticias vigentes a la izquierda (primero las más recientes, dentro del mismo día las más importantes) y el
+detalle a la derecha: imagen 9:16 de la categoría, etiqueta, titular, la fecha real ("sáb 12 sep 2026") y el cuerpo.
 Al elegir una noticia se marca leída. Si trae `accion` ({'pantalla', 'texto'}) hay un botón que navega allí.
 Teclado: ↑ ↓ elegir · RePág AvPág saltar 10 · Inicio / Fin · Enter ir (si hay botón) · Esc volver.
 """
@@ -76,9 +76,11 @@ def _a_la_vista(estado: dict, sel: int, total: int) -> None:
     estado['noticias_scroll'] = max(0, min(desde, max(0, total - FILAS_VISIBLES)))
 
 
-def _texto_ajustado(texto: str, fuente, ancho: int) -> str:
-    lineas = V.envolver(texto, fuente, ancho, 1)
-    return lineas[0] if lineas else ""
+def _titular_de_fila(texto: str, ancho: int) -> tuple:
+    """(tamaño, texto) del titular en una sola línea: en 'sm' si cabe y, si no, en 'xs' (recortado solo si
+    tampoco cabe así)."""
+    nombre, _f, lineas = V.ajustar(texto, ancho, 1, 'sm')
+    return nombre, (lineas[0] if lineas else "")
 
 
 def _dibujar_lista(screen, estado: dict, lista: list, sel: int, mouse_pos) -> None:
@@ -100,7 +102,10 @@ def _dibujar_lista(screen, estado: dict, lista: list, sel: int, mouse_pos) -> No
         pygame.draw.rect(screen, tuple(N.COLOR.get(n.get('categoria')) or N.COLOR['general']),
                          pygame.Rect(r.x, r.y, 6, r.height), border_radius=3)
         draw_text(screen, N.etiqueta(n), (r.x + 16, r.y + 3), size='sm', color='azul', shadow=False)
-        draw_text(screen, _texto_ajustado(n.get('titular', ''), f_sm, r.width - 52), (r.x + 16, r.y + 27), size='sm',
+        fecha = N.fecha_texto(n, largo=False)
+        draw_text(screen, fecha, (r.right - f_sm.size(fecha)[0] - 32, r.y + 3), size='sm', color='azul', shadow=False)
+        tam, titular = _titular_de_fila(n.get('titular', ''), r.width - 52)
+        draw_text(screen, titular, (r.x + 16, r.y + 27 + (2 if tam == 'xs' else 0)), size=tam,
                   color='blanco' if n.get('leida') else 'dorado', shadow=False)
         if not n.get('leida'):
             pygame.draw.circle(screen, (255, 215, 0), (r.right - 16, r.y + r.height // 2), 5)
@@ -117,21 +122,39 @@ def _dibujar_detalle(screen, n: Optional[dict], mouse_pos) -> None:
     screen.blit(V.tarjeta(n, R_IMAGEN.width, R_IMAGEN.height, titular=False), R_IMAGEN.topleft)
     pygame.draw.rect(screen, (0, 191, 255), R_IMAGEN, width=1)
     x, y, ancho = R_TEXTO.x, R_TEXTO.y, R_TEXTO.width
-    f_lg, f_sm = get_font('lg'), get_font('sm')
     draw_text(screen, N.etiqueta(n), (x, y), size='sm', color='dorado')
     y += 32
-    for ln in V.envolver(n.get('titular'), f_lg, ancho, 4):
-        draw_text(screen, ln, (x, y), size='lg', color='blanco')
-        y += f_lg.get_linesize()
+    # v0.4.25.0: el titular va en 'md' (antes 'lg') y baja a 'sm' o 'xs' si es largo, para que quepa entero
+    tam_t, f_t, lineas_t = V.ajustar(n.get('titular'), ancho, 4, 'md')
+    for ln in lineas_t:
+        draw_text(screen, ln, (x, y), size=tam_t, color='blanco')
+        y += f_t.get_linesize()
     y += 6
-    draw_text(screen, f"Temporada {n.get('temporada', '?')} – Jornada {n.get('jornada', '?')}", (x, y),
-              size='sm', color='azul')
+    draw_text(screen, N.fecha_texto(n), (x, y), size='sm', color='azul')
     y += 34
     limite = (R_ACCION.y - 12) if n.get('accion') else (R_TEXTO.bottom - 8)
-    lineas = V.envolver(n.get('cuerpo'), f_sm, ancho, max(1, (limite - y) // f_sm.get_linesize()))
+    # el cuerpo respeta sus saltos de línea (equipo del año, campeones...). Baja de 'sm' a 'xs' cuando así cada
+    # renglón cabe sin partirse (listas legibles); si ni así, la primera letra en que el texto entra completo
+    cuerpo = n.get('cuerpo')
+    primera_que_cabe = None
+    for candidata in ('sm', 'xs'):
+        f_c = get_font(candidata)
+        cupo = max(1, (limite - y) // f_c.get_linesize())
+        propias = len(V.envolver(cuerpo, f_c, 10 ** 6, 10 ** 4))        # renglones del texto sin partir ninguno
+        cabe = len(V.envolver(cuerpo, f_c, ancho, cupo + 1)) <= cupo
+        if cabe and len(V.envolver(cuerpo, f_c, ancho, cupo)) == propias:
+            tam_c = candidata
+            break
+        if cabe and primera_que_cabe is None:
+            primera_que_cabe = candidata
+    else:
+        tam_c = primera_que_cabe or 'xs'
+    f_c = get_font(tam_c)
+    lineas = V.envolver(cuerpo, f_c, ancho, max(1, (limite - y) // f_c.get_linesize()))
     for ln in lineas:
-        draw_text(screen, ln, (x, y), size='sm', color='blanco', shadow=False)
-        y += f_sm.get_linesize()
+        es_seccion = 0 < len(ln) <= 16 and ln.isupper()           # PORTERO, DEFENSAS... (equipo del año)
+        draw_text(screen, ln, (x, y), size=tam_c, color='dorado' if es_seccion else 'blanco', shadow=False)
+        y += f_c.get_linesize()
     accion = n.get('accion')
     if accion:
         draw_button(screen, R_ACCION, str(accion.get('texto') or "ABRIR"), R_ACCION.collidepoint(mouse_pos))

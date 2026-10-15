@@ -289,6 +289,21 @@ MAX_FICHAJES_IA_JORNADA = 4     # noticias de fichajes entre clubes de la IA por
 BONO_TU_LIGA = 3                # puntaje = media + esto si participa un club de tu liga (tus rivales pesan más)
 
 
+def _hora_del_ultimo_dia(estado: dict) -> Optional[int]:
+    """Las horas que quedan del último día de fichajes (None fuera de él). Solo lee: no crea el reloj ni el bloque
+    del calendario (`dia_final.activo` los asegura, y una partida sin reloj cambiaría de comportamiento)."""
+    try:
+        cal = (estado.get('datos_carrera') or {}).get('calendario')
+        bloque = cal.get('dia_final') if isinstance(cal, dict) else None
+        if not isinstance(bloque, dict) or bloque.get('fecha') != cal.get('dia'):
+            return None
+        horas = int(bloque.get('horas', 0) or 0)
+        return horas if horas > 0 else None
+    except Exception as e:
+        logger.debug(f"negociacion: sin hora del último día: {e}")
+        return None
+
+
 def _noticia_fichaje(estado: dict, jugador, de: str, a: str, monto: int, propio: bool, confirmado: bool) -> None:
     """v0.4.23.0: un traspaso relevante es noticia.
     Tuyo (compra o venta): siempre; media >= 85 → importancia 5, >= 80 → 4, resto → 3.
@@ -308,10 +323,11 @@ def _noticia_fichaje(estado: dict, jugador, de: str, a: str, monto: int, propio:
         if not confirmado and media < (76 if de_tu_liga else 80):
             return
         importancia = 5 if media >= 90 else 4 if media >= 85 else 3
+    hora = _hora_del_ultimo_dia(estado)      # v0.4.25.0: el último día cada hora tiene su propio cupo de noticias
     if not propio and not confirmado:
         ahora = tuple(_clave_jornada(estado))
         hoy = [n for n in noticias.lista(estado) if n['tipo'] == 'fichaje' and not n.get('propio')
-               and not n.get('confirmado') and (n['temporada'], n['jornada']) == ahora]
+               and not n.get('confirmado') and (n['temporada'], n['jornada']) == ahora and n.get('hora') == hora]
         if len(hoy) >= MAX_FICHAJES_IA_JORNADA:
             flojo = min(hoy, key=lambda n: (n.get('puntaje', 0), n['id']))
             if puntaje <= flojo.get('puntaje', 0):
@@ -329,7 +345,7 @@ def _noticia_fichaje(estado: dict, jugador, de: str, a: str, monto: int, propio:
                       + ("que llega libre." if libre else f"que llega desde {de} por {dinero_exacto(monto)}."),
                       importancia=importancia, equipos=[clubes[n] for n in (str(a), str(de)) if n in clubes],
                       jugadores=[jugador], media=media, propio=bool(propio), confirmado=bool(confirmado),
-                      puntaje=puntaje)
+                      puntaje=puntaje, **({'hora': hora} if hora is not None else {}))
 
 
 def registrar_pase(estado: dict, jugador, de: str, a: str, monto: int, propio: bool,

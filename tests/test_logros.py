@@ -1,4 +1,4 @@
-"""0.4.23.0: logros del DT (nueve hitos, cada uno publica una noticia) y su overlay en HISTORIAL DE CARRERA."""
+"""0.4.23.0: logros del DT (cada uno publica una noticia) y su overlay en HISTORIAL DE CARRERA. 0.4.25.0: 29 hitos."""
 import sys, os, copy, json
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ['SDL_VIDEODRIVER'] = 'dummy'
@@ -17,6 +17,9 @@ from alpha_football.ui import career_screen as C
 _BASE = None
 IDS = ('titulo_liga', 'final_continental', 'pj_50', 'pj_100', 'pj_200', 'racha_8', 'salvado', 'clasicos_3',
        'fichaje_84')
+IDS_NUEVOS = ('bicampeon', 'tricampeon', 'campeon_continental', 'balon_oro', 'pj_300', 'pj_500', 'victorias_50',
+              'victorias_100', 'racha_5', 'racha_12', 'invicto_10', 'invicto_20', 'manita', 'muro_5', 'viajero_5',
+              'clasicos_5', 'goleador_30', 'millonario', 'temporadas_5', 'temporadas_10')
 
 
 def _estado():
@@ -68,7 +71,8 @@ def test_estructura_y_json():
     assert set(est['contadores']) >= {'pj', 'racha', 'clasicos_seguidos'} and est['obtenidos'] == {}
     json.dumps(d)
     assert G.logros({})['obtenidos'] == {}                               # sin datos_carrera (guardado viejo)
-    assert len(G.LOGROS) == 9 and {x[0] for x in G.LOGROS} == set(IDS)
+    assert len(G.LOGROS) == 29 and {x[0] for x in G.LOGROS} == set(IDS) | set(IDS_NUEVOS)
+    assert len({x[0] for x in G.LOGROS}) == len(G.LOGROS)                # sin ids repetidos
     assert all(titulo and desc for _id, titulo, desc in G.LOGROS)
 
 
@@ -98,6 +102,82 @@ def test_racha_8():
     assert 'racha_8' not in _obtenidos(e)
     assert 'racha_8' in G.registrar_partido(e, mi, rival, 2, 0, 'liga')
     assert 'racha_8' in _obtenidos(e)
+
+
+def test_rachas_y_conteos_nuevos():
+    """v0.4.25.0: racha_5 / racha_12, invicto_10 / invicto_20, muro_5, manita, victorias_50 / 100."""
+    e = _estado(); mi = e['mi_equipo']; rival = _rivales(e)[0]
+    for _ in range(4):
+        G.registrar_partido(e, mi, rival, 1, 0, 'liga')
+    assert 'racha_5' not in _obtenidos(e) and 'muro_5' not in _obtenidos(e)
+    assert set(G.registrar_partido(e, mi, rival, 1, 0, 'liga')) >= {'racha_5', 'muro_5'}
+    c = G.logros(e)['contadores']
+    assert (c['racha'], c['victorias'], c['invicto'], c['porteria_cero']) == (5, 5, 5, 5)
+    for _ in range(4):
+        G.registrar_partido(e, mi, rival, 1, 1, 'liga')                  # los empates no son victorias pero tampoco derrotas
+    c = G.logros(e)['contadores']
+    assert (c['racha'], c['invicto'], c['sin_ganar'], c['porteria_cero']) == (0, 9, 4, 0)
+    assert 'invicto_10' in G.registrar_partido(e, mi, rival, 2, 1, 'liga')
+    G.registrar_partido(e, mi, rival, 0, 1, 'liga')                      # una derrota corta el invicto
+    c = G.logros(e)['contadores']
+    assert (c['invicto'], c['derrotas_seguidas'], c['sin_ganar']) == (0, 1, 1)
+    G.registrar_partido(e, mi, rival, 0, 3, 'liga')
+    assert G.logros(e)['contadores']['derrotas_seguidas'] == 2
+    G.registrar_partido(e, mi, rival, 2, 0, 'liga')
+    assert G.logros(e)['contadores']['derrotas_seguidas'] == 0
+    e2 = _estado(); mi2 = e2['mi_equipo']; r2 = _rivales(e2)[0]
+    assert 'manita' not in G.registrar_partido(e2, mi2, r2, 4, 0, 'liga')   # 4 goles de diferencia no alcanzan
+    assert 'manita' in G.registrar_partido(e2, mi2, r2, 6, 1, 'liga')
+    e3 = _estado(); mi3 = e3['mi_equipo']; r3 = _rivales(e3)[0]
+    for _ in range(11):
+        G.registrar_partido(e3, mi3, r3, 1, 0, 'liga')
+    assert 'racha_12' not in _obtenidos(e3) and 'victorias_50' not in _obtenidos(e3)
+    assert 'racha_12' in G.registrar_partido(e3, mi3, r3, 1, 0, 'liga')
+    for _ in range(37):
+        G.registrar_partido(e3, mi3, r3, 1, 0, 'liga')
+    assert G.logros(e3)['contadores']['victorias'] == 49 and 'victorias_50' not in _obtenidos(e3)
+    assert 'victorias_50' in G.registrar_partido(e3, mi3, r3, 1, 0, 'liga')
+
+
+def test_invicto_20_y_viajero_5():
+    e = _estado(); mi = e['mi_equipo']; rival = _rivales(e)[0]
+    for _ in range(19):
+        G.registrar_partido(e, mi, rival, 0, 0, 'liga')
+    assert 'invicto_20' not in _obtenidos(e)
+    assert 'invicto_20' in G.registrar_partido(e, mi, rival, 0, 0, 'copa')
+    e = _estado(); mi = e['mi_equipo']; rival = _rivales(e)[0]
+    for _ in range(3):
+        G.registrar_partido(e, rival, mi, 0, 2, 'liga')                  # visitante y gana
+    G.registrar_partido(e, mi, rival, 0, 1, 'liga')                      # un partido en casa, aunque se pierda, no corta
+    G.registrar_partido(e, rival, mi, 0, 2, 'liga')
+    assert 'viajero_5' not in _obtenidos(e)
+    assert 'viajero_5' in G.registrar_partido(e, rival, mi, 0, 2, 'liga')
+    e = _estado(); mi = e['mi_equipo']; rival = _rivales(e)[0]
+    for _ in range(4):
+        G.registrar_partido(e, rival, mi, 0, 2, 'liga')
+    G.registrar_partido(e, rival, mi, 1, 1, 'liga')                      # un empate de visitante sí corta
+    assert G.logros(e)['contadores']['visitante_ganados'] == 0
+
+
+def test_clasicos_5_seguidos():
+    e = _estado(); mi = e['mi_equipo']
+    rc, _rn = _rivales(e)
+    mi.rival = rc.nombre
+    for _ in range(4):
+        G.registrar_partido(e, mi, rc, 2, 0, 'liga')
+    assert 'clasicos_3' in _obtenidos(e) and 'clasicos_5' not in _obtenidos(e)
+    assert 'clasicos_5' in G.registrar_partido(e, mi, rc, 1, 0, 'liga')
+
+
+def test_pj_300_y_500():
+    e = _estado(); mi = e['mi_equipo']; rival = _rivales(e)[0]
+    for _ in range(299):
+        G.registrar_partido(e, mi, rival, 0, 1, 'liga')
+    assert 'pj_300' not in _obtenidos(e)
+    assert 'pj_300' in G.registrar_partido(e, mi, rival, 0, 1, 'liga')
+    for _ in range(199):
+        G.registrar_partido(e, mi, rival, 0, 1, 'liga')
+    assert 'pj_500' in G.registrar_partido(e, mi, rival, 0, 1, 'liga')
 
 
 def test_racha_cuenta_de_visitante():
@@ -175,6 +255,49 @@ def test_titulo_y_final_continental():
     assert G.revisar(e) == []
 
 
+def test_logros_del_historial_y_del_estado():
+    """v0.4.25.0: bicampeón, tricampeón, campeón continental, temporadas, goleador de 30 y caja fuerte."""
+    e = _estado()
+    e['historial'] = [{'temporada': 1, 'pos': 1, 'libertadores': 'Cuartos'}]
+    assert G.revisar(e) == ['titulo_liga']
+    e['historial'].append({'temporada': 2, 'pos': 1, 'libertadores': 'Subcampeón'})
+    nuevos = G.revisar(e)
+    assert 'bicampeon' in nuevos and 'final_continental' in nuevos and 'campeon_continental' not in nuevos
+    e['historial'].append({'temporada': 3, 'pos': 1, 'libertadores': 'Campeón'})
+    nuevos = G.revisar(e)
+    assert set(nuevos) == {'tricampeon', 'campeon_continental'}
+    assert G.revisar(e) == []                                            # cada uno, una sola vez
+    e = _estado()
+    e['historial'] = [{'temporada': t, 'pos': 6, 'libertadores': ''} for t in range(1, 5)]
+    assert G.revisar(e) == []
+    e['historial'].append({'temporada': 5, 'pos': 6, 'libertadores': ''})
+    assert G.revisar(e) == ['temporadas_5']
+    e['historial'] += [{'temporada': t, 'pos': 6, 'libertadores': ''} for t in range(6, 11)]
+    assert G.revisar(e) == ['temporadas_10']
+    e = _estado(); mi = e['mi_equipo']
+    mi.jugadores[0].goles = 29
+    assert 'goleador_30' not in G.revisar(e)
+    mi.jugadores[0].goles = 30
+    assert 'goleador_30' in G.revisar(e)
+    mi.balance = 999_999_999
+    assert 'millonario' not in G.revisar(e)
+    mi.balance = 1_000_000_000
+    assert 'millonario' in G.revisar(e)
+
+
+def test_balon_de_oro_de_tu_club_desbloquea_su_logro():
+    from alpha_football import premios as PR
+    e = _estado(); mi = e['mi_equipo']
+    ajeno = {'nombre': "Otro Jugador", 'equipo': "Club Ajeno", 'liga': 'X', 'goles': 20, 'asistencias': 5, 'nota': 7.4}
+    PR._entregar(e, {'premio': 'balon_oro', 'datos': {'ganador': ajeno, 'podio': [ajeno], 'temporada': 1}}, gala=False)
+    assert 'balon_oro' not in _obtenidos(e)
+    propio = dict(ajeno, nombre="Tu Crack", equipo=mi.nombre)
+    PR._entregar(e, {'premio': 'balon_oro', 'datos': {'ganador': propio, 'podio': [propio], 'temporada': 1}}, gala=False)
+    assert 'balon_oro' in _obtenidos(e)
+    premio = [n for n in N.lista(e) if n['tipo'] == 'premio'][0]
+    assert "2026/27" in premio['cuerpo'] and "temporada 1" not in premio['cuerpo']   # año real, no el número
+
+
 def _pase(e, media, de, a, propio=True):
     e['datos_carrera'].setdefault('historial_pases', []).append(
         {'temporada': 1, 'jornada': 1, 'jugador': "Jugador Prueba", 'posicion': 'DEL', 'media': media,
@@ -220,11 +343,11 @@ def test_desbloquear_publica_noticia_y_una_sola_vez():
 
 def test_para_overlay_orden():
     e = _estado()
-    assert [f['obtenido'] for f in G.para_overlay(e)] == [False] * 9
+    assert [f['obtenido'] for f in G.para_overlay(e)] == [False] * len(G.LOGROS)
     G.desbloquear(e, 'pj_50', temporada=1, jornada=10)
     G.desbloquear(e, 'racha_8', temporada=2, jornada=3)
     filas = G.para_overlay(e)
-    assert len(filas) == 9 and [f['id'] for f in filas[:2]] == ['racha_8', 'pj_50']     # el más reciente arriba
+    assert len(filas) == len(G.LOGROS) and [f['id'] for f in filas[:2]] == ['racha_8', 'pj_50']   # el más reciente arriba
     assert all(f['obtenido'] for f in filas[:2]) and not any(f['obtenido'] for f in filas[2:])
     assert all(f['titulo'] and f['descripcion'] for f in filas)
     assert (filas[0]['temporada'], filas[0]['jornada']) == (2, 3)
@@ -280,10 +403,10 @@ def test_career_overlay():
     _tecla(pygame.K_l); C.render(screen, e)
     _clic(C.R_PANEL_LOGROS.center)                                       # clic dentro no lo cierra
     assert C.render(screen, e) is None and e['career_logros'] is True
-    for _ in range(3):                                                   # la rueda desplaza sin pasarse
+    for _ in range(len(C.filas_logros(e))):                                                   # la rueda desplaza sin pasarse
         _rueda(-1); C.render(screen, e)
     assert e['career_logros_scroll'] == len(C.filas_logros(e)) - C.FILAS_LOGROS
-    for _ in range(3):
+    for _ in range(len(C.filas_logros(e))):
         _rueda(1); C.render(screen, e)
     assert e['career_logros_scroll'] == 0
     _tecla(pygame.K_DOWN); C.render(screen, e)

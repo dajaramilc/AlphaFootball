@@ -334,34 +334,25 @@ def _congelar_premios(estado: dict, cont: str, campeon_copa: Optional[str]) -> N
                      'fecha_entrega': PR.fecha_entrega(estado, 'sudamericano').isoformat()})
 
 
-def _noticias_cierre(estado: dict, cont: str, res: dict) -> None:
-    """v0.4.23.0 (antes, un correo de Prensa): noticia del campeón de su copa y otra con lo que dejó la
-    temporada del otro continente (campeones, ascensos y descensos)."""
-    from alpha_football import noticias, competiciones as CP
+def _noticias_cierre(estado: dict, cont: str, res: dict, anio_cerrado: Optional[int] = None) -> None:
+    """v0.4.23.0 (antes, un correo de Prensa): noticia del campeón de su copa y otra con los campeones de liga de la
+    temporada del otro continente. v0.4.25.0: la copa ya se anunció al jugarse la final (aquí solo si faltó) y la
+    segunda lleva SOLO los campeones de liga; los clubes que descienden van en su propia noticia (los mejores)."""
+    from alpha_football import noticias, noticias_gen, competiciones as CP
     from alpha_football.paises import pais_de
-    lineas = []
+    nombre_t = noticias.nombre_anio(cont, anio_cerrado) if anio_cerrado is not None else str(anio(estado, cont))
     if res.get('copa'):
-        copa = CP.NOMBRE_COPA.get(copa_de(cont), 'Copa')
-        lineas.append(f"{copa}: campeón {res['copa']}.")
-        noticias.publicar(estado, 'campeon',
-                          noticias.titular(f"{res['copa']} es el campeón de la {copa}", f"{res['copa']} gana la {copa}",
-                                           f"La {copa} ya tiene campeón"),
-                          f"{res['copa']} levantó la {copa} y cierra en lo más alto la temporada de "
-                          f"{NOMBRE_CONTINENTE.get(cont, cont)}.", importancia=5)
-    movs = {m['tipo']: m for m in res.get('movimientos') or []}
+        noticias_gen.anunciar_copa(estado, CP.copa(estado, copa_de(cont)))
+    lineas = []
     for tipo in paises_de(cont):
         campeon = (res.get('campeones') or {}).get(tipo)
-        if not campeon:
-            continue
-        pais = (pais_de(tipo) or {}).get('nombre', tipo)
-        linea = f"{pais}: campeón {campeon}."
-        m = movs.get(tipo)
-        if m:
-            linea += f" Suben {' y '.join(m['ascendidos'])}; bajan {' y '.join(m['descendidos'])}."
-        lineas.append(linea)
-    noticias.publicar(estado, 'campeon', f"Terminó la temporada en {NOMBRE_CONTINENTE.get(cont, cont)}",
-                      "Estos son los campeones, los ascensos y los descensos que dejó la temporada:\n\n" + "\n".join(lineas),
-                      importancia=4)
+        if campeon:
+            lineas.append(f"{(pais_de(tipo) or {}).get('nombre', tipo)}: {campeon}")
+    if lineas:
+        noticias.publicar(estado, 'campeon', f"Terminó la temporada en {NOMBRE_CONTINENTE.get(cont, cont)}",
+                          f"Campeones de liga de la temporada {nombre_t}:\n\n" + "\n".join(lineas), importancia=4)
+    noticias_gen.publicar_descensos_destacados(estado, res.get('movimientos'),
+                                               ambito=NOMBRE_CONTINENTE.get(cont, cont))
 
 
 def cerrar_continente(estado: dict, cont: str) -> dict:
@@ -419,7 +410,7 @@ def cerrar_continente(estado: dict, cont: str) -> dict:
     paso("objetivos de la IA", lambda: NT.foto_objetivos_ia(estado, paises=paises))
     m.setdefault('anio', {})[cont] = anio_cerrado + 1          # fuera de `paso`: sube pase lo que pase
     paso("sortear su copa nueva", _anio_y_copa_nuevos)
-    paso("noticias del cierre", lambda: _noticias_cierre(estado, cont, res))
+    paso("noticias del cierre", lambda: _noticias_cierre(estado, cont, res, anio_cerrado))
     logger.info(f"Cerró la temporada {anio_cerrado} de {cont}: copa {res['copa']}, {len(res['movimientos'])} países con ascensos.")
     return res
 

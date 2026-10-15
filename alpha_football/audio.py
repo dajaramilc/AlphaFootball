@@ -325,6 +325,15 @@ def _hay_audio_en_carpeta() -> bool:
         return False
 
 
+def hay_musica() -> bool:
+    """True si la carpeta de música tiene al menos una pista que el reproductor puede sonar
+    (no cuentan los .webm/.opus sin convertir, el manifiesto ni ffmpeg.exe)."""
+    try:
+        return any(f.lower().endswith((".mp3", ".wav", ".ogg", ".m4a")) for f in os.listdir(MUSIC_DIR))
+    except Exception:
+        return False
+
+
 def _descargar_musica() -> None:
     """
     Descarga de forma silenciosa y asíncrona las canciones listadas en musica.txt.

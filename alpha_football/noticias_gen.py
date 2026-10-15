@@ -79,6 +79,7 @@ def _memoria(estado: dict) -> dict:
     m.setdefault('promesa_ultima', -1)
     m.setdefault('avisos', [])            # avisos de récord ya dados
     m.setdefault('balon', [])             # temporadas con candidatos publicados
+    m.setdefault('titulos', [])           # v0.4.25.0: títulos ya anunciados ("camp:<temporada>:<liga>:<división>"...)
     records = dc.setdefault('records', {})
     for stat, base in RECORDS_BASE.items():
         records.setdefault(stat, {'valor': base, 'nombre': '', 'temporada': 0})
@@ -330,6 +331,159 @@ def _logros(estado: dict, rng) -> int:
     return len(_lg.revisar(estado))
 
 
+# --- títulos: en cuanto un equipo gana o asegura uno ----------------------------------------------------------
+
+MAX_TITULOS_RECORDADOS = 200
+COPAS_CONTINENTE = {'champions': 'europa', 'libertadores': 'sudamerica'}
+
+
+def _anunciado(estado: dict, clave: str) -> bool:
+    return clave in _memoria(estado)['titulos']
+
+
+def _anotar(estado: dict, clave: str) -> None:
+    vistos = _memoria(estado)['titulos']
+    if clave not in vistos:
+        vistos.append(clave)
+        del vistos[:-MAX_TITULOS_RECORDADOS]
+
+
+def _continente_de(liga) -> str:
+    from alpha_football.paises import es_sudamerica
+    return 'sudamerica' if es_sudamerica(getattr(liga, 'tipo', '') or '') else 'europa'
+
+
+def _anio_continente(estado: dict, cont: str) -> int:
+    """El año en que empezó la temporada en curso de ese continente, leído sin crear nada (ni el reloj ni el
+    calendario): el que guarda el mundo desfasado o, si no hay desfase, el de tu temporada de carrera."""
+    try:
+        guardado = (((estado.get('datos_carrera') or {}).get('mundo') or {}).get('anio') or {}).get(cont)
+        if guardado:
+            return int(guardado)
+    except (TypeError, ValueError):
+        pass
+    from alpha_football import calendario as CAL
+    return CAL.ANIO_BASE[cont] + int(estado.get('temporada', 1) or 1) - 1
+
+
+def _clave_liga(estado: dict, liga, tuya: bool, temporada=None) -> str:
+    """Identidad de un título de liga: tu liga cuenta por tu temporada de carrera; las demás, por el año de su
+    continente (la temporada de Sudamérica no coincide con la tuya)."""
+    division = getattr(liga, 'division', 1)
+    if tuya:
+        t = temporada if temporada is not None else int(estado.get('temporada', 1) or 1)
+        return f"camp:{t}:{getattr(liga, 'tipo', '?')}:{division}"
+    return f"camp:a{_anio_continente(estado, _continente_de(liga))}:{getattr(liga, 'tipo', '?')}:{division}"
+
+
+def _pendientes_por_equipo(liga) -> dict:
+    """Partidos que le faltan por jugar a cada club de la liga (por id)."""
+    faltan = {e.id: 0 for e in liga.equipos}
+    for p in getattr(liga, 'calendario', None) or []:
+        if getattr(p, 'jugado', False):
+            continue
+        for eid in (p.local_id, p.visitante_id):
+            if eid in faltan:
+                faltan[eid] += 1
+    return faltan
+
+
+def estado_del_titulo(liga) -> Optional[dict]:
+    """El título de liga mirado con la tabla de hoy: None si todavía se puede perder, o
+    {'lider', 'puntos', 'segundo', 'techo', 'faltan', 'terminado'} si el líder ya no puede ser alcanzado
+    (`techo` = los puntos máximos del segundo; `faltan` = lo que le queda por jugar al líder; `terminado` = la
+    liga acabó)."""
+    equipos = list(getattr(liga, 'equipos', None) or [])
+    if len(equipos) < 2 or not any(getattr(p, 'jugado', False) for p in getattr(liga, 'calendario', None) or []):
+        return None
+    faltan = _pendientes_por_equipo(liga)
+    orden = sorted(equipos, key=lambda e: (e.puntos, e.gf - e.gc, e.gf), reverse=True)
+    lider = orden[0]
+    techos = [(e.puntos + 3 * faltan.get(e.id, 0), e) for e in orden[1:]]
+    techo, segundo = max(techos, key=lambda x: x[0])
+    terminado = all(v == 0 for v in faltan.values())
+    if not terminado and lider.puntos <= techo:
+        return None
+    return {'lider': lider, 'puntos': int(lider.puntos), 'segundo': segundo, 'techo': int(techo),
+            'faltan': int(faltan.get(lider.id, 0)), 'terminado': terminado}
+
+
+def _titulo_liga(estado: dict, liga, tuya: bool) -> int:
+    est = estado_del_titulo(liga)
+    if est is None:
+        return 0
+    base = _clave_liga(estado, liga, tuya)
+    ganado = base + ":final"
+    if _anunciado(estado, ganado) or (not est['terminado'] and _anunciado(estado, base + ":asegurado")):
+        return 0
+    lider = est['lider']
+    pais = PAIS_POR_LIGA.get(getattr(liga, 'tipo', ''), getattr(liga, 'tipo', ''))
+    if tuya:
+        nombre_t = N.nombre_temporada(estado, estado.get('temporada', 1))
+    else:
+        cont = _continente_de(liga)
+        nombre_t = N.nombre_anio(cont, _anio_continente(estado, cont))
+    if est['terminado']:
+        titular = N.titular(f"{lider.nombre} se proclama campeón de {liga.nombre}",
+                            f"{lider.nombre}, campeón de {liga.nombre}", f"{lider.nombre} es campeón")
+        cuerpo = (f"{lider.nombre} termina primero en {liga.nombre} ({pais}) con {est['puntos']} puntos y se lleva el "
+                  f"título de la temporada {nombre_t}.")
+        clave = ganado
+    else:
+        titular = N.titular(f"{lider.nombre} asegura el título de {liga.nombre}", f"{lider.nombre} asegura el título",
+                            f"{lider.nombre}, campeón matemático")
+        falta = est['faltan']
+        cuerpo = (f"Con {est['puntos']} puntos y {falta} partido{'s' if falta != 1 else ''} por jugar, {lider.nombre} ya no "
+                  f"puede ser alcanzado en {liga.nombre} ({pais}): {est['segundo'].nombre} solo llegaría a {est['techo']} "
+                  f"puntos.")
+        clave = base + ":asegurado"
+    N.publicar(estado, 'campeon', titular, cuerpo, importancia=5 if tuya else 4, equipos=[lider], clave=clave)
+    _anotar(estado, clave)
+    return 1
+
+
+def anunciar_copa(estado: dict, c: Optional[dict]) -> int:
+    """La noticia del campeón de una copa en cuanto se juega su final (no al cerrar la temporada). Una sola vez por
+    copa y año. `c` es el dict de competiciones.copa; sin campeón no hace nada."""
+    if not isinstance(c, dict) or not c.get('campeon'):
+        return 0
+    tipo = c.get('tipo')
+    from alpha_football import competiciones as CP
+    cont = COPAS_CONTINENTE.get(tipo, 'europa')
+    anio = c.get('anio')
+    clave = f"copa:{anio if anio is not None else c.get('temporada', '?')}:{tipo}"
+    if _anunciado(estado, clave):
+        return 0
+    _anotar(estado, clave)
+    copa = CP.NOMBRE_COPA.get(tipo, tipo)
+    nombre_t = N.nombre_anio(cont, anio) if anio is not None else N.nombre_temporada(estado, c.get('temporada', 1), cont)
+    campeon = c['campeon']
+    N.publicar(estado, 'campeon',
+               N.titular(f"{campeon} es el campeón de la {copa}", f"{campeon} gana la {copa}", f"La {copa} ya tiene campeón"),
+               f"{campeon} conquista la {copa} de la temporada {nombre_t}.", importancia=5, clave=clave)
+    return 1
+
+
+def _titulos(estado: dict, rng) -> int:
+    """Títulos de liga ganados o asegurados en cualquier liga de primera (y la tuya, sea cual sea) y copas con
+    campeón: se anuncian en esta jornada, no al cerrar la temporada."""
+    from alpha_football import competiciones as CP
+    n = 0
+    for liga, tuya in _ligas(estado):
+        if not tuya and int(getattr(liga, 'division', 1) or 1) != 1:
+            continue
+        try:
+            n += _titulo_liga(estado, liga, tuya)
+        except Exception as e:
+            logger.error(f"noticias_gen._titulos: {getattr(liga, 'nombre', '?')}: {e}", exc_info=True)
+    for tipo in COPAS_CONTINENTE:
+        try:
+            n += anunciar_copa(estado, CP.copa(estado, tipo))
+        except Exception as e:
+            logger.error(f"noticias_gen._titulos: copa {tipo}: {e}", exc_info=True)
+    return n
+
+
 def generar_jornada(estado: dict, rng=None) -> int:
     """Publica las noticias de la jornada que se acaba de cerrar. Devuelve cuántas publicó."""
     if not estado.get('liga') or not estado.get('mi_equipo'):
@@ -341,7 +495,7 @@ def generar_jornada(estado: dict, rng=None) -> int:
         logger.error(f"noticias_gen: no se pudo preparar la memoria: {e}", exc_info=True)
         return 0
     total = 0
-    for generador in (_resultados, _lesiones, _promesas, _candidatos_balon, _records, _polemico, _logros):
+    for generador in (_titulos, _resultados, _lesiones, _promesas, _candidatos_balon, _records, _polemico, _logros):
         try:
             total += int(generador(estado, rng) or 0)
         except Exception as e:
@@ -352,67 +506,130 @@ def generar_jornada(estado: dict, rng=None) -> int:
 # --- cierre de la temporada del user ------------------------------------------------------------------------------
 
 def _cierre_campeones(estado: dict, liga, campeon_liga, campeones_copas, kw: dict) -> int:
+    """Campeones de tu temporada. Lo que ya se anunció en su momento (título asegurado, final de copa) no se repite."""
     from alpha_football import competiciones as CP
     n = 0
+    nombre_t = N.nombre_temporada(estado, kw['temporada'])
     if campeon_liga:
         nombre = getattr(campeon_liga, 'nombre', campeon_liga)
-        N.publicar(estado, 'campeon', f"{nombre} es campeón de {liga.nombre}",
-                   f"{nombre} gana {liga.nombre} y se lleva el título de la temporada {kw['temporada']}.",
-                   importancia=5, clave=f"camp:{kw['temporada']}:liga", **kw)
-        n += 1
+        ganado = _clave_liga(estado, liga, True, kw['temporada']) + ":final"
+        if not _anunciado(estado, ganado):
+            N.publicar(estado, 'campeon', f"{nombre} es campeón de {liga.nombre}",
+                       f"{nombre} gana {liga.nombre} y se lleva el título de la temporada {nombre_t}.",
+                       importancia=5, clave=f"camp:{kw['temporada']}:liga", **kw)
+            _anotar(estado, ganado)
+            n += 1
     for tipo, club in (campeones_copas or {}).items():
         if not club:
             continue
         nombre = getattr(club, 'nombre', club)
         copa = CP.NOMBRE_COPA.get(tipo, tipo)
+        c = CP.copa(estado, tipo) or {}
+        anio = c.get('anio')
+        ya = f"copa:{anio if anio is not None else c.get('temporada', '?')}:{tipo}"
+        if _anunciado(estado, ya):
+            continue                               # se anunció en cuanto se jugó la final
+        _anotar(estado, ya)
         N.publicar(estado, 'campeon', f"{nombre} gana la {copa}",
-                   f"{nombre} conquista la {copa} de la temporada {kw['temporada']}.",
+                   f"{nombre} conquista la {copa} de la temporada {nombre_t}.",
                    importancia=5, clave=f"camp:{kw['temporada']}:{tipo}", **kw)
         n += 1
     return n
 
 
+MAX_DESCENSOS_DESTACADOS = 4
+
+
+def _clubes_por_nombre(estado: dict) -> dict:
+    from alpha_football.mercado_ia import ligas_de_la_partida
+    return {eq.nombre: eq for liga, _t, _d in ligas_de_la_partida(estado) for eq in liga.equipos}
+
+
+def descensos_destacados(estado: dict, movimientos, excluir_tipo: Optional[str] = None) -> list:
+    """[(club, país)] de los clubes que pierden la categoría (ligas distintas de `excluir_tipo`), los de más peso
+    primero: estrellas del club y, a igualdad, su nivel. Solo los MAX_DESCENSOS_DESTACADOS mejores."""
+    clubes = _clubes_por_nombre(estado)
+    candidatos = []
+    for mov in movimientos or []:
+        tipo = mov.get('tipo')
+        if tipo == excluir_tipo:
+            continue
+        for nombre in mov.get('descendidos') or []:
+            eq = clubes.get(nombre)
+            try:
+                nivel = int(_nivel(eq)) if eq is not None else 0
+            except Exception as e:
+                logger.debug(f"noticias_gen: sin nivel para {nombre}: {e}")
+                nivel = 0
+            estrellas = float(getattr(eq, 'estrellas', 0) or 0)
+            candidatos.append((estrellas, nivel, str(nombre), PAIS_POR_LIGA.get(tipo, tipo)))
+    candidatos.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    return [(nombre, pais) for _e, _n, nombre, pais in candidatos[:MAX_DESCENSOS_DESTACADOS]]
+
+
+def publicar_descensos_destacados(estado: dict, movimientos, excluir_tipo: Optional[str] = None,
+                                  ambito: str = "las otras ligas", **kw) -> int:
+    """Una noticia con los mejores clubes que descienden en `ambito` (sin la lista completa de ascensos y descensos)."""
+    top = descensos_destacados(estado, movimientos, excluir_tipo)
+    if not top:
+        return 0
+    nombres = [nombre for nombre, _p in top]
+    uno = len(nombres) == 1
+    cabeza = N.titular(f"Descienden {', '.join(nombres[:-1])} y {nombres[-1]}" if not uno else f"Desciende {nombres[0]}",
+                       f"Descienden {nombres[0]} y {nombres[1]}" if not uno else f"Desciende {nombres[0]}",
+                       f"Descenso de {nombres[0]}")
+    lineas = "\n".join(f"{nombre} ({pais})" for nombre, pais in top)
+    N.publicar(estado, 'descenso', cabeza,
+               f"Entre los clubes que pierden la categoría en {ambito}, los de más peso:\n\n" + lineas,
+               importancia=4, categoria='descenso', **kw)
+    return 1
+
+
 def _cierre_movimientos(estado: dict, liga, movimientos, kw: dict) -> int:
     n = 0
-    resto = []
     for mov in movimientos or []:
         asc, des = list(mov.get('ascendidos') or []), list(mov.get('descendidos') or [])
-        if mov.get('tipo') == liga.tipo:
-            if asc:
-                N.publicar(estado, 'descenso', f"Ascienden a Primera: {', '.join(asc)}",
-                           f"{', '.join(asc)} suben de categoría en {PAIS_POR_LIGA.get(liga.tipo, liga.tipo)}.",
-                           importancia=5, categoria='ascenso', **kw)
-                n += 1
-            if des:
-                N.publicar(estado, 'descenso', f"Descienden a Segunda: {', '.join(des)}",
-                           f"{', '.join(des)} pierden la categoría en {PAIS_POR_LIGA.get(liga.tipo, liga.tipo)}.",
-                           importancia=5, categoria='descenso', **kw)
-                n += 1
-        elif asc or des:
-            resto.append(f"{PAIS_POR_LIGA.get(mov.get('tipo'), mov.get('tipo'))}: suben {', '.join(asc) or '—'}; "
-                         f"bajan {', '.join(des) or '—'}.")
-    if resto:
-        N.publicar(estado, 'descenso', "Ascensos y descensos en el resto de las ligas", "\n".join(resto),
-                   importancia=4, categoria='descenso', **kw)
-        n += 1
+        if mov.get('tipo') != liga.tipo:
+            continue
+        pais = PAIS_POR_LIGA.get(liga.tipo, liga.tipo)
+        if asc:
+            N.publicar(estado, 'descenso', f"Ascienden a Primera: {', '.join(asc)}",
+                       f"{', '.join(asc)} suben de categoría en {pais}.",
+                       importancia=5, categoria='ascenso', **kw)
+            n += 1
+        if des:
+            N.publicar(estado, 'descenso', f"Descienden a Segunda: {', '.join(des)}",
+                       f"{', '.join(des)} pierden la categoría en {pais}.",
+                       importancia=5, categoria='descenso', **kw)
+            n += 1
+    # v0.4.25.0: de las otras ligas, solo los mejores clubes que bajan (antes, la lista de todos los ascensos y descensos)
+    n += publicar_descensos_destacados(estado, movimientos, excluir_tipo=liga.tipo, ambito="las otras ligas", **kw)
     return n
 
 
+SECCIONES_ONCE = (('POR', 1, "PORTERO"), ('DEF', 4, "DEFENSAS"), ('MED', 3, "MEDIOS"), ('DEL', 3, "ATACANTES"))
+
+
 def _cierre_equipo_del_anio(estado: dict, liga, kw: dict) -> int:
+    """El once ideal: un portero, cuatro defensas, tres medios y tres atacantes por nota media. El cuerpo va en
+    bloques por línea (cada jugador en su renglón, con su club y su nota) para que se lea de un vistazo."""
     min_pj = max(3, int(liga.num_jornadas) // 2)
-    cupo = {'POR': 1, 'DEF': 4, 'MED': 3, 'DEL': 3}
-    por_pos = {pos: [] for pos in cupo}
+    por_pos = {pos: [] for pos, _n, _t in SECCIONES_ONCE}
     for eq, j in _jugadores(liga):
-        if int(getattr(j, 'partidos_jugados', 0) or 0) >= min_pj and getattr(j, 'posicion', '') in cupo:
+        if int(getattr(j, 'partidos_jugados', 0) or 0) >= min_pj and getattr(j, 'posicion', '') in por_pos:
             por_pos[j.posicion].append((float(getattr(j, 'promedio_nota', 0) or 0), int(getattr(j, 'goles', 0) or 0), eq, j))
-    if any(len(por_pos[pos]) < n for pos, n in cupo.items()):
+    if any(len(por_pos[pos]) < n for pos, n, _t in SECCIONES_ONCE):
         return 0
-    once = []
-    for pos, n in cupo.items():
-        once += [(pos, x) for x in sorted(por_pos[pos], key=lambda x: (x[0], x[1]), reverse=True)[:n]]
-    lineas = [f"{pos}  {_nombre(x[3])} ({x[2].nombre}) · nota {x[0]:.1f}" for pos, x in once]
-    N.publicar(estado, 'premio', f"Equipo del año de {liga.nombre}", "\n".join(lineas), importancia=4,
-               equipos=[x[2] for _p, x in once], jugadores=[x[3] for _p, x in once], **kw)
+    once, bloques = [], []
+    for pos, n, titulo in SECCIONES_ONCE:
+        elegidos = sorted(por_pos[pos], key=lambda x: (x[0], x[1]), reverse=True)[:n]
+        once += elegidos
+        renglones = [f"{_nombre(x[3])} · {x[2].nombre} · {x[0]:.1f}" for x in elegidos]
+        bloques.append(titulo + "\n" + "\n".join(renglones))
+    nombre_t = N.nombre_temporada(estado, kw['temporada'])
+    titular = N.titular(f"Equipo del año {nombre_t} de {liga.nombre}", f"Equipo del año de {liga.nombre}")
+    N.publicar(estado, 'premio', titular, "\n\n".join(bloques), importancia=4,
+               equipos=[x[2] for x in once], jugadores=[x[3] for x in once], **kw)
     return 1
 
 
