@@ -713,8 +713,8 @@ def definir_objetivo_marca(estado: dict, rng: Optional[random.Random] = None) ->
     from alpha_football import sancion_liga as SL       # v0.4.17.0: sancionado por la liga no puede fichar una estrella
     sancionado = SL.activa(estado) is not None
     azar = (rng or random.Random()).random()
-    if valor_club(mi) > 0 and (sancionado or azar < 0.5):   # en rojo: la meta de valor no tiene sentido
-        meta = int(valor_club(mi) * 1.10)
+    if valor_club(mi, estado) > 0 and (sancionado or azar < 0.5):   # en rojo: la meta de valor no tiene sentido
+        meta = int(valor_club(mi, estado) * 1.10)       # v0.4.26.0: el valor incluye las camisetas
         oc.update(tipo='valor', meta=meta, texto=f"Llegar a ${meta / 1_000_000:.1f}M de valor del club")
     elif sancionado:
         return None                                     # sin meta de marca esta temporada
@@ -765,7 +765,7 @@ def progreso_secundario(estado: dict, oc: dict) -> float:
     t, meta = oc.get('tipo'), oc.get('meta') or 0
     if t == 'valor':     # el aporte del espaldarazo es deuda: no sube el valor
         from alpha_football.finanzas import valor_club
-        f = (valor_club(mi) - deuda_espaldarazo(estado)) / meta if meta > 0 else 0.0
+        f = (valor_club(mi, estado) - deuda_espaldarazo(estado)) / meta if meta > 0 else 0.0
     elif t == 'estrella':
         f = 1.0 if any(int(j.overall) >= int(meta) for j in _nuevos(estado, oc)) else 0.0
     elif t == 'fichar_joven':
@@ -929,6 +929,11 @@ def pedir_espaldarazo(estado: dict, nivel: int) -> tuple:
         return False, "La meta no puede subir tanto."
     mi.balance = int(getattr(mi, 'balance', 0) or 0) + op['monto']
     obj['pos_max'] = int(obj['pos_max']) - op['puestos']
+    # v0.4.26.0: el espaldarazo también sube el límite de masa salarial, el mismo % que el presupuesto
+    tope_antes = int(obj.get('tope_salarial', 0) or 0)
+    tope_extra = int(tope_antes * op['pct'])
+    obj['tope_salarial'] = tope_antes + tope_extra
+    obj['tope_espaldarazo'] = tope_extra            # fuera del dict 'espaldarazo' (sus tests lo comparan entero)
     obj['espaldarazo'] = {'pct': op['pct'], 'puestos': op['puestos'], 'deuda': int(op['monto'] * DEVOLUCION_ESPALDARAZO)}   # v4.7.0: se devuelve la mitad
     obj['texto'] = _texto_meta(obj['pos_max']) + " (espaldarazo)"
     try:
@@ -941,9 +946,11 @@ def pedir_espaldarazo(estado: dict, nivel: int) -> tuple:
              f"La directiva aprueba un aporte de ${op['monto'] / 1_000_000:.1f}M. A cambio, el objetivo pasa "
              f"a ser: {obj['texto']}. Le recordamos que la mitad de este importe "
              f"(${obj['espaldarazo']['deuda'] / 1_000_000:.1f}M) se descontará de las ganancias del club al cierre "
-             "de la temporada.",
+             f"de la temporada. El tope de masa salarial sube un {int(op['pct'] * 100)}%, hasta "
+             f"${obj['tope_salarial'] / 1_000_000:.1f}M.",
              C.accion('objetivos_screen', "VER OBJETIVOS"))
-    return True, f"Aprobado: +${op['monto'] / 1_000_000:.1f}M · nueva meta: puesto {obj['pos_max']} · al cierre se devuelve la mitad."
+    return True, (f"Aprobado: +${op['monto'] / 1_000_000:.1f}M · nueva meta: puesto {obj['pos_max']} · tope salarial "
+                  f"+{int(op['pct'] * 100)}% · al cierre se devuelve la mitad.")
 
 
 def motivos_fallo(info: dict) -> list:

@@ -33,6 +33,17 @@ def _valor(j) -> int:
     return v
 
 
+def dibujar_texto_rgb(screen, texto: str, pos: tuple, rgb: tuple, size: str = 'sm') -> None:
+    """v0.4.26.0: texto con un color RGB propio y sombra (la paleta de theme.py no tiene naranja ni gris, que usa la
+    forma). La usan esta ficha y la dirección de equipo."""
+    try:
+        fuente = get_font(size)
+        screen.blit(fuente.render(texto, True, (0, 0, 0)), (pos[0] + 2, pos[1] + 2))
+        screen.blit(fuente.render(texto, True, rgb), pos)
+    except Exception as e:
+        logger.error(f"No se pudo dibujar el texto '{texto}': {e}")
+
+
 def _ajustar(texto: str, ancho: int) -> str:
     """Recorta `texto` (con …) para que entre en `ancho` píxeles con la fuente chica."""
     f = get_font('sm')
@@ -76,6 +87,12 @@ def dibujar_ficha(screen, rect: pygame.Rect, j, estado_txt: str = "", extra: Opt
         draw_text(screen, f"Valor {dinero_exacto(_valor(j))}  ·  Moral {j.moral}  ·  Energía {int(getattr(j, 'energia', 100))}",
                   (x, y), size='sm', color='blanco')
         y += 24
+        try:   # v0.4.26.0: forma (forma.py) con el color de su nivel
+            from alpha_football import forma as FO
+            dibujar_texto_rgb(screen, f"Forma: {FO.texto_forma(j)}", (x, y), FO.COLOR[FO.nivel(j)])
+        except Exception as e_forma:
+            logger.error(f"No se pudo dibujar la forma del jugador: {e_forma}")
+        y += 22
         contrato, clausula, color_c = textos_contrato(j)
         if rect.width >= 520:           # ficha ancha: contrato y cláusula en una línea
             draw_text(screen, f"{contrato}  ·  {clausula}", (x, y), size='sm', color=color_c)

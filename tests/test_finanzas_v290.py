@@ -64,12 +64,12 @@ def test_jornada_cobra_y_paga():
     mi, liga = e['mi_equipo'], e['liga']
     bal = mi.balance
     mov = F.procesar_jornada(e, es_local=True, gf=2, gc=0)
-    esperado = mov['patrocinio'] + mov['taquilla'] - mov['salarios']
+    esperado = mov['patrocinio'] + mov['taquilla'] + mov['camisetas'] - mov['salarios']   # v0.4.26.0: + camisetas
     assert mi.balance == bal + esperado and mov['taquilla'] > 0
     assert mov['salarios'] == F.masa_salarial(mi) // liga.num_jornadas
     bal = mi.balance
     mov2 = F.procesar_jornada(e, es_local=False, gf=0, gc=1)
-    assert mov2['taquilla'] == 0 and mi.balance == bal + mov2['patrocinio'] - mov2['salarios']
+    assert mov2['taquilla'] == 0 and mi.balance == bal + mov2['patrocinio'] + mov2['camisetas'] - mov2['salarios']
     libro = F.libro(e)
     assert libro['salarios'] == mov['salarios'] + mov2['salarios'] and libro['taquilla'] == mov['taquilla']
     print("  test_jornada_cobra_y_paga: OK")

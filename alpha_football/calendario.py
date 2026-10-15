@@ -241,6 +241,13 @@ def eventos_user(estado: dict) -> list:
                         'etiqueta': ETIQUETA_COPA.get(t, 'COPA')})
     except Exception as e:
         logger.error(f"calendario: no se pudieron leer los partidos de copa: {e}")
+    try:   # v0.4.26.0: la final de la Copa Intercontinental, si tu club la juega
+        from alpha_football import intercontinental as INT
+        ev = INT.evento_user(estado)
+        if ev is not None:
+            out.append(ev)
+    except Exception as e:
+        logger.error(f"calendario: no se pudo leer la Intercontinental: {e}")
     out.sort(key=lambda x: (x['fecha'], x['tipo'] != 'liga'))
     return out
 

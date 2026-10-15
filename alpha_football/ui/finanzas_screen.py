@@ -34,6 +34,7 @@ R_SALDO = pygame.Rect(16, 76, 400, 300)
 R_LIBRO = pygame.Rect(432, 76, 832, 300)
 R_ESP = pygame.Rect(16, 392, 1248, 304)        # v4.7.0: espaldarazo (antes contratos); termina en y=696
 R_ESPALDARAZO = pygame.Rect(R_ESP.x + 20, R_ESP.y + 150, 460, 44)
+R_CAMISETAS = pygame.Rect(R_ESP.x + 608, R_ESP.y + 96, 624, 164)     # v0.4.26.0: venta de camisetas (mitad derecha de R_ESP)
 R_OVERLAY = pygame.Rect(SCREEN_W // 2 - 360, 180, 720, 340)
 
 
@@ -120,7 +121,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         draw_text(screen, f"Proyección al cierre ({restantes} jornadas): {_m(proyeccion)}",
                   (x, y + 90), size='sm', color='verde' if proyeccion >= 0 else 'rojo')
         # v4.7.0: valor del club = valor de mercado de la plantilla + saldo
-        valor = F.valor_club(mi)
+        valor = F.valor_club(mi, estado)      # v0.4.26.0: con la venta de camisetas
         draw_text(screen, "VALOR DEL CLUB", (x, y + 124), size='sm', color='azul')
         draw_text(screen, _m(valor), (x, y + 146), size='lg', color='verde' if valor >= 0 else 'rojo')
         proy_valor = valor - mi.balance + proyeccion
@@ -139,17 +140,18 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         lx, ly = R_LIBRO.x + 20, R_LIBRO.y + 14
         draw_text(screen, "INGRESOS Y GASTOS DE LA TEMPORADA", (lx, ly), size='sm', color='azul')
         ingresos = [("Taquilla", lib['taquilla']), ("Patrocinio", lib['patrocinio']),
+                    ("Camisetas", lib.get('camisetas', 0)),      # v0.4.26.0: venta de camisetas
                     ("Ventas", lib['ventas']), ("Premios", lib['premios']),
                     ("Directiva", lib.get('directiva', 0))]      # v3.2.0: espaldarazo
         gastos = [("Salarios", lib['salarios']), ("Fichajes", lib['fichajes'])]
-        for i, (t, v) in enumerate(ingresos):      # v3.2.0: paso 27 para que quepan 5 líneas
-            draw_text(screen, t, (lx, ly + 34 + i * 27), size='md', color='blanco')
-            draw_text(screen, "+" + _m(v), (lx + 180, ly + 34 + i * 27), size='md', color='verde')
+        for i, (t, v) in enumerate(ingresos):      # v0.4.26.0: paso 24 para que quepan 6 líneas
+            draw_text(screen, t, (lx, ly + 34 + i * 24), size='md', color='blanco')
+            draw_text(screen, "+" + _m(v), (lx + 180, ly + 34 + i * 24), size='md', color='verde')
         for i, (t, v) in enumerate(gastos):
             draw_text(screen, t, (lx + 420, ly + 34 + i * 30), size='md', color='blanco')
             draw_text(screen, "−" + _m(v), (lx + 600, ly + 34 + i * 30), size='md', color='rojo')
         neto = sum(v for _t, v in ingresos) - sum(v for _t, v in gastos)
-        draw_text(screen, f"NETO DE LA TEMPORADA: {'+' if neto >= 0 else ''}{_m(neto)}", (lx, ly + 170),
+        draw_text(screen, f"NETO DE LA TEMPORADA: {'+' if neto >= 0 else ''}{_m(neto)}", (lx, ly + 176),
                   size='lg', color='verde' if neto >= 0 else 'rojo')
         deuda = D.deuda_espaldarazo(estado)      # v4.6.0: deuda del espaldarazo financiero
         if deuda:
@@ -159,14 +161,14 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             from alpha_football import sancion_liga as _SL
             sancion = _SL.activa(estado)
             if sancion:
-                draw_text(screen, _SL.texto_corto(sancion), (lx, ly + 210), size='sm', color='rojo')
+                draw_text(screen, _SL.texto_corto(sancion), (lx, ly + 216), size='sm', color='rojo')
         except Exception as e_san:
             logger.error(f"No se pudo mostrar la sanción de la liga: {e_san}")
         if mi.balance < 0:
             rojo = int(dc.get('jornadas_en_rojo', 0) or 0)
             draw_text(screen, f"¡EN ROJO! {rojo}/{F.JORNADAS_ROJO_VENTA} jornadas: al llegar a {F.JORNADAS_ROJO_VENTA} "
                               f"venden a tu mejor jugador. Cerrar así: −{F.PUNTOS_QUIEBRA} pts.",
-                      (lx, ly + 236), size='sm', color='rojo')
+                      (lx, ly + 242), size='sm', color='rojo')
 
         # --- v4.7.0: espaldarazo financiero (antes en OBJETIVOS) ---
         draw_panel(screen, R_ESP)
@@ -185,6 +187,24 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             draw_text(screen, msg_esp[:110], (ex, R_ESPALDARAZO.bottom + 16), size='sm',
                       color='verde' if msg_esp.startswith(("Aprobado", "Ahora")) else 'rojo')
 
+        try:   # v0.4.26.0: venta de camisetas: popularidad, ingreso y lo que suma al valor del club
+            cam = F.info_camisetas(estado)
+            cx, cy = R_CAMISETAS.x + 16, R_CAMISETAS.y + 8
+            sube = cam['tendencia']
+            tendencia = f"subiendo {sube:+.1f}" if sube > 0.05 else f"bajando {sube:+.1f}" if sube < -0.05 else "estable"
+            draw_text(screen, "VENTA DE CAMISETAS", (cx, cy), size='sm', color='dorado')
+            draw_text(screen, f"Popularidad {cam['popularidad']:.0f}/100 · {tendencia}", (cx, cy + 26), size='sm',
+                      color='verde' if sube >= 0 else 'rojo')
+            barra(screen, pygame.Rect(cx, cy + 52, 560, 16), cam['popularidad'] / 100.0, 'dorado')
+            draw_text(screen, f"Con la de hoy: {_m(cam['ingreso_anual'])} al año · cobrado esta temporada: "
+                              f"{_m(cam['cobrado'])}", (cx, cy + 78), size='sm', color='blanco')
+            draw_text(screen, f"Suma {_m(cam['valor'])} al valor del club ({F.MULT_VALOR_CAMISETAS} años de camisetas)",
+                      (cx, cy + 104), size='sm', color='blanco')
+            draw_text(screen, "Se dispara si rindes por encima de la meta de la directiva y baja despacio.",
+                      (cx, cy + 130), size='sm', color='azul')
+        except Exception as e_cam:
+            logger.error(f"No se pudo mostrar la venta de camisetas: {e_cam}")
+
         if abierto:     # overlay con las 3 opciones del espaldarazo
             _velo(screen)
             draw_panel(screen, R_OVERLAY)
@@ -200,6 +220,8 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                      + ("" if disp else " (no disponible)"))
                 # el theme no tiene gris: las opciones no disponibles van en rojo
                 draw_text(screen, t, (r.x + 16, r.y + 14), size='md', color='verde' if disp else 'rojo')
+            draw_text(screen, "También sube el tope de masa salarial, en el mismo porcentaje.",     # v0.4.26.0
+                      (R_OVERLAY.x + 20, R_OVERLAY.bottom - 66), size='sm', color='dorado')
             draw_text(screen, "La mitad se descuenta de las ganancias al cerrar la temporada.  ·  ESC para cerrar",
                       (R_OVERLAY.x + 20, R_OVERLAY.bottom - 40), size='sm', color='azul')
         return None

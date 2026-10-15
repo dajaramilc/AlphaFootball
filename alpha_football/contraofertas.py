@@ -2,8 +2,8 @@
 """
 ALPHA FOOTBALL — Contraofertas y "lo analizamos" (v3.5.0)
 Ventas: cada oferta recibida tiene un tope oculto; contraofertar dentro del tope cierra la venta, hasta
-+30% del tope queda "en análisis" (respuesta por correo en la jornada siguiente, 50/50) y más arriba
-se retira. Compras: las ofertas del user entre el 85% y el 100% del mínimo del club se analizan igual
++30% del tope queda "en análisis" (respuesta por correo a los 1-3 días, v0.4.26.0; antes en la jornada
+siguiente; 50/50) y más arriba se retira. Compras: las ofertas del user entre el 85% y el 100% del mínimo del club se analizan igual
 (negociacion.evaluar_compra) y se resuelven aquí.
 """
 from __future__ import annotations
@@ -94,7 +94,7 @@ def vender(estado: dict, of: dict, asunto: Optional[str] = None, remitente: str 
     estado['ofertas_recibidas'] = [o for o in (estado.get('ofertas_recibidas') or [])
                                    if o.get('jugador') is not jug]
     from alpha_football import dia_final as DF      # v0.4.14.0: el último día, una venta cuesta 2 horas
-    if not TP.puede_concretar(estado, DF.HORAS_VENTA):
+    if not TP.puede_concretar(estado, DF.HORAS_VENTA, jug):
         # mercado cerrado: la plata llega ya, el jugador se va cuando se abra la ventana
         try:
             aviso = TP.diferir_venta(estado, jug, comp, monto)
@@ -161,9 +161,8 @@ def contraofertar(estado: dict, of: dict, pedido: int, rng: Optional[random.Rand
             retirar(estado, of)
             return 'rechazada', f"{comp}: no hay tiempo para analizarlo hoy y retira la oferta."
         of['contra'] = {'pedido': pedido, 'estado': 'analizando', 'jornada': _jornada(estado)}
-        if hora is not None:
-            of['contra']['hora_resp'] = hora
-        return 'analizando', f"{comp}: \"Lo analizamos\". {DF.texto_respuesta(hora)}"
+        dias = DF.fijar_respuesta(estado, of['contra'], hora)      # v0.4.26.0: responde a los 1-3 días
+        return 'analizando', f"{comp}: \"Lo analizamos\". {DF.texto_respuesta(hora, dias=dias)}"
     retirar(estado, of)
     return 'rechazada', f"{comp} considera excesivo {dinero_exacto(pedido)} y retira la oferta."
 

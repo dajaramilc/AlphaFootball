@@ -35,13 +35,15 @@ def mercado_abierto(estado: dict) -> bool:
                                    int(getattr(liga, 'num_jornadas', 22) or 22), estado=estado)
 
 
-def puede_concretar(estado: dict, horas: int) -> bool:
+def puede_concretar(estado: dict, horas: int, jugador=None) -> bool:
     """v0.4.14.0: ¿se puede inscribir/concretar esto ya? Mercado abierto y, el último día, con horas
-    suficientes (las gasta). Es la única puerta de las operaciones del user."""
+    suficientes (las gasta). Es la única puerta de las operaciones del user.
+    v0.4.26.0: con 1-2 horas el trato igual entra (dia_final.gastar) y el mercado se cierra; `jugador` lo protege
+    de la ronda de cierre de la IA."""
     if not mercado_abierto(estado):
         return False
     from alpha_football import dia_final as DF
-    return DF.gastar(estado, horas)
+    return DF.gastar(estado, horas, jugador)
 
 
 def jornada_apertura(estado: dict) -> int:

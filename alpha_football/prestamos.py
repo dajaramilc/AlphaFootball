@@ -18,7 +18,7 @@ PCT_PASO = 10
 PCT_MIN_SUPLENTE, PCT_MIN_TITULAR = 30, 60
 MARGEN_ANALISIS_PEDIDO = 20
 MARGEN_ANALISIS_CONTRA = 15
-PROB_OFERTA_PRESTAMO = 0.30
+PROB_OFERTA_PRESTAMO = 0.60     # v0.4.26.0: el doble de ofertas por tus cedibles (antes 0.30)
 PROB_ACEPTA_ANALISIS = 0.5
 DIF_NIVEL_JUGADOR = 6
 MOTIVO_FIN_CONTRATO = "se le termina el contrato"
@@ -313,7 +313,7 @@ def iniciar(estado: dict, jugador, dueno, destino, meses: int, pct_dueno: int) -
            'vuelve_fecha': _fecha_regreso(estado, t, k)}
     from alpha_football import dia_final as DF      # v0.4.14.0: llega a tu club = 3 horas; sale cedido = 2
     from alpha_football.traspasos_pendientes import puede_concretar
-    if puede_concretar(estado, DF.HORAS_FICHAJE if destino is _mi(estado) else DF.HORAS_VENTA):
+    if puede_concretar(estado, DF.HORAS_FICHAJE if destino is _mi(estado) else DF.HORAS_VENTA, jugador):
         _mover_ida(estado, jugador, dueno, destino, reg)
         return (f"{_nombre(jugador)} juega en {destino.nombre} a préstamo hasta "
                 f"{_texto_regreso(reg['vuelve'], reg.get('vuelve_fecha'))}.")
@@ -487,10 +487,9 @@ def evaluar_pedido(estado: dict, jugador, club, meses: int, pct_user: int) -> tu
         pend = [a for a in _dc(estado).get('analisis_prestamos', []) if a.get('jugador') != _nombre(jugador)]
         pend.append({'jugador': _nombre(jugador), 'club': club.nombre, 'meses': int(meses), 'pct': pct_user,
                      'jornada': jor, 'temporada': t, 'destino': getattr(mi, 'nombre', None)})
-        if hora is not None:
-            pend[-1]['hora_resp'] = hora
+        dias = DF.fijar_respuesta(estado, pend[-1], hora)      # v0.4.26.0: responde a los 1-3 días
         _dc(estado)['analisis_prestamos'] = pend
-        return 'analiza', f"{club.nombre}: \"Lo analizamos\". {DF.texto_respuesta(hora)}"
+        return 'analiza', f"{club.nombre}: \"Lo analizamos\". {DF.texto_respuesta(hora, dias=dias)}"
     return 'rechaza', f"{club.nombre} rechaza: quiere que pagues al menos el {minimo}% del sueldo."
 
 
@@ -633,9 +632,8 @@ def contraofertar(estado: dict, of: dict, pct_pedido: int) -> tuple:
             return 'rechazada', f"{comp}: no hay tiempo para analizarlo hoy y retira la oferta."
         _t, jor, _n = _momento(estado)
         of['contra'] = {'pedido': pct_pedido, 'estado': 'analizando', 'jornada': jor}
-        if hora is not None:
-            of['contra']['hora_resp'] = hora
-        return 'analizando', f"{comp}: \"Lo analizamos\". {DF.texto_respuesta(hora)}"
+        dias = DF.fijar_respuesta(estado, of['contra'], hora)      # v0.4.26.0: responde a los 1-3 días
+        return 'analizando', f"{comp}: \"Lo analizamos\". {DF.texto_respuesta(hora, dias=dias)}"
     estado['ofertas_recibidas'] = [o for o in estado.get('ofertas_recibidas') or [] if o is not of]
     return 'rechazada', f"{comp} considera excesivo el {pct_pedido}% y retira la oferta."
 

@@ -61,9 +61,44 @@ MULT_BAJA_MORAL = 2                               # v4.4.0: toda baja de moral p
 SUELDO_MINIMO_MORAL = 0.8                         # v4.4.0: cobrar < 80% del mercado baja la moral (antes 60%)
 
 
+MORAL_RACHA_SIN_GANAR = 10                        # v0.4.26.0: ganar tras 3+ partidos sin ganar sube a todos +10
+PARTIDOS_SIN_GANAR = 3
+
+
 def forma(j) -> float:
     notas = list(getattr(j, 'notas_recientes', []) or [])
     return sum(notas) / len(notas) if notas else 6.5
+
+
+def impulso_moral(estado: dict, equipo, cantidad: int, motivo: str) -> int:
+    """v0.4.26.0: sube la moral de TODA la plantilla `cantidad` puntos (tope 100) y deja la causa en la última
+    entrada de `causas_moral` (claves 'impulso' = lo que subió y 'motivo_impulso'; las bajas siguen en
+    minutos/equipo/sueldo). Sin `equipo`, el del user. Devuelve cuántos jugadores subieron.
+    Lo usan: ganar tras 3+ sin ganar (+10, post_partido_user), título (+25) y pasar de fase en copa (+8)."""
+    try:
+        equipo = equipo if equipo is not None else (estado or {}).get('mi_equipo')
+        cantidad = int(cantidad)
+        if equipo is None or cantidad <= 0:
+            return 0
+        subieron = 0
+        for j in list(getattr(equipo, 'jugadores', []) or []):
+            antes = int(getattr(j, 'moral', 70))
+            j.moral = min(100, antes + cantidad)
+            causas = list(getattr(j, 'causas_moral', []) or [])
+            if causas and isinstance(causas[-1], dict):
+                ultima = causas[-1]
+            else:
+                ultima = {'minutos': 0, 'equipo': 0, 'sueldo': 0}
+                causas.append(ultima)
+            ultima['impulso'] = int(ultima.get('impulso', 0) or 0) + (j.moral - antes)
+            ultima['motivo_impulso'] = str(motivo)
+            j.causas_moral = causas[-4:]
+            if j.moral > antes:
+                subieron += 1
+        return subieron
+    except Exception as e:
+        logger.error(f"No se pudo dar el impulso de moral ({motivo}): {e}")
+        return 0
 
 
 def _mitad(delta: int) -> int:
@@ -135,16 +170,53 @@ def actualizar_moral(equipo, reporte: list, gf: int, gc: int, es_clasico: bool, 
     return salida
 
 
+def _correos_forma(estado: dict, user_eq, reporte: list) -> None:
+    """v0.4.26.0: correo (Secretaría técnica) cuando un jugador de tu club entra en racha imparable y cuando
+    termina, con lo que avanzó durante la racha. Los eventos vienen en el reporte del desarrollo (forma_evento)."""
+    propios = {id(j) for j in getattr(user_eq, 'jugadores', []) or []}
+    try:
+        from alpha_football import correo as C
+        from alpha_football.forma import PARTIDOS_IMPARABLE
+        for r in reporte or []:
+            ev, j = r.get('forma_evento'), r.get('obj')
+            if not ev or j is None or id(j) not in propios:
+                continue
+            nombre = f"{j.nombre} {j.apellido}"
+            if ev.get('tipo') == 'entra':
+                C.enviar(estado, 'club', f"{nombre} está imparable",
+                         f"{nombre} lleva tres partidos seguidos de nota altísima y atraviesa un momento de forma "
+                         f"extraordinario. Durante los próximos {PARTIDOS_IMPARABLE} partidos progresará el doble de rápido "
+                         "en media y en potencial: conviene que siga jugando.",
+                         C.accion('plantilla_screen', "VER PLANTILLA"), jugador=j)
+            elif ev.get('tipo') == 'sale':
+                ganado = f"+{ev.get('media', 0)} de media / +{ev.get('potencial', 0)} de potencial"
+                C.enviar(estado, 'club', f"Termina la racha de {nombre}",
+                         f"{nombre} cierra su racha imparable y vuelve a una forma buena. Lo que avanzó mientras duró: "
+                         f"{ganado}.", C.accion('plantilla_screen', "VER PLANTILLA"), jugador=j)
+    except Exception as e:
+        logger.error(f"No se pudo avisar la forma de los jugadores: {e}")
+
+
+# v0.4.26.0 (ítem 9): bonus de potencial al cerrar la temporada, más jugadores y más puntos.
+# Antes: ≤24 con moral ≥75 y promedio ≥6.5 → 40 % +1 / 15 % +2 (media +0.70). Ahora: moral ≥70 y promedio ≥6.3
+# (o forma buena/imparable) → 53 % +1 / 25 % +2 / 7 % +3 (media +1.24), y con promedio ≥7.0 un punto más (tope +3).
+CORTES_POT_TEMPORADA = ((0.07, 3), (0.32, 2), (0.85, 1))
+
+
 def cierre_temporada(estado: dict, rng: Optional[random.Random] = None) -> list:
-    """Jóvenes (≤24) con moral ≥75 y promedio ≥6.5: 40% +1 / 15% +2 de potencial."""
+    """Jóvenes (≤24) con buena moral y buena temporada suben de potencial (ver CORTES_POT_TEMPORADA)."""
     azar = rng or random.Random()
     mi = estado.get('mi_equipo')
     textos = []
+    from alpha_football import forma as FO
     for j in list(getattr(mi, 'jugadores', []) or []):
-        if (int(j.edad) <= 24 and int(j.moral) >= 75 and float(j.promedio_nota) >= 6.5
+        en_forma = FO.nivel(j) in ('buena', 'imparable')
+        if (int(j.edad) <= 24 and float(j.promedio_nota) >= 6.3 and (int(j.moral) >= 70 or en_forma)
                 and int(j.partidos_jugados) > 0 and int(j.potencial) > 0):
             r = azar.random()
-            inc = 2 if r < 0.15 else 1 if r < 0.55 else 0
+            inc = next((p for corte, p in CORTES_POT_TEMPORADA if r < corte), 0)
+            if inc and float(j.promedio_nota) >= 7.0:
+                inc = min(3, inc + 1)
             if inc:
                 j.potencial = min(99, j.potencial + inc)
                 textos.append(f"{j.nombre} {j.apellido} +{inc} de potencial")
@@ -205,6 +277,12 @@ def post_partido_user(estado: dict, user_eq, rival, gf: int, gc: int, reporte: l
         clasico = es_clasico(user_eq, rival)
         jugaron = {jid for jid, m in minutos.items() if int(m or 0) > 0}
         res = actualizar_moral(user_eq, reporte, gf, gc, clasico, jugaron, rng=azar, no_disponibles=no_disp)
+        # v0.4.26.0 (ítem 15): ganar después de 3+ partidos sin ganar levanta al vestuario (+10 a todos).
+        # 'ult_res' guarda los últimos 3 resultados y se actualiza más abajo, así que aquí aún no cuenta este partido.
+        previos = list((estado.get('datos_carrera') or {}).get('ult_res', []) or [])
+        if gf > gc and len(previos) >= PARTIDOS_SIN_GANAR and all(r != 'G' for r in previos[-PARTIDOS_SIN_GANAR:]):
+            impulso_moral(estado, user_eq, MORAL_RACHA_SIN_GANAR, 'racha_sin_ganar')
+        _correos_forma(estado, user_eq, reporte)
         for j in res['quejas']:
             C.enviar(estado, 'jugador', f"{j.nombre} {j.apellido} está molesto",
                      f"Míster, no estoy bien (moral {j.moral}). Entre los minutos, el contrato y cómo me estoy "

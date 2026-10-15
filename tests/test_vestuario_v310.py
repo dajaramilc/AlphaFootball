@@ -24,7 +24,9 @@ def test_gasto_y_recuperacion_por_resistencia():
     assert E.energia_en_minuto(alto, 90) > E.energia_en_minuto(medio, 90) > E.energia_en_minuto(bajo, 90)
     viejo = jug(res=50, edad=33)
     assert E.energia_en_minuto(viejo, 90) < E.energia_en_minuto(medio, 90)
-    assert E.recuperacion(alto) == 15 + 0.15 * 90 and E.recuperacion(viejo) == 15 + 0.15 * 50 - 3
+    # v0.4.26.0: la recuperación es fija POR DÍA (3.0 + 0.025 × resistencia; −0.4 con más de 30 años)
+    assert abs(E.recuperacion(alto) - (3.0 + 0.025 * 90)) < 1e-9
+    assert abs(E.recuperacion(viejo) - (3.0 + 0.025 * 50 - 0.4)) < 1e-9
     medio.energia = 90; E.recuperar(medio); assert medio.energia == 100
     print("  test_gasto_y_recuperacion_por_resistencia: OK")
 
@@ -265,7 +267,7 @@ def test_desarrollo_mas_rapido_con_buena_moral():
         desarrollar_plantilla_post_partido(eq, 3, 0, rng=random.Random(4))
         subidas = sum(getattr(j, a) for j in eq.jugadores for a in attrs) - antes
         return sum(j.progreso_desarrollo for j in eq.jugadores) + subidas / 3   # 1.0 de progreso = +3 atributos
-    assert progreso(80) > progreso(70) * 1.10
+    assert progreso(90) > progreso(70) * 1.10         # v0.4.26.0: moral >= 85 multiplica el progreso ×1.25
     eq = _liga().equipos[0]
     desarrollar_plantilla_post_partido(eq, 1, 0, rng=random.Random(4))
     assert all(len(j.notas_recientes) <= 5 for j in eq.jugadores)
@@ -279,7 +281,8 @@ def test_cierre_temporada_potencial():
     for j in eq.jugadores: j.edad, j.moral, j.promedio_nota, j.partidos_jugados, j.potencial = 21, 80, 7.0, 10, 80
     V.cierre_temporada({'mi_equipo': mi}, rng=random.Random(2))
     subieron = [j for j in eq.jugadores if j.potencial > 80]
-    assert 0 < len(subieron) < len(eq.jugadores) and all(j.potencial <= 82 for j in eq.jugadores)
+    # v0.4.26.0: suben más jugadores (~85 %) y hasta +3 (con promedio >= 7.0, un punto más pero con tope +3)
+    assert len(subieron) > 0 and all(j.potencial <= 83 for j in eq.jugadores)
     print("  test_cierre_temporada_potencial: OK")
 
 
@@ -397,9 +400,9 @@ def _test_simulacion_instantanea_aplica_vestuario():
     gastaron = [j for j in mi.jugadores if j.id in once_ids]
     from alpha_football import calendario as CAL          # v0.4.11.0: la recuperación depende de los días de descanso
     _jugada = e['liga'].jornada_actual - 1
-    _factor = sum(CAL.descanso_tras_liga(e, _jugada)) / CAL.dias_por_jornada(e)
-    for j in gastaron:                                  # gastó 90' + adición (3-10, v4.4.0) y recuperó la jornada (tope 100)
-        esperado = [min(100.0, max(0.0, 100 - E.gasto_por_minuto(j) * m) + E.recuperacion(j) * _factor) for m in (100, 90)]
+    _dias = sum(CAL.descanso_tras_liga(e, _jugada))     # v0.4.26.0: recupera cierta cantidad POR DÍA de descanso
+    for j in gastaron:                                  # gastó 90' + adición (3-10, v4.4.0) y recuperó esos días (tope 100)
+        esperado = [min(100.0, max(0.0, 100 - E.gasto_por_minuto(j) * m) + E.recuperacion(j) * _dias) for m in (100, 90)]
         assert esperado[0] - 0.01 <= j.energia <= esperado[1] + 0.01, (j.energia, esperado)
     assert all(j.energia == 100 for j in mi.jugadores if j.id not in once_ids)
     assert len(e['datos_carrera'].get('racha', [])) == 1          # el hook de vestuario corrió una vez

@@ -51,6 +51,7 @@ def marcar_salida_forzada(estado: dict, equipo) -> list:
                      C.accion('plantilla_screen', "VER PLANTILLA"))
         except Exception as e:
             logger.error(f"No se pudo avisar la salida forzada: {e}")
+        anunciar_pide_salir(estado)         # v0.4.26.0: sus noticias salen en el momento del descenso
     return js
 
 
@@ -341,10 +342,56 @@ def oferta_rechazada(estado: dict, jugador) -> None:
         logger.error(f"Error al registrar el rechazo de la oferta: {e}")
 
 
+MOTIVO_PIDE_SALIR = {      # v0.4.26.0: causa_principal(j) -> cómo lo cuenta la prensa
+    'minutos': "porque no tiene los minutos que esperaba",
+    'equipo': "porque no ve ambición deportiva en el proyecto",
+    'sueldo': "porque no está conforme con su contrato",
+}
+
+
+def anunciar_pide_salir(estado: dict) -> list:
+    """v0.4.26.0: una noticia "X pide salir" por cada jugador del user que acaba de pedirlo (o a quien el
+    descenso empuja a irse). Se recuerda en datos_carrera['pide_salir_noticiado']; el que deja de pedirlo
+    (se curó, se vendió) sale de la lista y, si vuelve a pedirlo, hay otra noticia. Devuelve los anunciados."""
+    anunciados = []
+    try:
+        from alpha_football import noticias, correo as C
+        mi = estado.get('mi_equipo')
+        if mi is None:
+            return anunciados
+        lista = estado.setdefault('datos_carrera', {}).setdefault('pide_salir_noticiado', [])
+        plantel = list(getattr(mi, 'jugadores', []) or [])
+        piden = [j for j in plantel if getattr(j, 'pide_salir', False) and not getattr(j, 'prestamo', None)]
+        ids_piden = {j.id for j in piden}
+        lista[:] = [i for i in lista if i in ids_piden]          # el que ya no pide salir se olvida
+        for j in piden:
+            if j.id in lista:
+                continue
+            lista.append(j.id)
+            nombre = _nombre(j)
+            if getattr(j, 'salida_forzada', False):
+                cuerpo = (f"Tras el descenso de {mi.nombre}, {nombre} ({j.posicion}, media {j.overall}) ha pedido "
+                          "salir para seguir jugando en 1ª división. Sus representantes ya sondean el mercado.")
+            else:
+                cuerpo = (f"{nombre} ({j.posicion}, media {j.overall}) ha comunicado que quiere dejar {mi.nombre} "
+                          f"{MOTIVO_PIDE_SALIR.get(causa_principal(j), MOTIVO_PIDE_SALIR['equipo'])}. "
+                          "Sus representantes ya sondean el mercado.")
+            noticias.publicar(estado, 'vestuario',
+                              noticias.titular(f"{nombre} pide salir de {mi.nombre}", f"{nombre} pide salir del club",
+                                               f"{nombre} pide salir"),
+                              cuerpo, importancia=4 if int(j.overall) >= 80 else 3, equipos=[mi], jugadores=[j],
+                              accion=C.accion('plantilla_screen', "VER PLANTILLA"))
+            anunciados.append(j)
+    except Exception as e:
+        logger.error(f"No se pudo anunciar a los que piden salir: {e}", exc_info=True)
+    return anunciados
+
+
 def cierre_jornada(estado: dict, rng: Optional[random.Random] = None) -> None:
     """Cierre de jornada de liga del user: cura, descontento, escalada por tiempo y ofertas."""
     try:
         revisar_curados(estado)
+        anunciar_pide_salir(estado)         # v0.4.26.0: la noticia del que acaba de pedir salir
         from alpha_football import dias as _dias      # v0.4.12.0: los avisos de jugadores llegan en días sueltos
         with _dias.diferir_correos(estado):
             revisar_descontento(estado, rng)

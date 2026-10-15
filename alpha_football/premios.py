@@ -36,6 +36,8 @@ PESO_LIGA_2A = 0.6
 BONO_CAMPEON_LIGA = 15.0          # v3.8.0: liga de 1ª ganada
 BONO_CAMPEON_COPA = 20.0          # v3.8.0: Champions o Libertadores ganada
 MIN_PARTIDOS_PCT = 0.5   # hay que haber jugado al menos la mitad de la liga
+MEDIA_MIN_BALON = 85.5    # v0.4.26.0: media mínima para ganar el Balón de Oro (el Sudamericano no la pide)
+N_RESPALDO_MEDIA = 10     # v0.4.26.0: si nadie la alcanza, compiten los 10 de mayor media
 
 
 def _clave_tabla(e: Any) -> tuple:
@@ -78,13 +80,31 @@ def _stats_copa_por_jugador(datos_copas: Optional[dict]) -> dict:
     return res
 
 
+def priorizar_por_media(candidatos: list, media_de, minimo: float) -> list:
+    """v0.4.26.0: `candidatos` ya va ordenada por puntaje. Devuelve la misma lista con los que llegan a `minimo`
+    de media primero (cada grupo en su orden); si nadie llega, primero los N_RESPALDO_MEDIA de mayor media y un
+    aviso en el log. Con `minimo` <= 0 no cambia nada."""
+    if not candidatos or minimo <= 0:
+        return list(candidatos)
+    primeros = [c for c in candidatos if media_de(c) >= minimo]
+    if not primeros:
+        mejores = sorted(candidatos, key=media_de, reverse=True)[:N_RESPALDO_MEDIA]
+        ids = {id(c) for c in mejores}
+        primeros = [c for c in candidatos if id(c) in ids]
+        logger.warning(f"Premio: nadie llega a la media {minimo}; compiten los {len(primeros)} de mayor media "
+                       f"(la mejor es {media_de(mejores[0]):.0f})")
+    ids = {id(c) for c in primeros}
+    return primeros + [c for c in candidatos if id(c) not in ids]
+
+
 def calcular_balon_de_oro(primeras: dict, segundas: dict, temporada: int,
                           campeon_copa=None, n_podio: int = 3,
-                          datos_copas: Optional[dict] = None) -> Optional[dict]:
+                          datos_copas: Optional[dict] = None,
+                          media_min: float = MEDIA_MIN_BALON) -> Optional[dict]:
     """
     Recorre las 10 ligas y devuelve {'temporada', 'ganador', 'podio'} (cada jugador como
     dict con nombre, equipo, liga, posición, OVR, goles, asistencias, nota, PJ y puntaje),
-    o None si nadie jugó lo suficiente.
+    o None si nadie jugó lo suficiente. v0.4.26.0: para ganarlo hace falta `media_min` de media.
     """
     # v3.8.0: campeon_copa puede ser un nombre o una colección (campeones de las dos copas);
     # datos_copas = datos_carrera['copas'] (goles/asistencias/vallas de copa por jugador).
@@ -120,6 +140,8 @@ def calcular_balon_de_oro(primeras: dict, segundas: dict, temporada: int,
     if not candidatos:
         return None
     candidatos.sort(key=lambda c: c[0], reverse=True)
+    # v0.4.26.0: los que llegan a la media mínima van primero (el podio puede completarse con los demás)
+    candidatos = priorizar_por_media(candidatos, lambda c: float(getattr(c[1], 'overall', 0) or 0), media_min)
 
     def _ficha(pts, j, eq, liga, sc) -> dict:
         return {
@@ -157,7 +179,9 @@ def calcular_sudamericano(primeras: dict, segundas: dict, temporada: int, campeo
     from alpha_football.paises import SUDAMERICA
     solo = lambda mapa: {t: l for t, l in (mapa or {}).items() if t in SUDAMERICA}
     copas = {k: v for k, v in (datos_copas or {}).items() if k == 'libertadores'}
-    return calcular_balon_de_oro(solo(primeras), solo(segundas), temporada, campeon_libertadores, n_podio, copas)
+    # v0.4.26.0: el Sudamericano no pide media mínima (las ligas sudamericanas rara vez llegan a 86)
+    return calcular_balon_de_oro(solo(primeras), solo(segundas), temporada, campeon_libertadores, n_podio, copas,
+                                 media_min=0)
 
 
 def _gala_en(premio: str, anio: int) -> date:

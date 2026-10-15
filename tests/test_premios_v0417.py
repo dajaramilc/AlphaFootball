@@ -60,6 +60,7 @@ def test_sudamericano_solo_ligas_sudamericanas():
     e = estado_carrera('premier'); _jugados(e)
     crack = e['primera_division']['premier'].equipos[0].jugadores[-1]
     crack.goles = 60                                              # el mejor del mundo juega en Europa
+    crack.ataque = crack.defensa = crack.fisico = crack.tecnica = crack.mental = 95   # v0.4.26.0: el Balón pide media >= 85.5
     balon = PR.calcular_balon_de_oro(e['primera_division'], e['segunda_division'], 1)
     sud = PR.calcular_sudamericano(e['primera_division'], e['segunda_division'], 1)
     assert balon['ganador']['nombre'] == crack.nombre_completo

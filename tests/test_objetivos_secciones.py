@@ -32,7 +32,7 @@ def test_marca_valor_y_estrella():
     om = D.definir_objetivo_marca(e, random.Random(1))
     assert om['tipo'] in ('valor', 'estrella')
     if om['tipo'] == 'valor':
-        assert om['meta'] == int(F.valor_club(mi) * 1.10)
+        assert om['meta'] == int(F.valor_club(mi, e) * 1.10)         # v0.4.26.0: el valor suma las camisetas
     else:
         assert om['meta'] == round(mi.ovr_promedio) + 5
     assert D.definir_objetivo_marca(e) is om          # se fija una vez por temporada
@@ -183,7 +183,7 @@ def test_pantalla_objetivos_por_secciones():
 def test_valor_no_lo_cumplen_premios_de_cierre_ni_espaldarazo():
     e = estado_carrera(); mi = e['mi_equipo']; D.definir_objetivo(e)
     om = D._dc(e)['objetivo_marca'] = {'temporada': 1, 'club': mi.nombre, 'tipo': 'valor',
-                                       'meta': F.valor_club(mi) + 1_000_000, 'texto': 'x',
+                                       'meta': F.valor_club(mi, e) + 1_000_000, 'texto': 'x',   # v0.4.26.0: con camisetas
                                        'ids_inicio': [j.id for j in mi.jugadores], 'cumplido': False}
     D._dc(e)['objetivo']['espaldarazo'] = {'pct': 0.3, 'puestos': 2, 'deuda': 5_000_000}
     mi.balance += 2_000_000                      # entra el aporte: no cuenta mientras sea deuda

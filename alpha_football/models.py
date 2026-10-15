@@ -106,6 +106,13 @@ class Jugador:
     remate: bool = False                        # v4.6.0: rematado por un club en quiebra (precio 60%)
     joya: bool = False                          # v4.8.0: joya de cantera (solo mientras está en la cantera)
     canterano: str = ""                         # v0.4.11.0: club que lo formó (subido desde su cantera); '' = no
+    # v0.4.26.0: forma (forma.py). `forma` = nivel guardado ('' = se deriva de notas_recientes), `imparable_partidos` =
+    # partidos que lleva en racha imparable, `racha_notas_altas` = notas seguidas >= 7.7 fuera de la racha y
+    # `forma_datos` = {'media0', 'pot0'} al activarse la racha, 'pot_temp' (potencial ganado esta temporada), 'piso'.
+    forma: str = ""
+    imparable_partidos: int = 0
+    racha_notas_altas: int = 0
+    forma_datos: dict = field(default_factory=dict)
     energia_vivo: Optional[float] = None       # transitorio: energía en el tramo que se simula
 
     def __post_init__(self):
@@ -294,6 +301,11 @@ class Jugador:
                 remate=bool(datos.get("remate", False)),
                 joya=bool(datos.get("joya", False)),
                 canterano=str(datos.get("canterano", "") or ""),                     # v0.4.11.0
+                forma=(str(datos.get("forma", "") or "") if str(datos.get("forma", "") or "") in
+                       ("pesima", "mala", "normal", "buena", "imparable") else ""),   # v0.4.26.0
+                imparable_partidos=int(datos.get("imparable_partidos", 0) or 0),
+                racha_notas_altas=int(datos.get("racha_notas_altas", 0) or 0),
+                forma_datos=dict(datos["forma_datos"]) if isinstance(datos.get("forma_datos"), dict) else {},
             )
         except Exception as e:
             logger.warning(f"Excepción al reconstruir Jugador: {e}. Usando fallback.")

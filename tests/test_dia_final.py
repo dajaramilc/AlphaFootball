@@ -163,20 +163,24 @@ def test_cerrar_retira_ofertas_cae_los_analisis_hace_la_ronda_y_no_se_repite():
     assert len([m for m in C.bandeja(e) if m['asunto'] == "Se cerró el mercado de pases"]) == 1
 
 
-def test_un_fichaje_cuesta_3_horas_y_con_menos_queda_acordado_para_la_proxima_ventana():
+def test_un_fichaje_cuesta_3_horas_y_con_1_o_2_se_cierra_en_este_mercado():
+    """v0.4.26.0: con 1-2 horas de mercado el trato entra en este mismo mercado y se acaba lo que resta (antes
+    quedaba acordado para la ventana siguiente)."""
     from alpha_football import negociacion as N, traspasos_pendientes as TP
     e, _ = _en_el_ultimo_dia(); mi, liga = e['mi_equipo'], e['liga']; mi.balance = 10 ** 12
     DF._bloque(e)['horas'] = 2
     club, j = liga.equipos[1], liga.equipos[1].jugadores[0]
     ok, msg = N.fichar(e, j, club, 1_000)
-    assert ok and TP.pendiente_de(e, j) is not None and j not in mi.jugadores and DF.horas(e) == 2
-    DF._bloque(e)['horas'] = 5
-    club2, j2 = liga.equipos[2], liga.equipos[2].jugadores[0]
-    ok, msg = N.fichar(e, j2, club2, 1_000)
-    assert ok and j2 in mi.jugadores and TP.pendiente_de(e, j2) is None and DF.horas(e) == 2
+    assert ok and j in mi.jugadores and TP.pendiente_de(e, j) is None            # entró ya, no queda pendiente
+    assert DF.horas(e) == 0 and DF.cerrado(e)                                    # y se acabó lo que restaba
+    f, _ = _en_el_ultimo_dia(); mi2, liga2 = f['mi_equipo'], f['liga']; mi2.balance = 10 ** 12
+    DF._bloque(f)['horas'] = 5
+    club2, j2 = liga2.equipos[2], liga2.equipos[2].jugadores[0]
+    ok, msg = N.fichar(f, j2, club2, 1_000)
+    assert ok and j2 in mi2.jugadores and TP.pendiente_de(f, j2) is None and DF.horas(f) == 2
 
 
-def test_una_venta_cuesta_2_horas_y_sin_horas_queda_acordada():
+def test_una_venta_cuesta_2_horas_y_con_1_se_cierra_en_este_mercado():
     from alpha_football import contraofertas as CO, traspasos_pendientes as TP
     e, _ = _en_el_ultimo_dia(); mi, comp = e['mi_equipo'], e['liga'].equipos[1]; comp.balance = 10 ** 12
     j = mi.jugadores[8]
@@ -184,7 +188,8 @@ def test_una_venta_cuesta_2_horas_y_sin_horas_queda_acordada():
     assert DF.horas(e) == 18
     j2 = mi.jugadores[8]; DF._bloque(e)['horas'] = 1
     assert CO.vender(e, {'jugador': j2, 'comprador': comp, 'monto': 5_000_000})
-    assert TP.pendiente_de(e, j2) is not None and j2 in mi.jugadores and DF.horas(e) == 1
+    assert TP.pendiente_de(e, j2) is None and j2 not in mi.jugadores and j2 in comp.jugadores   # v0.4.26.0
+    assert DF.horas(e) == 0 and DF.cerrado(e)
 
 
 def test_fuera_del_ultimo_dia_las_puertas_no_cobran_horas():

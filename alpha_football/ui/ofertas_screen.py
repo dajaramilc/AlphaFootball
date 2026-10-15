@@ -168,6 +168,21 @@ def _en_analisis(of: Optional[dict]) -> bool:
     return bool(of) and (of.get('contra') or {}).get('estado') == 'analizando'
 
 
+def _texto_respuesta_club(of: dict) -> str:
+    """v0.4.26.0: cuándo responde el club a la contraoferta (por hora el último día, por fecha o, sin reloj, por jornada)."""
+    c = (of or {}).get('contra') or {}
+    try:
+        if c.get('hora_resp') is not None:
+            return "El club responde en pocas horas."
+        if c.get('fecha_resp'):
+            from datetime import date
+            from alpha_football import calendario as CAL
+            return f"El club responde por correo el {CAL.texto_fecha(date.fromisoformat(str(c['fecha_resp'])), False)}."
+    except Exception as e:
+        logger.error(f"No se pudo leer cuándo responde el club: {e}")
+    return "El club responde por correo la próxima jornada."
+
+
 def _dibujar_panel_contra(screen, estado: dict, of: dict, mouse_pos) -> None:
     pygame.draw.rect(screen, (14, 20, 38), R_PANEL, border_radius=10)
     pygame.draw.rect(screen, COLORS.get('dorado', (255, 215, 0)), R_PANEL, width=2, border_radius=10)
@@ -307,7 +322,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             logger.error(f"No se pudo dibujar la ficha de la oferta: {e_ficha}")
         if _en_analisis(of):
             # el club está pensando tu contraoferta: no se puede aceptar ni rechazar mientras tanto
-            draw_text(screen, "El club responde por correo la próxima jornada.",
+            draw_text(screen, _texto_respuesta_club(of),
                       (R_ACEPTAR.x, R_ACEPTAR.y + 14), size='sm', color='azul')
         else:
             draw_button(screen, R_ACEPTAR, "ACEPTAR", R_ACEPTAR.collidepoint(mouse_pos))

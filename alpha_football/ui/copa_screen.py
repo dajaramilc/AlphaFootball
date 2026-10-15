@@ -215,9 +215,12 @@ def cobrar_premios_copa(estado: dict) -> int:
         alcanzada = CP.fase_user(estado)
         idx = fases.index(alcanzada) if alcanzada in fases else 0
         cobrado = 0
+        avanzo = []                     # v0.4.26.0: fases nuevas alcanzadas (moral)
         for f in fases[:idx + 1]:
             if f in reg['fases']:
                 continue
+            if f != fases[0]:
+                avanzo.append(f)
             monto = premio_fase(t, f)
             reg['fases'].append(f)
             reg['total'] = int(reg.get('total', 0)) + monto
@@ -236,6 +239,15 @@ def cobrar_premios_copa(estado: dict) -> int:
             except Exception as e_fin:
                 logger.error(f"No se pudo registrar el premio de copa en finanzas: {e_fin}")
             logger.info(f"Premio de {CP.NOMBRE_COPA[t]} ({alcanzada}): ${cobrado:,}")
+        if avanzo:
+            try:   # v0.4.26.0: pasar de fase sube la moral (+8); ganar la copa, mucho más (+25)
+                from alpha_football.vestuario import impulso_moral
+                if 'Campeón' in avanzo:
+                    impulso_moral(estado, mi, 25, 'titulo')
+                else:
+                    impulso_moral(estado, mi, 8, 'fase_copa')
+            except Exception as e_mor:
+                logger.error(f"No se pudo subir la moral por la copa: {e_mor}")
         try:   # v4.3.0: aviso de objetivo de copa cumplido en el momento
             from alpha_football.directiva import revisar_objetivo_copa_cumplido
             revisar_objetivo_copa_cumplido(estado)
@@ -328,6 +340,8 @@ def iniciar_copas_temporada(estado: dict, forzar: bool = False, tipos=None) -> N
 def etiqueta_partido(p: dict) -> str:
     """"Champions · Fase de liga F3" / "Libertadores · Octavos (vuelta)" / "Champions · Final"."""
     try:
+        if p.get('tipo') == 'intercontinental':          # v0.4.26.0
+            return "Intercontinental · Final"
         nombre = CP.NOMBRE_COPA.get(p.get('tipo'), 'Copa')
         fase = p.get('fase', '')
         if fase in ('Fase de liga', 'Fase de grupos'):
@@ -339,10 +353,23 @@ def etiqueta_partido(p: dict) -> str:
         return "Copa"
 
 
+def _pendiente(estado: dict) -> Optional[dict]:
+    """v0.4.26.0: tu partido de copa que toca ahora: primero la final Intercontinental (si es hoy), si no
+    el de tu copa continental."""
+    try:
+        from alpha_football import intercontinental as INT
+        pend = INT.pendiente_user(estado)
+        if pend:
+            return pend
+    except Exception as e:
+        logger.error(f"Error leyendo la Intercontinental pendiente: {e}")
+    return CP.partido_pendiente_user(estado)
+
+
 def rival_copa_pendiente(estado: dict) -> tuple:
     """v3.8.0: (etiqueta de la fecha, rival) del partido de copa que toca ahora, o (None, None)."""
     try:
-        pend = CP.partido_pendiente_user(estado)
+        pend = _pendiente(estado)
         if not pend:
             return None, None
         mi = _mi_nombre(estado)
@@ -359,7 +386,7 @@ def preparar_partido_copa(estado: dict) -> bool:
     (partido_copa_dict = copia del partido del motor, con 'id' y 'tipo'). False si no hay.
     """
     try:
-        pend = CP.partido_pendiente_user(estado)
+        pend = _pendiente(estado)
         if not pend:
             return False
         local = CP.equipo_por_nombre(estado, pend['local'])
@@ -434,6 +461,10 @@ def registrar_resultado_copa(estado: dict, gl: int, gv: int, penales_user=None) 
         if tupla is not None:
             pu, pr = tupla
             pen = {'a': pu, 'b': pr} if p.get('local') == _mi_nombre(estado) else {'a': pr, 'b': pu}
+        if p.get('tipo') == 'intercontinental':          # v0.4.26.0: la final de diciembre va por su módulo
+            from alpha_football import intercontinental as INT
+            INT.registrar_resultado(estado, int(gl), int(gv), pen)
+            return
         CP.registrar_resultado_user(estado, p['id'], int(gl), int(gv), pen)
         actualizar_claves(estado)
         cobrar_premios_copa(estado)
@@ -845,7 +876,6 @@ PESTANAS = ['liga_grupos', 'llaves', 'partidos', 'estadisticas']
 R_SELECTOR_COPA = pygame.Rect(900, 22, 340, 40)      # clic = alterna CHAMPIONS / LIBERTADORES
 R_CONTENIDO = pygame.Rect(40, 150, 1200, 486)        # termina en y=636
 R_VOLVER = pygame.Rect(40, 646, 200, 42)             # termina en y=688 (barra de atajos en 698)
-R_SIMULAR = pygame.Rect(1000, 646, 240, 42)
 R_FECHA_ANT = pygame.Rect(40, 150, 44, 32)
 R_FECHA_SIG = pygame.Rect(1196, 150, 44, 32)
 
@@ -869,11 +899,6 @@ def _user_vivo(estado: dict) -> bool:
     return not (linea.endswith("¡campeón!") or " · subcampeón" in linea or " · eliminado en " in linea)
 
 
-def _puede_simular_resto(estado: dict) -> bool:
-    copas = [CP.copa(estado, t) for t in CP.N_FECHAS]
-    return not _user_vivo(estado) and any(c and not c.get('campeon') for c in copas)
-
-
 def render(screen, estado: dict) -> Optional[str]:
     """
     v3.8.0: pantalla de copa (solo consulta; el partido del user se juega desde JUGAR en Inicio).
@@ -895,8 +920,6 @@ def render(screen, estado: dict) -> Optional[str]:
         fecha = fechas_sel.get(tipo)
         if not isinstance(fecha, int) or not 0 <= fecha < n_fechas:
             fecha = fecha_por_defecto(c) if c else 0
-        puede_simular = _puede_simular_resto(estado)
-
         # --- Eventos ---
         mouse_pos = pygame.mouse.get_pos()
         click_pos = None
@@ -919,8 +942,6 @@ def render(screen, estado: dict) -> Optional[str]:
                         pestana = PESTANAS[(PESTANAS.index(pestana) + paso) % len(PESTANAS)]
                 elif event.key == pygame.K_c:
                     tipo = 'libertadores' if tipo == 'champions' else 'champions'
-                elif event.key == pygame.K_r and puede_simular:
-                    simular_copa_entera(estado)
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 click_pos = event.pos
 
@@ -938,8 +959,6 @@ def render(screen, estado: dict) -> Optional[str]:
                     fecha = max(0, fecha - 1)
                 elif R_FECHA_SIG.collidepoint(click_pos):
                     fecha = min(n_fechas - 1, fecha + 1)
-            if puede_simular and R_SIMULAR.collidepoint(click_pos):
-                simular_copa_entera(estado)
         if tipo != estado.get('copa_vista'):
             estado['copa_vista'] = tipo
             c = CP.copa(estado, tipo)
@@ -948,7 +967,6 @@ def render(screen, estado: dict) -> Optional[str]:
         else:
             fechas_sel[tipo] = fecha
         estado['copa_pestana'] = pestana
-        puede_simular = _puede_simular_resto(estado)
 
         # --- Dibujo ---
         draw_gradient_bg(screen)
@@ -1010,7 +1028,7 @@ def render(screen, estado: dict) -> Optional[str]:
         else:
             dibujar_estadisticas(screen, cuerpo, c, user)
 
-        # pie: volver, ayuda y simular resto
+        # pie: volver y ayuda (v0.4.26.0: sin SIMULAR RESTO; la copa se juega en paralelo hasta el final)
         draw_button(screen, R_VOLVER, "VOLVER", R_VOLVER.collidepoint(mouse_pos))
         if pestana == 'liga_grupos':
             pie = ("Verde 1-8: octavos · Azul 9-24: playoff · Gris 25-36: eliminados" if tipo == 'champions'
@@ -1020,8 +1038,6 @@ def render(screen, estado: dict) -> Optional[str]:
         else:
             pie = "La copa se juega en paralelo a la liga, jornada a jornada."
         _txt(screen, pie, (620, R_VOLVER.centery), 16, 'azul', 700, ancla='center')
-        if puede_simular:
-            draw_button(screen, R_SIMULAR, "SIMULAR RESTO", R_SIMULAR.collidepoint(mouse_pos))
         return None
     except Exception as general_error:
         logger.error(f"Error general en copa_screen: {general_error}", exc_info=True)

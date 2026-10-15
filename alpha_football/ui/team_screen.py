@@ -13,6 +13,7 @@ import logging
 from typing import Optional, Any, Dict, List
 
 from alpha_football import formaciones as F
+from alpha_football import forma as FORMA            # v0.4.26.0
 from alpha_football.energia import texto_lesion      # v0.4.19.0
 from alpha_football.vestuario import PERSONALIDAD_TXT
 
@@ -660,11 +661,13 @@ def _render_direccion(screen, estado, mi_equipo, alin, es_amistoso, modo_prepart
         baja = baja_de(estado, j, en_partido)    # expulsado / lesionado: ya no lo tenemos
         pygame.draw.circle(screen, (0, 0, 0), (cx + 2, cy + 3), 25)
         color_pos = POS_COLOR.get(j.posicion, GRIS_CLAR)
-        pygame.draw.circle(screen, _oscurecer(color_pos) if baja else color_pos, (cx, cy), 25)
+        # v0.4.26.0: el jugador imparable titila en blanco (el número pasa a oscuro para leerse sobre el blanco)
+        titila = (not baja and FORMA.nivel(j) == 'imparable' and (pygame.time.get_ticks() // 400) % 2 == 0)
+        pygame.draw.circle(screen, BLANCO if titila else (_oscurecer(color_pos) if baja else color_pos), (cx, cy), 25)
         pygame.draw.circle(screen, AMARILLO if es_sel else (BLANCO if not area.collidepoint(mouse_pos) else COLORS['verde']),
                            (cx, cy), 25, 4 if es_sel else 2)
         f = get_font('sm')
-        s = f.render(str(j.overall), True, BLANCO if not baja else (120, 120, 130))
+        s = f.render(str(j.overall), True, (10, 14, 26) if titila else (BLANCO if not baja else (120, 120, 130)))
         screen.blit(s, s.get_rect(center=(cx, cy)))
         if baja:
             _icono_baja(screen, baja, (cx + 20, cy - 20))
@@ -715,6 +718,12 @@ def _render_direccion(screen, estado, mi_equipo, alin, es_amistoso, modo_prepart
         zona_txt = {'campo': "TITULAR", 'banco': "BANCO", 'reserva': "RESERVA"}[sel[0]]
         draw_text(screen, _truncar(f"{jsel.nombre} {jsel.apellido}", 20), (_FICHA.x + 16, _FICHA.y + 14), size='md', color='dorado')
         draw_text(screen, f"{jsel.posicion}  ·  OVR {jsel.overall}  ·  {zona_txt}", (_FICHA.x + 16, _FICHA.y + 48), size='sm', color='verde')
+        try:   # v0.4.26.0: forma con el color de su nivel (en la franja libre entre el encabezado y las filas)
+            from alpha_football.ui.ficha_jugador import dibujar_texto_rgb
+            dibujar_texto_rgb(screen, f"Forma: {FORMA.texto_forma(jsel)}", (_FICHA.x + 16, _FICHA.y + 66),
+                              FORMA.COLOR[FORMA.nivel(jsel)])
+        except Exception as e_forma:
+            logger.error(f"Error al dibujar la forma del jugador: {e_forma}")
         datos = [("Edad", getattr(jsel, 'edad', '?')), ("Potencial", getattr(jsel, 'potencial', 0) or '?'),
                  ("Ataque", jsel.ataque), ("Defensa", jsel.defensa), ("Físico", jsel.fisico),
                  ("Técnica", jsel.tecnica), ("Mental", jsel.mental), ("Moral", getattr(jsel, 'moral', 70)),

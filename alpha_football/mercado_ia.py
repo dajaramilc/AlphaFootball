@@ -282,7 +282,7 @@ def sanear_ia(estado: dict, rng: Optional[random.Random] = None, paises=None) ->
     que sí pueden pagarlos, hasta sanearse o quedar en PLANTILLA_MIN_VENDEDOR. Retorna el log.
     """
     from alpha_football.formaciones import mejor_once
-    from alpha_football.market import precio_compra, traspasado_en_ventana
+    from alpha_football.market import precio_compra, traspasado_en_ventana, cambio_reciente, FACTOR_CAMBIO_RECIENTE
     azar = rng or random.Random()
     mi_equipo = estado.get('mi_equipo')
     temporada = int(estado.get('temporada', 1) or 1)
@@ -305,6 +305,8 @@ def sanear_ia(estado: dict, rng: Optional[random.Random] = None, paises=None) ->
             for j in suplentes:
                 if len(vendedor.jugadores) <= PLANTILLA_MIN_VENDEDOR or (gasto <= ingresos and margen >= 0):
                     break
+                if cambio_reciente(estado, j) and azar.random() >= FACTOR_CAMBIO_RECIENTE:
+                    continue      # v0.4.26.0: el recién llegado se vende menos (se saca a otro suplente)
                 precio, sueldo_j = precio_compra(j), int(getattr(j, 'salario', 0) or 0)
                 pueden = []
                 for c, tipo_c, div_c in clubes:
@@ -477,7 +479,8 @@ def _buscar_refuerzo(comprador: Any, tipo_c: str, div_c: int, equipos: list, mi_
                      tope_sueldo: Optional[int] = None) -> Optional[tuple]:
     """v0.4.20.0: con `margen` y `tope_sueldo`, el fichaje (precio + sueldo) tiene que caber en lo que le
     sobra tras pagar los sueldos, y su sueldo no puede dejar la masa salarial sobre los ingresos."""
-    from alpha_football.market import precio_compra, traspasado_en_ventana
+    from alpha_football.market import (precio_compra, traspasado_en_ventana, cambio_reciente,
+                                       FACTOR_CAMBIO_RECIENTE, FACTOR_FIGURA_IA)
     flojo = _puesto_mas_flojo(comprador, rng)
     if flojo is None:
         return None
@@ -507,10 +510,16 @@ def _buscar_refuerzo(comprador: Any, tipo_c: str, div_c: int, equipos: list, mi_
             # El jugador acepta si el club está a su altura o si la liga paga más.
             if j.overall > nivel_c + tolerancia and riqueza_c <= _riqueza_liga(tipo_v, div_v):
                 continue
+            # v0.4.26.0: quien cambió de club hace menos de un año se mueve poco (no se anula: ×FACTOR_CAMBIO_RECIENTE)
+            if cambio_reciente(estado, j) and rng.random() >= FACTOR_CAMBIO_RECIENTE:
+                continue
             precio = precio_compra(j)
             if top3 is None:
                 top3 = sorted(vendedor.jugadores, key=lambda x: x.overall, reverse=True)[:3]
             if j in top3:
+                # v0.4.26.0: el club vende a sus 3 mejores con ×FACTOR_FIGURA_IA de la probabilidad
+                if rng.random() >= FACTOR_FIGURA_IA:
+                    continue
                 # las figuras solo se van a un club más grande, y con sobreprecio
                 nivel_v = nivel_v if nivel_v is not None else _nivel(vendedor)
                 if nivel_c < nivel_v and riqueza_c <= _riqueza_liga(tipo_v, div_v):
@@ -580,9 +589,11 @@ def _fichar_libre(estado: dict, club: Any, tipo_c: str, div_c: int, rng: random.
     from alpha_football.market import calcular_valor, registrar_region_jugador
     if len(club.jugadores) >= PLANTILLA_MAX_IA:
         return None
+    from alpha_football.market import traspasado_en_ventana
     contigo = {(str(a.get('jugador_id')), a.get('jugador'))
                for a in (estado.get('datos_carrera') or {}).get('analisis_contratos', []) if a.get('club_id') is None}
-    libres = [j for j in libres_reales(estado) if (str(j.id), j.nombre_completo) not in contigo]
+    libres = [j for j in libres_reales(estado) if (str(j.id), j.nombre_completo) not in contigo
+              and not traspasado_en_ventana(estado, j)]      # v0.4.26.0: ni al que acabas de fichar el último día
     if not libres:
         return None
     ingresos, gasto, margen = cuentas(estado, club, tipo_c, div_c)
@@ -767,9 +778,12 @@ def pago_clausulas(estado: dict, rng: Optional[random.Random] = None, prob: floa
                        if liga is not None for eq in liga.equipos if eq is not mi and eq.id != mi.id]
         cands = []
         from alpha_football.market import traspasado_en_ventana
+        from alpha_football.market import cambio_reciente, FACTOR_CAMBIO_RECIENTE
         for j in mi.jugadores:
             if getattr(j, 'prestamo', None) or traspasado_en_ventana(estado, j):   # a préstamo / recién llegado
                 continue
+            if cambio_reciente(estado, j) and azar.random() >= FACTOR_CAMBIO_RECIENTE:
+                continue      # v0.4.26.0: llegó hace menos de un año: casi nadie paga su cláusula
             c = int(getattr(j, 'clausula', 0) or 0)
             ricos = [(eq, t) for eq, t in compradores if c > 0 and eq.balance >= c]
             if ricos:

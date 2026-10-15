@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import random
+from datetime import timedelta
 from typing import Optional
 
 from alpha_football import calendario as CAL
@@ -23,7 +24,8 @@ HORAS_FICHAJE = 3            # fichaje inscrito: compra, agente libre o préstam
 HORAS_VENTA = 2              # venta o cesión concretada
 HORAS_ANALISIS = 3           # "lo analizamos" responde a las 3 horas
 PROB_OFERTA_HORA = 0.10
-PROB_OFERTA_HORA_TRANSFERIBLES = 0.25
+PROB_OFERTA_HORA_TRANSFERIBLES = 0.50    # v0.4.26.0: el doble por tus transferibles (antes 0.25)
+DIAS_RESPUESTA = (1, 3)      # v0.4.26.0: fuera del último día, "lo analizamos" responde a los 1-3 días (antes, por jornada)
 
 
 def _hoy_iso(estado: dict) -> str:
@@ -77,17 +79,35 @@ def abrir(estado: dict) -> bool:
         return False
 
 
-def gastar(estado: dict, h: int) -> bool:
+def gastar(estado: dict, h: int, jugador=None) -> bool:
     """Gasta `h` horas del último día. Fuera de él es gratis (True). Con horas insuficientes no gasta (False).
-    Tras gastar responde lo que vence y, si quedan 0 horas, cierra el mercado."""
+    Tras gastar responde lo que vence y, si quedan 0 horas, cierra el mercado.
+    v0.4.26.0: con 1 o 2 horas de mercado, un fichaje o una venta se cierra igual en este mismo mercado (no queda
+    para la otra ventana) y se acaba lo que resta: gasta las horas que quedan y el mercado cierra.
+    `jugador` es el del trato en curso: la ronda de cierre de la IA corre antes de que el trato se aplique y no
+    puede llevárselo (queda marcado como traspasado en esta ventana, como pasa al registrar el pase)."""
     if not activo(estado):
         return True
     b = _bloque(estado)
-    if int(b['horas']) < int(h):
-        return False
     antes = int(b['horas'])
-    b['horas'] = antes - int(h)
-    _anotar_animacion(estado, antes, b['horas'], int(h))
+    costo = int(h)
+    if antes < costo:
+        if not (0 < antes <= HORAS_FICHAJE - 1 and costo in (HORAS_FICHAJE, HORAS_VENTA)):
+            return False
+        gasto = antes                   # el trato entra y el mercado se acaba con él
+    else:
+        gasto = costo
+    if jugador is not None and antes - gasto <= 0:      # el mercado se cierra con este trato: solo entonces hace falta
+        try:
+            from alpha_football.market import clave_ventana_traspaso
+            liga = estado.get('liga')
+            jugador.ventana_traspaso = clave_ventana_traspaso(
+                int(estado.get('temporada', 1) or 1), int(getattr(liga, 'jornada_actual', 1) or 1),
+                int(getattr(liga, 'num_jornadas', 22) or 22), estado=estado)
+        except Exception as e:
+            logger.error(f"dia_final: no se pudo proteger al jugador del trato en curso: {e}")
+    b['horas'] = antes - gasto
+    _anotar_animacion(estado, antes, b['horas'], costo)
     if b['horas'] > 0:                                   # v0.4.25.0: cada hora que pasa trae noticias
         noticias_de_la_hora(estado, None, int(h))
     _tras_pasar_horas(estado)
@@ -164,7 +184,7 @@ def responder(estado: dict, rng: Optional[random.Random] = None) -> None:
 
 
 def prob_oferta_hora(estado: dict) -> float:
-    """10% por hora; 25% si tienes transferibles o alguien que pide salir."""
+    """10% por hora; 50% si tienes transferibles o alguien que pide salir (v0.4.26.0, antes 25%)."""
     mi = estado.get('mi_equipo')
     hay = any(getattr(j, 'transferible', False) or getattr(j, 'pide_salir', False)
               for j in getattr(mi, 'jugadores', []) or [])
@@ -264,21 +284,58 @@ def analisis(estado: dict) -> tuple:
     return True, h - HORAS_ANALISIS
 
 
-def texto_respuesta(hora: Optional[int], uno: bool = False) -> str:
-    """'Te responden en 3 horas.' o 'Te responden por correo en la próxima jornada.' ('Te responde…' si `uno`)."""
+def fijar_respuesta(estado: dict, item: dict, hora: Optional[int], rng: Optional[random.Random] = None) -> Optional[int]:
+    """v0.4.26.0: anota en `item` cuándo le responden al user. El último día va por hora (`hora_resp`); el resto de los
+    días, con el reloj de días en marcha, a los 1-3 días (`fecha_resp`; con el mercado abierto nunca después de su
+    cierre); sin reloj queda la regla de siempre (la jornada siguiente). Devuelve los días de espera o None."""
+    if hora is not None:
+        item['hora_resp'] = hora
+        return None
+    try:
+        from alpha_football import dias
+        if not dias.activo(estado):
+            return None
+        n = (rng or random).randint(*DIAS_RESPUESTA)
+        from alpha_football import temporada as T
+        cierre = T.dias_para_cierre(estado)
+        if cierre is not None and cierre >= 1:
+            n = min(n, cierre)               # que la respuesta llegue con la ventana todavía abierta
+        item['fecha_resp'] = (dias.hoy(estado) + timedelta(days=n)).isoformat()
+        return n
+    except Exception as e:
+        logger.error(f"dia_final: no se pudo fijar el día de la respuesta: {e}", exc_info=True)
+        return None
+
+
+def texto_respuesta(hora: Optional[int], uno: bool = False, dias: Optional[int] = None) -> str:
+    """'Te responden en 3 horas.', 'Te responden por correo en 2 días.' o, sin reloj, 'Te responden por correo en
+    la próxima jornada.' ('Te responde…' si `uno`)."""
     quien = "Te responde" if uno else "Te responden"
-    return f"{quien} por correo en la próxima jornada." if hora is None else f"{quien} en {HORAS_ANALISIS} horas."
+    if hora is not None:
+        return f"{quien} en {HORAS_ANALISIS} horas."
+    if dias:
+        return f"{quien} por correo en {int(dias)} día{'s' if int(dias) != 1 else ''}."
+    return f"{quien} por correo en la próxima jornada."
 
 
 def vencido(estado: dict, item: dict) -> bool:
     """¿Ya toca responder este 'lo analizamos'? Con hora de respuesta (pedido el último día): cuando quedan esas
-    horas o menos, o si el último día ya pasó. Sin ella, la regla de siempre: la jornada siguiente."""
+    horas o menos, o si el último día ya pasó. v0.4.26.0: con fecha de respuesta, cuando el reloj la alcanza. Sin
+    ninguna (sin reloj, o partidas viejas), la regla de siempre: la jornada siguiente."""
     t = int(estado.get('temporada', 1) or 1)
     if int(item.get('temporada', t) or t) != t:
         return True
     hr = item.get('hora_resp')
     if hr is not None:
         return horas(estado) <= int(hr) if _bloque(estado) is not None else True
+    fr = item.get('fecha_resp')
+    if fr:
+        try:
+            hoy = _hoy_iso(estado)
+            if hoy:
+                return str(hoy) >= str(fr)
+        except Exception as e:
+            logger.error(f"dia_final: no se pudo comparar la fecha de la respuesta: {e}")
     return int(getattr(estado.get('liga'), 'jornada_actual', 1) or 1) > int(item.get('jornada', 0) or 0)
 
 

@@ -56,27 +56,82 @@ def rect_tab_copas() -> pygame.Rect:
     return pygame.Rect(SCREEN_W - 244, 56, 220, 44)
 
 
-COPAS_OTRAS = ('champions', 'libertadores')
+COPAS_OTRAS = ('champions', 'libertadores', 'intercontinental')     # v0.4.26.0: + Intercontinental
 # v3.9.0: rects expuestos (ayuda H). VOLVER con alto 44 en ambas vistas (antes 50: tocaba la barra).
 R_LISTA = pygame.Rect(24, 110, 330, 520)
 R_PANEL = pygame.Rect(370, 110, SCREEN_W - 394, 520)
 R_VOLVER = pygame.Rect(24, 646, 220, 44)
 
 
+def _nombre_copa(tipo: str) -> str:
+    from alpha_football import competiciones as CP
+    return "Intercontinental" if tipo == 'intercontinental' else CP.NOMBRE_COPA[tipo]
+
+
+def _texto_intercontinental(estado: dict) -> str:
+    """v0.4.26.0: línea corta de la Intercontinental para la lista (última edición o la próxima final)."""
+    from alpha_football import intercontinental as INT, calendario as CAL
+    reg = (estado.get('datos_carrera') or {}).get('intercontinental') or {}
+    if reg.get('jugado') and reg.get('campeon'):
+        return f"Campeón {reg.get('anio')}: {reg['campeon']}"
+    f = INT.fecha(estado) if reg.get('anio') else None
+    return f"Final: {CAL.texto_fecha(f, False)}" if f else "Se juega en diciembre"
+
+
+def _render_intercontinental(screen, estado: dict, panel: pygame.Rect) -> None:
+    """v0.4.26.0: la final del año (o la última jugada) y el historial de campeones."""
+    from alpha_football import intercontinental as INT, calendario as CAL
+    from alpha_football.ui import copa_screen as S
+    reg = (estado.get('datos_carrera') or {}).get('intercontinental') or {}
+    x, ancho = panel.x + 16, panel.width - 32
+    draw_text(screen, "COPA INTERCONTINENTAL", (x, panel.y + 10), size='md', color='dorado')
+    S._txt(screen, f"Campeón de la Libertadores vs campeón de Europa · partido único en diciembre · "
+                   f"{INT._mm(INT.PREMIO_CAMPEON)} al campeón y {INT._mm(INT.PREMIO_FINALISTA)} al finalista",
+           (x, panel.y + 46), 16, 'azul', ancho)
+    y = panel.y + 90
+    if reg.get('anio'):
+        draw_text(screen, f"EDICIÓN {reg['anio']}", (x, y), size='sm', color='dorado')
+        S._txt(screen, f"{reg['local']}  ·  campeón de la Libertadores", (x, y + 32), 18, 'blanco', ancho)
+        S._txt(screen, f"{reg['visitante']}  ·  campeón de Europa", (x, y + 60), 18, 'blanco', ancho)
+        if reg.get('jugado'):
+            S._txt(screen, f"Resultado: {INT.marcador(reg)}", (x, y + 98), 17, 'azul', ancho)
+            S._txt(screen, f"CAMPEÓN: {reg.get('campeon')}", (x, y + 126), 20, 'verde', ancho)
+        else:
+            f = INT.fecha(estado)
+            S._txt(screen, f"Final: {CAL.texto_fecha(f) if f else 'por definir'}", (x, y + 98), 17, 'azul', ancho)
+    else:
+        S._txt(screen, "Todavía no se conocen los finalistas: la Libertadores define al primero.", (x, y), 17,
+               'blanco', ancho)
+        europa = INT._campeon_champions(estado)
+        if europa:
+            S._txt(screen, f"Campeón de Europa vigente: {europa}", (x, y + 30), 17, 'azul', ancho)
+    historial = [h for h in reg.get('historial') or [] if isinstance(h, dict)]
+    y = panel.y + 290
+    draw_text(screen, "HISTORIAL", (x, y), size='sm', color='dorado')
+    if not historial:
+        S._txt(screen, "Todavía no se jugó ninguna edición.", (x, y + 30), 16, 'blanco', ancho)
+    for k, h in enumerate(reversed(historial[-7:])):
+        S._txt(screen, f"{h.get('anio')}  ·  {h.get('campeon')}  ·  {h.get('marcador', '')}", (x, y + 30 + k * 26), 16,
+               'blanco', ancho)
+
+
 def _render_copas(screen, estado: dict, mouse_pos, click_pos, teclas: list) -> None:
-    """v3.8.0: estado de las dos copas: fase actual y tabla/grupos o llaves."""
+    """v3.8.0: estado de las dos copas: fase actual y tabla/grupos o llaves.
+    v0.4.26.0: + la Copa Intercontinental (su final y el historial)."""
     from alpha_football import competiciones as CP
     from alpha_football.ui import copa_screen as S
     sel = estado.get('otras_ligas_copa_sel') if estado.get('otras_ligas_copa_sel') in COPAS_OTRAS else 'champions'
     for k in teclas:
         if k in (pygame.K_UP, pygame.K_DOWN):
-            sel = COPAS_OTRAS[(COPAS_OTRAS.index(sel) + 1) % 2]
-    draw_text(screen, "Champions y Libertadores se juegan en paralelo a tu carrera  ·  ↑↓ copa  ·  C ligas",
+            paso = -1 if k == pygame.K_UP else 1
+            sel = COPAS_OTRAS[(COPAS_OTRAS.index(sel) + paso) % len(COPAS_OTRAS)]
+    draw_text(screen, "Las copas internacionales se juegan en paralelo a tu carrera  ·  ↑↓ copa  ·  C ligas",
               (32, 74), size='sm', color='azul')
     lista = R_LISTA
     draw_panel(screen, lista)
     draw_text(screen, "COPAS INTERNACIONALES", (34, 124), size='sm', color='dorado')
     user = getattr(estado.get('mi_equipo'), 'nombre', '')
+    reg_int = (estado.get('datos_carrera') or {}).get('intercontinental') or {}
     for i, tipo in enumerate(COPAS_OTRAS):
         r = rect_pais(i)
         if click_pos and r.collidepoint(click_pos):
@@ -86,20 +141,29 @@ def _render_copas(screen, estado: dict, mouse_pos, click_pos, teclas: list) -> N
         pygame.draw.rect(screen, (30, 45, 75) if (activo or hover) else (15, 22, 40), r, border_radius=6)
         pygame.draw.rect(screen, COLORS['dorado'] if activo else COLORS['azul'], r,
                          width=3 if activo else 1, border_radius=6)
-        marca = "  (tu copa)" if CP.tipo_copa_user(estado) == tipo else ""
-        draw_text(screen, f"{CP.NOMBRE_COPA[tipo].upper()}{marca}", (r.x + 12, r.y + 10), size='sm',
-                  color='dorado' if activo else ('verde' if hover else 'blanco'))
+        if tipo == 'intercontinental':
+            tuya = bool(user) and user in (reg_int.get('local'), reg_int.get('visitante')) and not reg_int.get('jugado')
+        else:
+            tuya = CP.tipo_copa_user(estado) == tipo
+        draw_text(screen, f"{_nombre_copa(tipo).upper()}{'  (tu copa)' if tuya else ''}", (r.x + 12, r.y + 10),
+                  size='sm', color='dorado' if activo else ('verde' if hover else 'blanco'))
     for i, tipo in enumerate(COPAS_OTRAS):          # resumen de cada copa debajo del selector
-        c = CP.copa(estado, tipo) or {}
-        y = rect_pais(2).y + i * 70
-        draw_text(screen, CP.NOMBRE_COPA[tipo], (40, y), size='sm', color='azul')
-        estado_txt = f"Campeón: {c['campeon']}" if c.get('campeon') else f"En juego: {c.get('fase_actual', '—')}"
+        y = rect_pais(len(COPAS_OTRAS)).y + i * 70
+        draw_text(screen, _nombre_copa(tipo), (40, y), size='sm', color='azul')
+        if tipo == 'intercontinental':
+            estado_txt = _texto_intercontinental(estado)
+        else:
+            c = CP.copa(estado, tipo) or {}
+            estado_txt = f"Campeón: {c['campeon']}" if c.get('campeon') else f"En juego: {c.get('fase_actual', '—')}"
         S._txt(screen, estado_txt, (40, y + 24), 15, 'blanco', 300)
     estado['otras_ligas_copa_sel'] = sel
 
-    c = CP.copa(estado, sel)
     panel = R_PANEL
     draw_panel(screen, panel)
+    if sel == 'intercontinental':
+        _render_intercontinental(screen, estado, panel)
+        return
+    c = CP.copa(estado, sel)
     titulo = "CHAMPIONS LEAGUE" if sel == 'champions' else "COPA LIBERTADORES"
     draw_text(screen, f"{titulo} · T{estado.get('temporada', 1)}", (panel.x + 16, panel.y + 10), size='md', color='dorado')
     if not c:

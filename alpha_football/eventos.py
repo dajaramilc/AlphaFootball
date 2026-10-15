@@ -249,6 +249,38 @@ EVENTOS: list = [
                "pena y el primer responsable es usted. Hoy casi nos vamos a las manos y la próxima no me agarra "
                "nadie. Usted de fútbol sabe lo que yo de ballet. Si no le gusta lo que lee, ya sabe dónde "
                "encontrarme: en la cancha no, porque ahí usted ni aparece.\n{j}",
+     # v0.4.26.0: la redacción se sortea entre estas (asunto, cuerpo); la de arriba es la primera
+     'variantes': [
+         ("{j} armó una riña en el vestuario",
+          "A ver, {dt}, se lo digo por escrito porque en el vestuario ya me oyeron todos: este equipo da "
+          "pena y el primer responsable es usted. Hoy casi nos vamos a las manos y la próxima no me agarra "
+          "nadie. Usted de fútbol sabe lo que yo de ballet. Si no le gusta lo que lee, ya sabe dónde "
+          "encontrarme: en la cancha no, porque ahí usted ni aparece.\n{j}"),
+         ("{j} explotó en el vestuario",
+          "{dt}, para que no se entere por terceros: hoy exploté. Le dije a medio plantel lo que pienso de "
+          "este equipo y de cómo lo maneja usted. Hubo gritos, empujones y un botiquín por el suelo. No me "
+          "arrepiento de nada, así que no espere disculpas.\n{j}"),
+         ("Escándalo en el vestuario: {j} se fue a las manos",
+          "Míster, lo escribo en caliente: tras el entrenamiento me agarré a gritos con tres compañeros y a "
+          "usted le tengo guardadas un par de frases también. Este equipo juega como si no le importara nada "
+          "y alguien tenía que decirlo. Si quiere sancionarme, adelante; las verdades no se multan.\n{j}"),
+         ("{j} se encara con todos en el vestuario",
+          "{dt}, hoy en el vestuario dije lo que nadie se anima a decir y la cosa terminó en tumulto. Usted "
+          "arma las alineaciones como quien tira los dados y después le toca al jugador dar la cara. Yo ya "
+          "la di. Ahora le toca a usted.\n{j}"),
+         ("Bronca en el vestuario: {j} perdió los papeles",
+          "Míster, seré breve: perdí los papeles. Me cruzaron un comentario sobre mi rendimiento y contesté "
+          "con lo que tenía a mano. Pero no se equivoque: la culpa de que estemos así no es mía, es de su "
+          "manera de manejar al grupo.\n{j}"),
+         ("Se calentó el vestuario: {j}, en el centro de la riña",
+          "Se lo cuento yo antes de que se lo cuenten: hubo riña y yo estaba en el medio. Me llamaron «el "
+          "problema del grupo» y no lo voy a permitir. Si hay que repartir culpas, empiece por usted, {dt}, "
+          "que es quien decide quién juega.\n{j}"),
+         ("{j} desafía al técnico tras una riña en el vestuario",
+          "{dt}, hoy casi termino a los golpes con un compañero y no fue por nada personal: fue por cómo se "
+          "está llevando este equipo. Dicen que soy un conflictivo. Yo digo que soy el único que dice las "
+          "cosas de frente.\n{j}"),
+     ],
      'opciones': [
          {'texto': "MULTARLO", 'efectos': [('moral', 'j', -10), ('moral', 'plantel', 2), ('dinero', 'j', 0.02)],
           'titular': "{club} multa a {j} por la riña del vestuario",
@@ -268,6 +300,33 @@ EVENTOS: list = [
      'asunto': "Pelea en el entrenamiento: {j} y {j2}",
      'cuerpo': "En el entrenamiento de hoy {j} entró muy fuerte a {j2} y terminaron a los empujones. {j2} "
                "salió lastimado y pasó por la enfermería. El cuerpo técnico espera su decisión.",
+     # v0.4.26.0: la redacción se sortea entre estas (asunto, cuerpo); la de arriba es la primera
+     'variantes': [
+         ("Pelea en el entrenamiento: {j} y {j2}",
+          "En el entrenamiento de hoy {j} entró muy fuerte a {j2} y terminaron a los empujones. {j2} "
+          "salió lastimado y pasó por la enfermería. El cuerpo técnico espera su decisión."),
+         ("{j} y {j2} se fueron a las manos en la práctica",
+          "Durante el ejercicio de hoy, una entrada de {j} sobre {j2} encendió los ánimos y terminaron "
+          "agarrados. Los separaron entre varios compañeros. {j2} tiene un golpe y fue revisado por el "
+          "cuerpo médico. Necesitamos su decisión."),
+         ("Incidente en el entrenamiento: {j} golpeó a {j2}",
+          "Nos informa el cuerpo técnico que en el partidillo de esta mañana {j} golpeó a {j2} tras una "
+          "jugada discutida. {j2} se retiró dolorido del campo y pasó por la enfermería. Queda a su "
+          "criterio cómo proceder."),
+         ("Se calentó la práctica: {j} contra {j2}",
+          "El entrenamiento se cortó cuando {j} y {j2} se enfrentaron a empujones por una falta. Hubo que "
+          "separarlos y {j2} quedó resentido por el golpe. El cuerpo técnico aguarda sus instrucciones."),
+         ("Roces en el entrenamiento entre {j} y {j2}",
+          "Hoy el ensayo terminó antes de tiempo: {j} y {j2} discutieron, se empujaron y {j2} salió con "
+          "molestias. En el vestuario hay tensión y los compañeros esperan que el club diga algo."),
+         ("{j2} sale lastimado de una pelea con {j}",
+          "Mala noticia desde la ciudad deportiva: {j2} terminó en la enfermería después de una pelea con "
+          "{j} en pleno entrenamiento. Los dos quedaron enfrentados y el plantel está pendiente de lo que "
+          "usted decida."),
+         ("Gresca en la práctica: {j} y {j2} no se hablan",
+          "En el último ejercicio, {j} y {j2} se enredaron en una disputa que acabó en golpes. {j2} salió "
+          "con dolor y {j} no quiso dar explicaciones. El cuerpo técnico le pide que tome una decisión."),
+     ],
      'opciones': [
          {'texto': "SANCIONAR AL AGRESOR", 'efectos': [('lesion', 'j2', (1, 2)), ('sancion', 'j', 1), ('moral', 'j', -6), ('moral', 'plantel', 2)],
           'titular': "{j}, sancionado por lesionar a un compañero",
@@ -579,7 +638,8 @@ def sortear(estado: dict, rng: Optional[random.Random] = None, forzar: Optional[
     if not cands:
         return None
     ev, prot, _peso = azar.choices(cands, weights=[c[2] for c in cands])[0]
-    msg = C.enviar(estado, ev['remitente'], _fmt(ev['asunto'], estado, prot), _fmt(ev['cuerpo'], estado, prot))
+    asunto, cuerpo = azar.choice(ev['variantes']) if ev.get('variantes') else (ev['asunto'], ev['cuerpo'])   # v0.4.26.0
+    msg = C.enviar(estado, ev['remitente'], _fmt(asunto, estado, prot), _fmt(cuerpo, estado, prot))
     msg['evento'] = {'id': ev['id'], 'protagonistas': [j.id for j in prot],
                      'nombres': [_nom(j) for j in prot],      # v0.4.10.0: para la noticia si ya no están
                      'opciones': [o['texto'] for o in ev['opciones']], 'resuelto': None, 'resumen': []}

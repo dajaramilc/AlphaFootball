@@ -410,12 +410,13 @@ def _ayuda_hub(estado: dict) -> list:
             (L.R_SOBRE, "Correo", "El número rojo son los mensajes sin leer. Clic o tecla M para abrir el correo."),
             (L.R_TABLA, "Tabla", "Abre en NOTICIAS; las pestañas NOTICIAS / LIGA / COPA cambian el panel (LIGA: posiciones, tu club resaltado)."),
             (_union([L.rect_tab_tabla('liga'), L.rect_tab_tabla('copa')]), "LIGA / COPA",
-             "Alterna entre la tabla de la liga y la de tu copa internacional."),
+             "Alterna entre la tabla de la liga y la de tu copa internacional. Si tu club no la juega, VER COPA te lleva a Otras ligas › Copas."),   # v0.4.26.0
             (L.rect_tab_tabla('noticias'), "NOTICIAS", "Las 3 más recientes primero; cada 5 s corren a las viejas y reinician al parar (N). Clic: ver."),
             (L.R_HIST, "Historial", "Tus partidos jugados. Rueda del mouse o ▲ ▼ para desplazarte."),
             (L.R_JUGAR, "JUGAR", "Juega el partido del día. Sin partido es CONTINUAR: los días pasan hasta tu partido, una oferta o un evento."),   # v0.4.14.1
             (L.R_DIA, "+1 DÍA", "Avanza un solo día (tecla D). Solo aparece cuando hoy no hay partido."),
-            (L.R_HORA, "AVANZAR 1 HORA", "Solo el último día de fichajes: pasa una hora (Enter). El panel dice cuántas quedan."),
+            (L.R_HORA, "AVANZAR 1 HORA", "Solo el último día de fichajes: pasa una hora (Enter). El panel dice cuántas quedan."
+                                          " Con 1 o 2 horas restantes, un fichaje o una venta se cierra igual en ese mismo mercado y el mercado se acaba."),   # v0.4.26.0
             (L.R_CERRAR, "CERRAR MERCADO", "Cierra el mercado antes de las 0 horas (tecla C); pide confirmación."),
             (R(L.R_JUGAR.x, L.Y_AVISOS, L.R_JUGAR.width, L.R_JORNADA.y - L.Y_AVISOS - 6), "Avisos",
              "Tu situación en la copa y alertas: lesiones, contratos, ofertas y correo."),
@@ -520,7 +521,8 @@ def _ayuda_ofertas(estado: dict) -> list:
         ]
     if estado.get('contra_abierta'):
         return [
-            (O.R_PANEL, "Contraoferta", "Pide más dinero por el jugador. El club la analiza y responde en unos días."),
+            (O.R_PANEL, "Contraoferta", "Pide más dinero por el jugador. El club responde por correo en 1 a 3 días "
+                                        "(el último día de fichajes, a las 3 horas)."),   # v0.4.26.0
             (O.R_MONTO, "Monto", "Escribe la cifra con los números; Retroceso borra el último dígito."),
             (_union([O.R_MAS5, O.R_MAS10, O.R_MAS25]), "+5% +10% +25%", "Sube el monto sobre la oferta original."),
             (O.R_ENVIAR, "Enviar", "Envía la contraoferta (también Enter). ESC la cancela."),
@@ -669,13 +671,13 @@ def _ayuda_otras_ligas(estado: dict) -> list:
     if estado.get('otras_ligas_copas'):
         return [
             (O.rect_tab_copas(), "Ver ligas", "Vuelve a las tablas de las ligas (tecla C)."),
-            (_union([O.rect_pais(0), O.rect_pais(1)]), "Copas", "Champions o Libertadores; ↑ ↓ cambian. Debajo, la fase de cada una."),
-            (O.R_PANEL, "Copa elegida", "Tabla de la fase de liga, grupos o llaves con global y penales."),
+            (_union([O.rect_pais(0), O.rect_pais(1), O.rect_pais(2)]), "Copas", "Champions, Libertadores o Intercontinental; ↑ ↓ cambian. Debajo, cómo va cada una."),
+            (O.R_PANEL, "Copa elegida", "Tabla de la fase de liga, grupos o llaves con global y penales. La Intercontinental muestra su final y el historial de campeones."),
             (O.R_VOLVER, "Volver", "Regresa al hub (también ESC)."),
         ]
     n = len(O.ligas_disponibles(estado)) // 2 or 8
     return [
-        (O.rect_tab_copas(), "Copas", "Muestra cómo van Champions y Libertadores (tecla C)."),
+        (O.rect_tab_copas(), "Copas", "Muestra cómo van Champions, Libertadores e Intercontinental (tecla C)."),
         (_union([O.rect_division(0), O.rect_division(1)]), "División", "1ª o 2ª división del país elegido (← →)."),
         (_union(O.rect_pais(i) for i in range(n)), "Países", "Clic o ↑ ↓ para ver la liga de otro país."),
         (O.R_PANEL, "Tabla y resultados", "Posiciones con cupos de copa y descenso, DT de cada club y últimos resultados."),
@@ -697,7 +699,17 @@ def _ayuda_plantilla(estado: dict) -> list:
         (R(P.R_LISTA.x + 8, P.FILA_Y0, P.R_LISTA.width - 16, P.FILAS_VISIBLES * P.FILA_H), "Jugadores",
          "Clic o ↑ ↓ para ver su ficha. Verde = titular; T transferible; LES lesionado; SAN sancionado."),
         (R(P.R_FICHA.x, P.R_FICHA.y, P.R_FICHA.width, r['renovar'].y - P.R_FICHA.y - 6), "Ficha",
-         "Estado, media, potencial, valor, contrato, atributos y estadísticas del jugador elegido."),
+         "Estado, media, potencial, valor, contrato, atributos y estadísticas del jugador elegido."
+         " Forma: de PÉSIMA a IMPARABLE según sus últimas 5 notas; multiplica lo que sube de media y de potencial (×0.5 a ×2)."),
+        # v0.4.26.0: forma, energía y moral (misma ficha)
+        (R(P.R_FICHA.x, P.R_FICHA.y, P.R_FICHA.width, r['renovar'].y - P.R_FICHA.y - 6), "Forma imparable",
+         "3 notas seguidas de 7.7 o más; dura 5 partidos (progresa el doble) y pasa a buena. Moral de 85 o más: "
+         "progresa un 25 % más (tope ×3 en total)."),
+        (R(P.R_FICHA.x, P.R_FICHA.y, P.R_FICHA.width, r['renovar'].y - P.R_FICHA.y - 6), "Energía",
+         "Recupera una cantidad fija por día (≈ 30-35 por semana, según resistencia); un partido gasta ~29. "
+         "Con partidos cada 3-4 días conviene rotar."),
+        (R(P.R_FICHA.x, P.R_FICHA.y, P.R_FICHA.width, r['renovar'].y - P.R_FICHA.y - 6), "Moral",
+         "Ganar después de 3 partidos sin ganar le sube +10 a toda la plantilla; un título, +25; pasar de fase en copa, +8."),
         (r['renovar'], "Renovar contrato", "Abre la negociación para extender su contrato (tecla R)."),
         (r['transferible'], "Transferible", "Lo pone en venta o lo quita (tecla T). Ponerlo baja su moral."),
         (r['lista_prestamo'], "Préstamo", "Pone al jugador en la lista de préstamo: los clubes te mandan ofertas de cesión (tecla P)."),
@@ -816,7 +828,9 @@ def _ayuda_ojeador(estado: dict) -> list:
     n = len(((estado.get('datos_carrera') or {}).get('ojeador') or {}).get('recs') or []) or 3
     tarjetas, fichar = O._rects_tarjetas(n), O._rects_fichar(n)
     return [
-        (R(12, 80, 760, 28), "Criterio", "El ojeador busca refuerzos para los puestos más flojos de tu once, dentro del presupuesto."),
+        (R(12, 80, 760, 28), "Criterio", "El ojeador busca refuerzos para los puestos más flojos de tu once, dentro del presupuesto, "
+                                         "y solo recomienda jugadores que se pueden comprar (no los recién llegados a su club "
+                                         "ni los que están a préstamo)."),   # v0.4.26.0
         (_union(R(t.x, t.y, t.width, f.y - t.y - 6) for t, f in zip(tarjetas, fichar)), "Recomendados",
          "Hasta 3 jugadores con su club, precio y el motivo de la recomendación."),
         (_union(fichar), "Negociar", "Abre la negociación de fichaje del jugador de esa tarjeta."),
@@ -858,6 +872,8 @@ def _ayuda_correo(estado: dict) -> list:
     except Exception:
         pass
     its.append((C._rect_accion(), "Decisiones", "Algunos mensajes piden decidir: clic o ← → y Enter. Sin responder, se deja pasar."))   # v0.4.10.0
+    its.append((C.R_LISTA, "Forma de tus jugadores",      # v0.4.26.0
+                "Los jugadores de tu club avisan al entrar en racha imparable y al terminarla (con lo que avanzaron)."))
     its.append((C._volver(), "Volver", "Regresa a NOTIFICACIONES (también ESC)."))
     return its
 
@@ -917,7 +933,11 @@ def _ayuda_finanzas(estado: dict) -> list:
     return [
         (F.R_SALDO, "Saldo y valor", "Saldo, valor del club (plantilla + saldo), sus proyecciones y la masa salarial contra el tope."),
         (F.R_LIBRO, "Ingresos y gastos", "Taquilla, patrocinio y premios contra salarios y fichajes de la temporada."),
-        (F.R_ESPALDARAZO, "Espaldarazo financiero", "Dinero ya a cambio de una meta más alta; la mitad se descuenta al cierre."),
+        (F.R_ESPALDARAZO, "Espaldarazo financiero", "Dinero ya a cambio de una meta más alta; la mitad se descuenta al cierre."
+                                                      " También sube el tope de masa salarial en el mismo porcentaje."),   # v0.4.26.0
+        (F.R_CAMISETAS, "Venta de camisetas",      # v0.4.26.0
+         "Tu popularidad (0-100) sube fuerte cuando rindes por encima de la meta de la directiva y baja despacio. "
+         "Da ingresos cada jornada y suma al valor del club."),
         (F._volver(), "Volver", "Regresa al hub (también ESC)."),
     ]
 
@@ -1042,7 +1062,8 @@ def _items_direccion(estado: dict, en_partido: bool) -> list:
             (rc['ok'], "Reanudar", "Vuelve al partido con los cambios hechos (Enter)."),
             (rc['cancel'], "Deshacer", "Revierte lo hecho desde que abriste la dirección (ESC)."),
             (T._CAMPO, "Campo", "Clic en un titular y luego en otro para cambiarlos de puesto."),
-            (T._FICHA, "Ficha", "Datos y nota en vivo. Energía: verde bien, amarilla (<70) rinde menos, roja (<55) se cansa el doble."),
+            (T._FICHA, "Ficha", "Datos y nota en vivo. Energía: verde bien, amarilla (<70) rinde menos, roja (<55) se cansa el doble."
+                                " Forma: pésima/mala/normal/buena/imparable (por las últimas 5 notas); en el campo el jugador imparable titila en blanco."),   # v0.4.26.0
             (_union(T.rect_tarjeta_banco(n) for n in range(10)), "Banco",
              "Titular y luego suplente = cambio (máx. 5; el que sale no vuelve a entrar)."),
         ]
@@ -1052,7 +1073,8 @@ def _items_direccion(estado: dict, en_partido: bool) -> list:
         (rc['ok'], "Confirmar", "Guarda la alineación y vuelve (Enter)."),
         (rc['cancel'], "Cancelar", "Descarta los cambios y vuelve (ESC)."),
         (T._CAMPO, "Campo", "Clic en un jugador y luego en otro para intercambiarlos (puesto o banco)."),
-        (T._FICHA, "Ficha", "Atributos y estado. Energía: verde bien, amarilla (<70) rinde menos, roja (<55) se cansa el doble."),
+        (T._FICHA, "Ficha", "Atributos y estado. Energía: verde bien, amarilla (<70) rinde menos, roja (<55) se cansa el doble."
+                            " Forma: pésima/mala/normal/buena/imparable (por las últimas 5 notas); en el campo el jugador imparable titila en blanco."),   # v0.4.26.0
         (_union(T.rect_tarjeta_banco(n) for n in range(10)), "Banco / reservas", "Los 10 convocados; con VER RESERVAS, el resto de la plantilla."),
         (T.R_BANCO_TOGGLE, "Ver reservas", "Alterna entre el banco y las reservas (tecla R); ◀ ▶ pasan de página."),
     ]
@@ -1134,6 +1156,10 @@ def _ayuda_copa(estado: dict) -> list:
     pestana = estado.get('copa_pestana') if estado.get('copa_pestana') in S.PESTANAS else 'liga_grupos'
     its = [
         (R(36, 14, 850, 80), "Estado de la copa", "Fase en juego o campeón, y cómo va tu club."),
+        (R(36, 14, 850, 80), "Copa Intercontinental",     # v0.4.26.0
+         "En diciembre, una semana después de la final de la Libertadores, el campeón de la Libertadores juega contra "
+         "el campeón de Europa a partido único (empate = penales). El campeón cobra 20 M€ y el finalista 6 M€. Si tu "
+         "club la juega, aparece en tu calendario y se juega desde JUGAR."),
         (S.R_SELECTOR_COPA, "Champions / Libertadores", "Alterna la copa que ves (tecla C)."),
         (_union(S.rect_pestana(p) for p in S.PESTANAS), "Pestañas", "Fase de liga o grupos, llaves, partidos y estadísticas (1-4 o ← →)."),
     ]
@@ -1148,12 +1174,7 @@ def _ayuda_copa(estado: dict) -> list:
                                     'estadisticas': "Estadísticas"}[pestana],
                     _TEXTO_CONTENIDO_COPA.get((pestana, tipo), "Contenido de la copa.")))
     its.append((S.R_VOLVER, "Volver", "Regresa al hub (también ESC). Tu partido de copa se juega desde JUGAR."))
-    try:
-        if S._puede_simular_resto(estado):
-            its.append((S.R_SIMULAR, "Simular resto", "Si ya no juegas la copa, la termina de una vez (tecla R)."))
-    except Exception:
-        pass
-    return its
+    return its          # v0.4.26.0: sin "Simular resto" (el botón ya no existe)
 
 
 AYUDA['copa_screen'] = _ayuda_copa

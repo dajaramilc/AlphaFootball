@@ -300,6 +300,7 @@ def test_balon_de_oro_suma_goles_de_copa():
         for j in eq.jugadores:
             j.partidos_jugados, j.promedio_nota, j.goles = 20, 6.0, 0
     estrella = liga.equipos[3].jugadores[0]
+    estrella.ataque = estrella.defensa = estrella.fisico = estrella.tecnica = estrella.mental = 95   # v0.4.26.0: media >= 85.5
     dc = {'copas': {'champions': {'stats': {f"{liga.equipos[3].nombre}|{estrella.nombre_completo}": {
         'nombre': estrella.nombre_completo, 'club': liga.equipos[3].nombre, 'goles': 9, 'asist': 0, 'pj': 8, 'vallas': 0}}}}}
     balon = PR.calcular_balon_de_oro({'premier': liga}, {}, 1, None, datos_copas=dc['copas'])
@@ -490,8 +491,9 @@ def test_copa_screen_simular_resto():
     CP.iniciar_temporada(e, random.Random(5))
     assert CP.tipo_copa_user(e) is None
     pygame.event.clear(); S.render(screen, e)
-    click(S.R_SIMULAR.center); S.render(screen, e)
-    assert CP.campeon(e, 'champions') and CP.campeon(e, 'libertadores')
+    click((1120, 667)); S.render(screen, e)          # v0.4.26.0: ya no hay SIMULAR RESTO (ni botón ni tecla R)
+    pygame.event.post(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_r, mod=0, unicode='r')); S.render(screen, e)
+    assert not CP.campeon(e, 'champions') and not CP.campeon(e, 'libertadores')
     print("  test_copa_screen_simular_resto: OK")
 
 

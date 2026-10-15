@@ -1077,14 +1077,39 @@ def _dibujar_tabs_tabla(screen, activa: str, mouse_pos) -> None:
         screen.blit(s, s.get_rect(center=r.center))
 
 
-def _render_tabla_copa(screen, estado) -> None:
-    """v3.8.0: tabla de la fase de liga (Champions) o tu grupo / los grupos (Libertadores)."""
+R_VER_COPA = pygame.Rect(R_TABLA.centerx - 130, R_TABLA.centery - 24, 260, 48)    # v0.4.26.0
+
+
+def _sin_copa_continental(estado: dict) -> bool:
+    """v0.4.26.0: True si tu club no juega la copa continental de la temporada (no clasificó o está en 2ª)."""
+    try:
+        from alpha_football import competiciones as CP
+        return CP.tipo_copa_user(estado) is None
+    except Exception as e:
+        logger.error(f"Error al ver si juegas la copa continental: {e}")
+        return False
+
+
+def _abrir_copa_en_otras_ligas(estado: dict) -> str:
+    """v0.4.26.0: VER COPA lleva a Otras ligas › Copas, con la copa de tu continente elegida."""
+    from alpha_football.ui import copa_screen as S
+    estado['otras_ligas_copas'] = True
+    estado['otras_ligas_copa_sel'] = S.copa_de_region(estado)
+    return 'otras_ligas_screen'
+
+
+def _render_tabla_copa(screen, estado, mouse_pos=(0, 0)) -> None:
+    """v3.8.0: tabla de la fase de liga (Champions) o tu grupo / los grupos (Libertadores).
+    v0.4.26.0: si tu club no juega la copa, solo el botón VER COPA."""
     from alpha_football import competiciones as CP
     from alpha_football.ui import copa_screen as S
     tipo = S.copa_de_region(estado)
     c = CP.copa(estado, tipo)
     user = getattr(estado.get('mi_equipo'), 'nombre', '')
     draw_text(screen, CP.NOMBRE_COPA.get(tipo, 'COPA').upper(), (32, R_TABLA.y + 10), size='md', color='azul')
+    if _sin_copa_continental(estado):
+        draw_button(screen, R_VER_COPA, "VER COPA", R_VER_COPA.collidepoint(mouse_pos))
+        return
     cuerpo = pygame.Rect(R_TABLA.x + 12, R_TABLA.y + 46, R_TABLA.width - 24, R_TABLA.height - 54)
     if not c:
         draw_text(screen, "La copa todavía no se sorteó.", (cuerpo.x + 8, cuerpo.y + 20), size='sm', color='blanco')
@@ -1112,7 +1137,7 @@ def _render_inicio(screen, estado, liga, mi_equipo, info, jugados, mouse_pos, cl
             _render_feed(screen, estado, pygame.time.get_ticks())
             raise _TablaDibujada()
         if tabla_tab == 'copa':
-            _render_tabla_copa(screen, estado)
+            _render_tabla_copa(screen, estado, mouse_pos)
             raise _TablaDibujada()
         ty = R_TABLA.y
         draw_text(screen, "TABLA DE POSICIONES", (32, ty + 10), size='md', color='azul')
@@ -1326,6 +1351,8 @@ def _render_inicio(screen, estado, liga, mi_equipo, info, jugados, mouse_pos, cl
             _fijar_tabla_tab(estado, 'liga')
         elif rect_tab_tabla('copa').collidepoint(click_pos):
             _fijar_tabla_tab(estado, 'copa')
+        elif tabla_tab == 'copa' and R_VER_COPA.collidepoint(click_pos) and _sin_copa_continental(estado):
+            return _abrir_copa_en_otras_ligas(estado)                  # v0.4.26.0: VER COPA
         elif tabla_tab == 'noticias' and noticia_del_feed_en(estado, click_pos) is not None:
             from alpha_football.ui import noticias_screen as _NS
             return _NS.abrir(estado, noticia_del_feed_en(estado, click_pos)['id'])

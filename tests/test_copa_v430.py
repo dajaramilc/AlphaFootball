@@ -153,6 +153,7 @@ def test_balon_de_oro_cuenta_copa():
     eq0 = liga.equipos[0]; estrella = eq0.jugadores[0]
     estrella.partidos_jugados = int(liga.num_jornadas * 0.3)            # con la liga sola no llega al 50%
     estrella.goles = 30
+    estrella.ataque = estrella.defensa = estrella.fisico = estrella.tecnica = estrella.mental = 95   # v0.4.26.0: media >= 85.5
     otro = liga.equipos[1].jugadores[0]; otro.partidos_jugados = liga.num_jornadas; otro.goles = 1
     primeras = {liga.tipo: liga}
     copas = {'champions': {'stats': {f"{eq0.nombre}|{estrella.nombre_completo}": {

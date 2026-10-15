@@ -435,6 +435,18 @@ def finalizar_jornada_liga(estado: dict, liga: Any, mi_equipo: Any, partido: Any
             simular_copa_fondo(estado)
         except Exception as e_bg:
             logger.error(f"Error al simular copa de fondo: {e_bg}")
+        try:   # v0.4.26.0: asegurar el título de liga dispara la moral de la plantilla (una vez por temporada)
+            from alpha_football.noticias_gen import estado_del_titulo
+            from alpha_football.vestuario import impulso_moral
+            est = estado_del_titulo(liga)
+            dc = estado.setdefault('datos_carrera', {})
+            temporada = int(estado.get('temporada', 1) or 1)
+            es_mio = est is not None and getattr(est['lider'], 'id', None) == getattr(mi_equipo, 'id', None)
+            if es_mio and dc.get('moral_titulo_liga') != temporada:
+                dc['moral_titulo_liga'] = temporada
+                impulso_moral(estado, mi_equipo, 25, 'titulo')
+        except Exception as e_tit:
+            logger.error(f"Error con la moral del título de liga: {e_tit}")
         # v2.3 (Fase 7): avanzar la jornada de TODAS las 2ª divisiones en background.
         # Mismo ritmo que 1ª división: 1 jornada por jornada del user. Si el user
         # descendió, su partido en la 2ª división se salta (lo juega él).

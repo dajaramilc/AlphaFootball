@@ -655,6 +655,35 @@ def _nombre_pais(liga_id: str) -> str:
         return liga_id
 
 
+def campeon_vigente(estado: dict, tipo: str) -> Optional[str]:
+    """v0.4.26.0: campeón de la última edición terminada de esa copa (la que está guardada o, con los
+    continentes desfasados, la que quedó en datos_carrera['mundo']['campeones'])."""
+    c = copa(estado, tipo)
+    if c and c.get('campeon'):
+        return c['campeon']
+    mundo = (estado.get('datos_carrera') or {}).get('mundo') or {}
+    return (mundo.get('campeones') or {}).get(tipo) or None
+
+
+def _club_campeon(estado: dict, tipo: str, nombre: Optional[str]) -> Optional[tuple]:
+    """(nombre, media, país, liga) del campeón vigente: en cualquier liga de la partida (aunque haya
+    descendido) o en el banco internacional. None si ya no existe."""
+    if not nombre:
+        return None
+    try:
+        for lg in _ligas_vivas(estado):
+            for eq in (getattr(lg, 'equipos', None) or []):
+                if eq.nombre == nombre:
+                    liga_id = str(getattr(lg, 'tipo', '') or '')
+                    return nombre, _ovr(eq), _nombre_pais(liga_id), liga_id
+        eq = _pool(estado, tipo).get(nombre)
+        if eq is not None:
+            return nombre, _ovr(eq), (_datos_intl(tipo)[1].get(nombre) or {}).get('pais', ''), 'internacional'
+    except Exception as e:
+        logger.error(f"competiciones: no se pudo ubicar al campeón vigente {nombre}: {e}")
+    return None
+
+
 def clasificados(estado: dict, tipo: str) -> list:
     """
     v3.8.0: 36 (Champions) / 32 (Libertadores) clubes {'nombre','ovr','pais','liga'}: los cupos de
@@ -670,6 +699,11 @@ def clasificados(estado: dict, tipo: str) -> list:
             usados.add(nombre)
             res.append({'nombre': nombre, 'ovr': round(float(ovr), 1), 'pais': pais, 'liga': liga})
 
+    # v0.4.26.0: el campeón de la edición anterior la juega sí o sí; como ya está adentro, su liga no lo
+    # cuenta y el cupo pasa al siguiente de la tabla
+    vigente = _club_campeon(estado, tipo, campeon_vigente(estado, tipo))
+    if vigente:
+        agregar(*vigente)
     ordenados = {}
     for liga_id, cupo in CUPOS.get(tipo, {}).items():
         ordenados[liga_id] = _ordenar_por_clasificacion(estado, liga_id, _equipos_1a(estado, liga_id))

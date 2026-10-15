@@ -265,12 +265,18 @@ def es_jugador_latam(jugador: Any) -> bool:
         logger.error(f"Error en es_jugador_latam: {e_latam}")
     return False
 
+# v0.4.26.0: precios regulados. Defensas y porteros valen menos y la caída por edad se acelera desde los 30.
+FACTOR_POSICION_VALOR = {'DEF': 0.85, 'POR': 0.75}
+CAIDA_EDAD_LINEAL, CAIDA_EDAD_CUADRATICA, PISO_FACTOR_EDAD = 0.08, 0.01, 0.20
+
+
 def calcular_valor(jugador: Any) -> int:
     """
     Valor de mercado realista (anclado a la vida real): limitado a un máximo inicial
     de $220M (en OVR 93). A partir de OVR 93, crece de forma equivalente/lineal
     pero no de forma descabellada. En LatAm se aplica un factor corrector de reducción (0.35)
     para ajustarse a su realidad de mercado.
+    v0.4.26.0: × FACTOR_POSICION_VALOR (defensas ×0.85, porteros ×0.75) y veteranos más baratos.
     """
     try:
         overall = _campo(jugador, "overall", 50)
@@ -294,9 +300,11 @@ def calcular_valor(jugador: Any) -> int:
         elif edad <= 29:
             factor_edad = 1.0
         else:
-            factor_edad = max(0.30, 1.0 - (edad - 29) * 0.06)
+            anios = edad - 29     # v0.4.26.0: antes 1 − 0.06/año; ahora se acelera (30: 0.91, 32: 0.67, 34: 0.35, 35+: 0.20)
+            factor_edad = max(PISO_FACTOR_EDAD, 1.0 - CAIDA_EDAD_LINEAL * anios - CAIDA_EDAD_CUADRATICA * anios * anios)
 
-        return max(50_000, int(valor_base * factor_edad))
+        factor_pos = FACTOR_POSICION_VALOR.get(str(_campo(jugador, "posicion", "") or ""), 1.0)
+        return max(50_000, int(valor_base * factor_edad * factor_pos))
     except Exception as e:
         logger.error(f"Error al calcular valor del jugador: {e}. Usando valor por defecto resiliente.")
         try:
@@ -571,7 +579,7 @@ def mercado_de_pases(mi_equipo: Equipo, liga: Liga) -> None:
 
 PROB_OFERTA_POR_JORNADA = 0.15  # 15% por jornada con mercado abierto
 # v2.6.0: con transferibles la IA oferta mucho más y casi siempre por ellos.
-PROB_OFERTA_CON_TRANSFERIBLES = 0.45
+PROB_OFERTA_CON_TRANSFERIBLES = 0.90      # v0.4.26.0: el doble de ofertas por tus transferibles (antes 0.45)
 PROB_OFERTA_POR_TRANSFERIBLE = 0.75
 
 
@@ -636,6 +644,41 @@ def traspasado_en_ventana(estado: Any, jugador: Any) -> bool:
                                                int(getattr(liga, 'num_jornadas', 22) or 22), estado)
     except Exception as e:
         logger.error(f"No se pudo revisar la ventana de traspaso: {e}")
+        return False
+
+
+# v0.4.26.0: quien cambió de club hace menos de un año se vuelve a mover con 1/5 de la probabilidad, y los
+# 3 mejores de un club de la IA salen con 0.35 de la probabilidad (siguen pudiendo irse: se baja, no se anula)
+DIAS_CAMBIO_RECIENTE = 365
+FACTOR_CAMBIO_RECIENTE = 0.2
+FACTOR_FIGURA_IA = 0.35
+
+
+def cambio_reciente(estado: Any, jugador: Any) -> bool:
+    """v0.4.26.0: ¿el jugador cambió de club en los últimos 12 meses? negociacion.registrar_pase anota la fecha en
+    datos_carrera['ultimo_pase']; una partida vieja, sin esa nota, usa la marca de la ventana en que se movió
+    (cada ventana es medio año: la misma o la anterior cuentan)."""
+    try:
+        if not isinstance(estado, dict):
+            return False
+        nombre = getattr(jugador, 'nombre_completo', None)
+        fecha = ((estado.get('datos_carrera') or {}).get('ultimo_pase') or {}).get(nombre) if nombre else None
+        if fecha:
+            from datetime import date
+            from alpha_football.correo import _hoy_iso
+            hoy = _hoy_iso(estado)
+            if hoy:
+                return (date.fromisoformat(hoy) - date.fromisoformat(str(fecha))).days < DIAS_CAMBIO_RECIENTE
+        marca = str(getattr(jugador, 'ventana_traspaso', '') or '')
+        if '-' not in marca or estado.get('liga') is None:
+            return False
+        from alpha_football import temporada as T
+        t_marca, nombre_v = marca.split('-', 1)
+        marcada = int(t_marca) * 2 + (1 if nombre_v == 'invierno' else 0)
+        ahora = int(estado.get('temporada', 1) or 1) * 2 + (1 if T.segunda_mitad(estado) else 0)
+        return ahora - marcada <= 1
+    except Exception as e:
+        logger.error(f"No se pudo saber si el jugador cambió de club hace poco: {e}")
         return False
 
 
@@ -753,6 +796,11 @@ def crear_oferta_ui(mi_equipo: Any, rivales: list, jornada: int, num_jornadas: i
         objetivo = azar.choice(candidatos)
         if transferibles and azar.random() < PROB_OFERTA_POR_TRANSFERIBLE:
             objetivo = azar.choice(transferibles)
+        elif cambio_reciente(estado, objetivo) and azar.random() >= FACTOR_CAMBIO_RECIENTE:
+            # v0.4.26.0: el que llegó hace menos de un año atrae pocas ofertas (se sortea otro, si lo hay)
+            otros = [j for j in candidatos if not cambio_reciente(estado, j)]
+            if otros:
+                objetivo = azar.choice(otros)
         if isinstance(recent_ids, list):
             recent_ids.append(objetivo.id)
             if len(recent_ids) > 4:

@@ -189,8 +189,10 @@ def test_gastar_horas_fuera_del_ultimo_dia_no_anima_ni_cobra():
     from test_dia_final import _en_el_ultimo_dia
     e2, _r = _en_el_ultimo_dia()
     DF.gastar(e2, 18)
-    assert DF.gastar(e2, DF.HORAS_FICHAJE) is False                # sin horas suficientes: no gasta ni anima
+    assert DF.gastar(e2, 99) is False                              # sin horas suficientes: no gasta ni anima
     assert DF.horas(e2) == 2 and e2['anim_horas']['hasta'] == 2
+    assert DF.gastar(e2, DF.HORAS_FICHAJE) is True                 # v0.4.26.0: con 2 horas un fichaje entra y cierra
+    assert DF.horas(e2) == 0 and e2['anim_horas']['desde'] == 20 and e2['anim_horas']['hasta'] == 0   # la cuenta sigue
 
 
 def test_la_animacion_cuenta_una_hora_cada_500_ms_y_termina():

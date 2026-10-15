@@ -16,6 +16,8 @@ import logging
 import random
 from typing import Any, Optional
 
+from alpha_football import forma as FO   # v0.4.26.0: forma del jugador (multiplica el progreso)
+
 logger = logging.getLogger(__name__)
 
 ATRIBUTOS_BASE = ("ataque", "defensa", "fisico", "tecnica", "mental")
@@ -157,6 +159,9 @@ def desarrollar_plantilla_post_partido(
         else:
             nota = _nota_partido(j, gano, empato, azar)
             nota = max(4.0, min(10.0, round(nota + gp * 0.6 + ap * 0.3, 1)))
+        # v0.4.26.0: el progreso de este partido lo manda la forma con la que llegó (antes de sumar su nota)
+        nivel_forma = FO.nivel(j)
+        mult_forma = FO.multiplicador_progreso(j, nivel_forma)
         j.notas_recientes = (list(getattr(j, "notas_recientes", []) or []) + [nota])[-5:]
 
         # Estadísticas acumuladas
@@ -201,14 +206,10 @@ def desarrollar_plantilla_post_partido(
         # Un veterano (31+) solo progresa con partidos de nota alta.
         if edad_j >= 31 and nota < 7.5:
             inc = 0.0
-        # v3.1.0: con buena moral y buena forma progresa un 15% más rápido.
-        try:
-            from alpha_football.vestuario import forma
-            if int(getattr(j, "moral", 70)) >= 75 and forma(j) >= 6.5:
-                inc *= 1.15
-        except Exception:
-            pass
-        j.progreso_desarrollo += inc * _factor_progreso_edad(edad_j) * factor_canterano(j, equipo)
+        # v0.4.26.0: forma (pésima ×0.5 … imparable ×2) y moral >= 85 (×1.25) multiplican el progreso; el tope
+        # ×3 incluye al canterano. Reemplaza al +15 % de v3.1.0 (moral >= 75 y promedio >= 6.5).
+        mult_total = min(FO.TOPE_MULT, mult_forma * factor_canterano(j, equipo))
+        j.progreso_desarrollo += inc * _factor_progreso_edad(edad_j) * mult_total
 
         # Subidas de OVR: cada 1.0 de progreso -> +1 a 3 atributos base al azar.
         # v0.8.x: respetar el techo de potencial. Si el jugador ya está en su techo,
@@ -218,9 +219,25 @@ def desarrollar_plantilla_post_partido(
         # v2.3.6: potencial DINÁMICO. Un partido increíble (nota >= 9) de un jugador que
         # ya tocó su techo puede subirle el potencial (poco probable y menos con la edad).
         if nota >= 9.0 and j.overall >= _pot_actual and _pot_actual < 99:
-            if azar.random() < (0.30 if edad_j <= 27 else 0.12 if edad_j <= 30 else 0.04):
+            # v0.4.26.0: la forma y la moral multiplican también esta probabilidad
+            if azar.random() < min(0.95, (0.30 if edad_j <= 27 else 0.12 if edad_j <= 30 else 0.04) * mult_forma):
                 _pot_actual += 1
                 j.potencial = _pot_actual
+        # v0.4.26.0 (ítem 3): los de 24 años o menos en forma buena o imparable también suben el techo durante la
+        # temporada: 10 % por partido × multiplicador, con tope de TOPE_POT_TEMPORADA puntos por temporada.
+        # Usa un azar propio (por jugador y partido) para no mover la corriente del `rng` de quien llama.
+        if edad_j <= FO.EDAD_POT_FORMA and nivel_forma in ("buena", "imparable") and _pot_actual < 99:
+            try:
+                datos_forma = j.forma_datos if isinstance(getattr(j, "forma_datos", None), dict) else {}
+                j.forma_datos = datos_forma
+                if int(datos_forma.get("pot_temp", 0) or 0) < FO.TOPE_POT_TEMPORADA:
+                    sorteo = random.Random(f"potforma|{getattr(j, 'id', 0)}|{j.partidos_jugados}|{_pot_actual}")
+                    if sorteo.random() < FO.PROB_POT_FORMA * mult_forma:
+                        _pot_actual += 1
+                        j.potencial = _pot_actual
+                        datos_forma["pot_temp"] = int(datos_forma.get("pot_temp", 0) or 0) + 1
+            except Exception as e_potf:
+                logger.error(f"No se pudo subir el potencial por forma de {getattr(j, 'apellido', '?')}: {e_potf}")
         while j.progreso_desarrollo >= 1.0:
             j.progreso_desarrollo = round(j.progreso_desarrollo - 1.0, 4)
             if j.overall < _pot_actual:
@@ -236,9 +253,15 @@ def desarrollar_plantilla_post_partido(
             except Exception as e_val:
                 logger.debug(f"No se pudo recalcular valor de {j.nombre_completo}: {e_val}")
 
+        # v0.4.26.0: la forma se actualiza con la nota de hoy (ya con el progreso aplicado: lo ganado en la racha
+        # incluye este partido). El evento ('entra'/'sale') lo manda al correo vestuario.post_partido_user.
+        evento_forma = FO.registrar_nota(j, nota)
+
         reporte.append({
             "jugador": getattr(j, "nombre_completo", j.nombre),
             "nota": nota,
+            "forma": FO.nivel(j),
+            "forma_evento": evento_forma,
             "goles": gp,
             "asistencias": ap,
             "subio_ovr": subio,
@@ -377,6 +400,8 @@ def progresar_pasivo(equipo: Any, anios: int = 1, rng: Optional[random.Random] =
 
     pasos = max(0, int(anios))
     for j in equipo.jugadores:
+        if pasos and isinstance(getattr(j, "forma_datos", None), dict):
+            j.forma_datos["pot_temp"] = 0     # v0.4.26.0: temporada nueva: vuelve a poder subir el techo por forma
         for _ in range(pasos):
             edad = int(getattr(j, "edad", 25))
             # Resolver techo (perezozo: si potencial==0 lo calcula y guarda)
@@ -403,9 +428,11 @@ def progresar_pasivo(equipo: Any, anios: int = 1, rng: Optional[random.Random] =
                 delta = max(delta, 1)
                 # Potencial dinámico: la irrupción sube el techo (más cuanto más joven)
                 try:
+                    # v0.4.26.0 (ítem 9): la subida es mayor (antes +1/+2 hasta los 26): ≤24 +2/+3, ≤26 +1/+2
                     _pot_actual = min(
                         99,
-                        int(getattr(j, "potencial", 0) or 0) + (azar.choice([1, 2]) if edad <= 26 else 1)
+                        int(getattr(j, "potencial", 0) or 0)
+                        + (azar.choice([2, 3]) if edad <= 24 else azar.choice([1, 2]) if edad <= 26 else 1)
                     )
                     setattr(j, "potencial", _pot_actual)
                 except Exception as e_pot:
@@ -413,6 +440,18 @@ def progresar_pasivo(equipo: Any, anios: int = 1, rng: Optional[random.Random] =
             elif _nota >= 6.8:
                 # Temporada sólida: no cae, pero tampoco crece por encima de la curva
                 delta = max(delta, 0)
+
+            # v0.4.26.0 (ítem 9): más jugadores suben el techo al cerrar la temporada: un joven (≤24) con un
+            # promedio de 6.5 a 7.3 (el que no entró en la regla destacada) sube +1 con 50 %. Azar propio por
+            # jugador (no mueve la corriente del `rng` que llega).
+            if edad <= 24 and 6.5 <= _nota < 7.3:
+                try:
+                    sorteo = random.Random(f"potcierre|{getattr(j, 'id', 0)}|{edad}|{getattr(j, 'potencial', 0)}")
+                    if sorteo.random() < 0.5:
+                        _pot_actual = min(99, int(getattr(j, "potencial", 0) or 0) + 1)
+                        setattr(j, "potencial", _pot_actual)
+                except Exception as e_pot2:
+                    logger.debug(f"No se pudo subir el potencial de {getattr(j, 'nombre', '?')}: {e_pot2}")
 
             # v0.8.x: nunca crecer por encima del potencial. Si delta cruza el techo,
             # recortar. Si igual no entra, queda en 0.

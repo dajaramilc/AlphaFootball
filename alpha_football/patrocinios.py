@@ -555,7 +555,7 @@ def revisar_jornada(estado: dict, rng: Optional[random.Random] = None) -> None:
                 nuevas = generar_ofertas(estado, esp, rng, factor=FACTOR_INVIERNO)
                 lineas += [f"{NOMBRE_ESPACIO[esp]}: {_texto_oferta(o)}" for o in nuevas]
             if lineas:
-                _correo(estado, "Patrocinios: ofertas de invierno",
+                _correo(estado, "Patrocinios: ofertas nuevas",      # v0.4.26.0: antes "ofertas de invierno"
                         lineas + ["A mitad de temporada las marcas pagan menos. Tiene hasta el cierre de la ventana."])
             elif vacios:
                 _correo(estado, "Patrocinios: sin interesados",

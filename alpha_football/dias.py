@@ -363,6 +363,7 @@ def revisar_dia(estado: dict, fecha: date) -> Optional[str]:
     from alpha_football import temporada as T
     pasos = (('cantera', 'revisar_jornada'), ('patrocinios', 'revisar_jornada'), ('prestamos', 'revisar_jornada'),
              ('temporadas', 'revisar_jornada'),                  # v0.4.16.0: el otro continente juega y cierra por fecha
+             ('intercontinental', 'revisar_jornada'),            # v0.4.26.0: la final de diciembre
              ('premios', 'revisar_jornada'),                     # v0.4.17.0: galas del Balón de Oro y del Sudamericano
              ('finanzas', 'limitar_presupuestos'))               # v0.4.25.0: ningún club pasa de 350 M€
     for modulo, funcion in pasos:
@@ -377,6 +378,11 @@ def revisar_dia(estado: dict, fecha: date) -> Optional[str]:
         TP.limpiar_ofertas(estado)
     except Exception as e:
         logger.error(f"dias: no se pudieron concretar los traspasos acordados: {e}", exc_info=True)
+    try:    # v0.4.26.0: las respuestas de "lo analizamos" llegan por días (fecha_resp), no por jornada
+        from alpha_football import dia_final as DF
+        DF.responder(estado)
+    except Exception as e:
+        logger.error(f"dias: no se pudieron resolver los análisis del día: {e}", exc_info=True)
     try:    # v0.4.20.0: ningún club de la IA amanece con menos de 16 (llegadas acordadas, vueltas de préstamo...)
         from alpha_football.mercado_ia import asegurar_minimo_ia, resolver_remates
         asegurar_minimo_ia(estado)

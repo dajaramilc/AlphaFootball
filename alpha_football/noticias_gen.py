@@ -34,6 +34,15 @@ PROB_POLEMICO = 0.12
 RECORDS_BASE = {'goles': 25, 'asistencias': 15}      # récord inicial de una temporada de liga
 CERCA_DEL_RECORD = 3
 NOMBRE_STAT = {'goles': "goles", 'asistencias': "asistencias"}
+VENTANA_CARRERA = 3             # v0.4.26.0: jornadas desde el aviso en que la carrera de un premio aún se publica
+OVR_IMPORTANTE = 76             # v0.4.26.0: "importante de su club": de sus 3 mejores y con esta media o más
+PROB_TRANSFERIBLE = 0.25        # por jornada, con el enfriamiento cumplido
+JORNADAS_ENTRE_TRANSFERIBLES = 4
+JORNADAS_TRANSFERIBLE = 6       # cuánto dura la marca de transferible que pone esta noticia
+JORNADAS_RECORDAR_TRANSFERIBLE = 24    # y cuánto se recuerda para no repetir al mismo jugador
+OVR_NO_VEN = 78                 # v0.4.26.0: "bueno" para "No ven a X en el equipo"
+PARTIDOS_SIN_JUGAR = 4          # partidos seguidos de su club sin que el bueno y sano juegue
+MAX_NO_VEN_POR_JORNADA = 1
 
 
 # --- lectura del estado (funciones sueltas para poder aislarlas en los tests) -------------------------------
@@ -79,6 +88,10 @@ def _memoria(estado: dict) -> dict:
     m.setdefault('promesa_ultima', -1)
     m.setdefault('avisos', [])            # avisos de récord ya dados
     m.setdefault('balon', [])             # temporadas con candidatos publicados
+    m.setdefault('sudamericano', [])      # v0.4.26.0: ídem para la carrera al Jugador Sudamericano del Año
+    m.setdefault('transferibles', {})     # v0.4.26.0: "<jugador>" -> [jornada absoluta, 1 si la marca la puso la noticia]
+    m.setdefault('transferible_ultima', -10_000)
+    m.setdefault('sin_jugar', {})         # v0.4.26.0: "<club>:<jugador>" -> [PJ del club, PJ del jugador, racha, avisado]
     m.setdefault('titulos', [])           # v0.4.25.0: títulos ya anunciados ("camp:<temporada>:<liga>:<división>"...)
     records = dc.setdefault('records', {})
     for stat, base in RECORDS_BASE.items():
@@ -243,32 +256,63 @@ def _promesas(estado: dict, rng) -> int:
     return 1
 
 
-def _candidatos_balon(estado: dict, rng) -> int:
-    from alpha_football.premios import PESO_LIGA_1A, puntaje_jugador
+def _ranking_carrera(estado: dict, solo_sudamerica: bool, media_min: float) -> list:
+    """[(puntaje, club, jugador)] de la carrera de un premio, de mayor a menor puntaje y con los que llegan a la
+    media mínima primero. Mismo pool y misma fórmula que premios.calcular_balon_de_oro / calcular_sudamericano."""
+    from alpha_football import premios as PR
+    from alpha_football.paises import SUDAMERICA
+    ranking = []
+    for lg, _tuya in _ligas(estado):
+        if solo_sudamerica and getattr(lg, 'tipo', '') not in SUDAMERICA:
+            continue
+        primera = int(getattr(lg, 'division', 1) or 1) == 1
+        peso = PR.PESO_LIGA_1A.get(getattr(lg, 'tipo', ''), 0.75) if primera else PR.PESO_LIGA_2A
+        for eq, j in _jugadores(lg):
+            if int(getattr(j, 'partidos_jugados', 0) or 0) > 0:
+                ranking.append((PR.puntaje_jugador(j, peso, False, False), eq, j))
+    ranking.sort(key=lambda x: x[0], reverse=True)
+    return PR.priorizar_por_media(ranking, lambda x: float(getattr(x[2], 'overall', 0) or 0), media_min)
+
+
+def _carrera(estado: dict, memoria: str, solo_sudamerica: bool, num: int, den: int) -> int:
+    """v0.4.26.0: la noticia de la carrera de un premio cuando se juegan `num`/`den` de la temporada: los tres
+    candidatos con su media, goles y nota. Una vez por temporada. El Balón de Oro y el Sudamericano van en
+    noticias separadas y en fechas distintas."""
+    from alpha_football import premios as PR
     liga = estado.get('liga')
     m = _memoria(estado)
     t = int(estado.get('temporada', 1) or 1)
-    if t in m['balon'] or _jornada_user(estado) != int(liga.num_jornadas) // 2:
+    aviso = int(liga.num_jornadas) * num // den
+    if t in m[memoria] or not aviso <= _jornada_user(estado) < aviso + VENTANA_CARRERA:
         return 0
-    ranking = []
-    for lg, _tuya in _ligas(estado):
-        if getattr(lg, 'division', 1) != 1:
-            continue
-        peso = PESO_LIGA_1A.get(lg.tipo, 0.75)
-        for eq, j in _jugadores(lg):
-            if int(getattr(j, 'partidos_jugados', 0) or 0) > 0:
-                ranking.append((puntaje_jugador(j, peso, False, False), eq, j))
-    ranking.sort(key=lambda x: x[0], reverse=True)
-    top = ranking[:3]
+    top = _ranking_carrera(estado, solo_sudamerica, 0 if solo_sudamerica else PR.MEDIA_MIN_BALON)[:3]
     if not top:
         return 0
-    m['balon'].append(t)
-    lineas = [f"{i + 1}. {_nombre(j)} ({eq.nombre}) · {j.goles} goles, {j.asistencias} asistencias, nota {j.promedio_nota:.1f}"
-              for i, (_p, eq, j) in enumerate(top)]
-    N.publicar(estado, 'premio', f"Balón de Oro: {_nombre(top[0][2])} lidera la carrera",
-               "A mitad de temporada los candidatos son:\n" + "\n".join(lineas), importancia=4,
+    m[memoria].append(t)
+    lineas = [f"{i + 1}. {_nombre(j)} ({eq.nombre}) · media {j.overall}, {j.goles} goles, {j.asistencias} asistencias, "
+              f"nota {j.promedio_nota:.1f}" for i, (_p, eq, j) in enumerate(top)]
+    lider = _nombre(top[0][2])
+    if solo_sudamerica:
+        titular = N.titular(f"Carrera al Sudamericano del Año: {lider} lidera",
+                            f"Sudamericano del Año: {lider} lidera la carrera", f"Sudamericano del Año: lidera {lider}")
+        intro = "Con la temporada en su tramo final, los candidatos a Jugador Sudamericano del Año son:\n"
+    else:
+        titular = N.titular(f"Carrera al Balón de Oro: {lider} lidera",
+                            f"Balón de Oro: {lider} lidera la carrera", f"Balón de Oro: lidera {lider}")
+        intro = "A mitad de temporada los candidatos al Balón de Oro son:\n"
+    N.publicar(estado, 'premio', titular, intro + "\n".join(lineas), importancia=4,
                equipos=[x[1] for x in top], jugadores=[x[2] for x in top])
     return 1
+
+
+def _candidatos_balon(estado: dict, rng) -> int:
+    """La carrera al Balón de Oro (a mitad de temporada): hace falta media >= premios.MEDIA_MIN_BALON para ganarlo."""
+    return _carrera(estado, 'balon', False, 1, 2)
+
+
+def _candidatos_sudamericano(estado: dict, rng) -> int:
+    """La carrera al Jugador Sudamericano del Año (a tres cuartos de temporada): solo las ligas sudamericanas."""
+    return _carrera(estado, 'sudamericano', True, 3, 4)
 
 
 def _records(estado: dict, rng) -> int:
@@ -322,6 +366,111 @@ def _polemico(estado: dict, rng) -> int:
                f"El polémico {_nombre(j)} ({mi.nombre}) filtró su malestar a los medios y el vestuario lo nota: baja la moral del plantel.",
                importancia=3, equipos=[mi], jugadores=[j])
     return 1
+
+
+def _importantes_ia(estado: dict):
+    """v0.4.26.0: (club, jugador) de los 3 mejores de cada club de la IA (sin cedidos) que valen OVR_IMPORTANTE o más."""
+    mi = estado.get('mi_equipo')
+    for liga, _tuya in _ligas(estado):
+        for eq in liga.equipos:
+            if eq is mi or getattr(eq, 'nombre', None) == getattr(mi, 'nombre', None):
+                continue
+            for j in sorted(getattr(eq, 'jugadores', None) or [], key=lambda x: -x.overall)[:3]:
+                if j.overall >= OVR_IMPORTANTE and not getattr(j, 'prestamo', None):
+                    yield eq, j
+
+
+def _transferibles(estado: dict, rng) -> int:
+    """v0.4.26.0: "Sorpresa: ponen a X en transferibles". Cuenta lo que ya está marcado en un club de la IA (salida
+    forzada tras un descenso) y, de vez en cuando, un club que pone en la lista a una de sus figuras: queda con
+    `transferible` unas jornadas (un hecho del estado, no solo un titular). Un jugador no se repite hasta pasadas
+    JORNADAS_RECORDAR_TRANSFERIBLE jornadas."""
+    m = _memoria(estado)
+    ja = _jornada_abs(estado)
+    mem = m['transferibles']
+    mi = estado.get('mi_equipo')
+    soltar = {k for k, v in mem.items() if v[1] and ja - v[0] >= JORNADAS_TRANSFERIBLE}
+    if soltar:                                          # vence la marca que puso esta noticia
+        for liga, _tuya in _ligas(estado):
+            for eq, j in _jugadores(liga):
+                if str(getattr(j, 'id', '')) in soltar and eq is not mi:
+                    j.transferible = False
+        for k in soltar:
+            mem[k][1] = 0
+    for k in [k for k, v in mem.items() if ja - v[0] >= JORNADAS_RECORDAR_TRANSFERIBLE]:
+        del mem[k]
+    if ja - m['transferible_ultima'] < JORNADAS_ENTRE_TRANSFERIBLES:
+        return 0
+    cands = [(eq, j) for eq, j in _importantes_ia(estado) if str(j.id) not in mem]
+    marcados = [c for c in cands if getattr(c[1], 'transferible', False) or getattr(c[1], 'salida_forzada', False)]
+    if marcados:
+        eq, j = max(marcados, key=lambda c: c[1].overall)
+        puso = 0
+    elif cands and rng.random() < PROB_TRANSFERIBLE:
+        eq, j = rng.choice(cands)
+        j.transferible = True
+        puso = 1
+    else:
+        return 0
+    mem[str(j.id)] = [ja, puso]
+    m['transferible_ultima'] = ja
+    from alpha_football import correo as C
+    nombre = _nombre(j)
+    quien = f"{nombre} ({j.posicion}, media {j.overall}, {j.edad} años)"
+    cuerpo = (f"Tras el descenso, {eq.nombre} deja en la lista de transferibles a {quien}. El club escuchará ofertas."
+              if getattr(j, 'salida_forzada', False) else
+              f"{eq.nombre} sorprende al poner en la lista de transferibles a {quien}, uno de sus pilares. "
+              "El club está dispuesto a escuchar ofertas.")
+    N.publicar(estado, 'otro',
+               N.titular(f"Sorpresa: ponen a {nombre} en transferibles", f"Sorpresa: {nombre}, en transferibles",
+                         f"{nombre}, en la lista de transferibles"),
+               cuerpo, importancia=4 if j.overall >= 85 else 3, categoria='fichaje', equipos=[eq], jugadores=[j],
+               accion=C.accion('buscador_screen', "VER BUSCADOR"))
+    return 1
+
+
+def _no_ven(estado: dict, rng) -> int:
+    """v0.4.26.0: "No ven a X en el equipo": un jugador bueno y sano de un club de la IA lleva PARTIDOS_SIN_JUGAR
+    partidos de su club sin sumar minutos. Se rastrea comparando los PJ del club con los del jugador entre una
+    jornada y la siguiente (solo de los buenos); el que se lesiona o es sancionado vuelve a empezar de cero, porque
+    entonces no es una decisión del técnico. Un aviso por racha."""
+    m = _memoria(estado)
+    previo = m['sin_jugar']
+    nuevo, elegibles = {}, []
+    mi = estado.get('mi_equipo')
+    for liga, _tuya in _ligas(estado):
+        for eq in liga.equipos:
+            if eq is mi or getattr(eq, 'nombre', None) == getattr(mi, 'nombre', None):
+                continue
+            pj_club = int(getattr(eq, 'pj', 0) or 0)
+            for j in getattr(eq, 'jugadores', None) or []:
+                if j.overall < OVR_NO_VEN or getattr(j, 'prestamo', None) or not j.disponible:
+                    continue
+                k = _clave_j(eq, j)
+                pj_j = int(getattr(j, 'partidos_jugados', 0) or 0)
+                antes = previo.get(k)
+                if antes is None or pj_club < antes[0] or pj_j != antes[1]:
+                    racha, avisado = 0, 0                    # empieza, jugó (o cambió la temporada): de cero
+                else:
+                    racha, avisado = int(antes[2]) + (pj_club - int(antes[0])), int(antes[3])
+                nuevo[k] = [pj_club, pj_j, racha, avisado]
+                if racha >= PARTIDOS_SIN_JUGAR and not avisado:
+                    elegibles.append((racha, j.overall, k, eq, j))
+    previo.clear()
+    previo.update(nuevo)
+    elegibles.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    n = 0
+    for racha, _ovr, k, eq, j in elegibles[:MAX_NO_VEN_POR_JORNADA]:
+        previo[k][3] = 1
+        nombre = _nombre(j)
+        N.publicar(estado, 'vestuario',
+                   N.titular(f"No ven a {nombre} en el equipo de {eq.nombre}", f"No ven a {nombre} en {eq.nombre}",
+                             f"No ven a {nombre} en el equipo"),
+                   f"{nombre} ({j.posicion}, media {j.overall}) lleva {racha} partidos sin sumar minutos con "
+                   f"{eq.nombre} pese a estar sano. En su entorno ya se pregunta si el técnico cuenta con él.",
+                   importancia=4 if j.overall >= 85 else 3, equipos=[eq], jugadores=[j])
+        n += 1
+    return n
 
 
 def _logros(estado: dict, rng) -> int:
@@ -495,7 +644,8 @@ def generar_jornada(estado: dict, rng=None) -> int:
         logger.error(f"noticias_gen: no se pudo preparar la memoria: {e}", exc_info=True)
         return 0
     total = 0
-    for generador in (_titulos, _resultados, _lesiones, _promesas, _candidatos_balon, _records, _polemico, _logros):
+    for generador in (_titulos, _resultados, _lesiones, _promesas, _candidatos_balon, _candidatos_sudamericano,
+                      _records, _polemico, _transferibles, _no_ven, _logros):
         try:
             total += int(generador(estado, rng) or 0)
         except Exception as e:

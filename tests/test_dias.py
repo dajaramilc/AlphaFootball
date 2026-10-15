@@ -70,7 +70,7 @@ def test_la_energia_se_recupera_cada_dia_como_en_el_reparto_de_c():
     total = (CAL.fecha_liga(e, 1) - D.hoy(e)).days
     j.energia = 10
     D.continuar(e)
-    esperado = min(100.0, 10 + E.recuperacion(j) * total / CAL.dias_por_jornada(e))
+    esperado = min(100.0, 10 + E.recuperacion(j) * total)           # v0.4.26.0: cantidad fija POR DÍA
     assert abs(j.energia - esperado) < 1e-6
 
 
@@ -84,8 +84,8 @@ def test_con_reloj_cerrar_el_partido_no_recupera_energia_y_los_dias_si():
     finalizar_jornada_liga(e, liga, mi, p, 1, 0)
     assert all(j.energia == 10.0 for j in mi.jugadores)                    # cerrar no recupera: lo hacen los días
     D.hasta_el_partido(e)
-    factor = (CAL.fecha_liga(e, 2) - CAL.fecha_liga(e, 1)).days / CAL.dias_por_jornada(e)
-    bien = [j for j in mi.jugadores if abs(j.energia - min(100.0, 10 + E.recuperacion(j) * factor)) < 1e-6]
+    dias = (CAL.fecha_liga(e, 2) - CAL.fecha_liga(e, 1)).days             # v0.4.26.0: cantidad fija POR DÍA
+    bien = [j for j in mi.jugadores if abs(j.energia - min(100.0, 10 + E.recuperacion(j) * dias)) < 1e-6]
     assert len(bien) >= len(mi.jugadores) - 2, (len(bien), len(mi.jugadores))
 
 

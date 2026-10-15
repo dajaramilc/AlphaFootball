@@ -254,28 +254,28 @@ def test_descanso_reparte_los_dias_del_hueco():
 
 
 def test_recuperacion_proporcional_a_los_dias():
+    # v0.4.26.0: la energía recupera una cantidad fija POR DÍA (recuperacion(j)); sin días, una semana
     e = _e(); j = e['mi_equipo'].jugadores[0]
-    ref = CAL.dias_por_jornada(e)
     j.energia = 10; E.recuperar_todos(e)
-    assert abs(j.energia - 10 - E.recuperacion(j)) < 1e-9                 # sin días: la de siempre
-    j.energia = 10; E.recuperar_todos(e, ref)
-    assert abs(j.energia - 10 - E.recuperacion(j)) < 1e-6
-    j.energia = 10; E.recuperar_todos(e, ref / 2)
-    assert abs(j.energia - 10 - E.recuperacion(j) / 2) < 1e-6
+    assert abs(j.energia - 10 - E.recuperacion(j) * 7) < 1e-9             # sin días: una semana
+    j.energia = 10; E.recuperar_todos(e, 3)
+    assert abs(j.energia - 10 - E.recuperacion(j) * 3) < 1e-6
+    j.energia = 10; E.recuperar_todos(e, 1.5)
+    assert abs(j.energia - 10 - E.recuperacion(j) * 1.5) < 1e-6
     j.energia = 10; E.recuperar_todos(e, 0); assert j.energia == 10
     j.energia = 10; E.recuperar_todos(e, -5); assert j.energia == 10      # días negativos: nada
     j.energia = 95; E.recuperar_todos(e, 60); assert j.energia == 100     # tope
-    j.energia = 50; E.recuperar(j, 0.5)
-    assert abs(j.energia - 50 - E.recuperacion(j) / 2) < 1e-9
+    j.energia = 50; E.recuperar(j, 2)
+    assert abs(j.energia - 50 - E.recuperacion(j) * 2) < 1e-9
 
 
 def test_descanso_pendiente_se_aplica_tras_la_copa():
     e = _e(); j = e['mi_equipo'].jugadores[0]
     CAL.asegurar(e)
-    e['datos_carrera']['descanso_pendiente'] = CAL.dias_por_jornada(e)
+    e['datos_carrera']['descanso_pendiente'] = 5.0
     j.energia = 10
     CAL.tras_partido_copa_user(e)
-    assert abs(j.energia - 10 - E.recuperacion(j)) < 1e-6
+    assert abs(j.energia - 10 - E.recuperacion(j) * 5.0) < 1e-6          # v0.4.26.0: recuperación POR DÍA
     assert 'descanso_pendiente' not in e['datos_carrera']
     assert CAL.aplicar_descanso_pendiente(e) == 0                         # no se aplica dos veces
     assert CAL.aplicar_descanso_pendiente({}) == 0
@@ -288,8 +288,8 @@ def test_la_jornada_recupera_segun_los_dias_de_descanso():
     for j in mi.jugadores:
         j.energia = 10.0
     finalizar_jornada_liga(e, liga, mi, p, 1, 0)
-    factor = (CAL.fecha_liga(e, 2) - CAL.fecha_liga(e, 1)).days / CAL.dias_por_jornada(e)
-    bien = [j for j in mi.jugadores if abs(j.energia - min(100.0, 10 + E.recuperacion(j) * factor)) < 1e-6]
+    dias = (CAL.fecha_liga(e, 2) - CAL.fecha_liga(e, 1)).days             # v0.4.26.0: recuperación POR DÍA
+    bien = [j for j in mi.jugadores if abs(j.energia - min(100.0, 10 + E.recuperacion(j) * dias)) < 1e-6]
     assert len(bien) >= len(mi.jugadores) - 2, (len(bien), len(mi.jugadores))
     assert 'descanso_pendiente' not in e['datos_carrera']                 # sin copa pendiente: todo aplicado
 

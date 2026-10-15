@@ -38,7 +38,8 @@ VENTA_FORZADA_FRAC = 0.8        # la directiva malvende al 80% del valor
 EDAD_LIBRE_IA = 28              # v0.4.21.0: al vencer su contrato, el suplente de la IA de esta edad o más...
 PROB_LIBRE_IA = 0.30            # ...queda libre con esta probabilidad (más o menos uno por club y temporada)
 PLANTILLA_MIN_LIBRE_IA = 20     # el club no suelta a nadie si se queda con menos (mercado_ia.PLANTILLA_MIN_VENDEDOR)
-CLAVES_LIBRO = ['taquilla', 'patrocinio', 'salarios', 'fichajes', 'ventas', 'premios', 'directiva']  # v3.2.0: + espaldarazo
+CLAVES_LIBRO = ['taquilla', 'patrocinio', 'salarios', 'fichajes', 'ventas', 'premios', 'directiva',
+                'camisetas']  # v3.2.0: + espaldarazo; v0.4.26.0: + venta de camisetas
 
 
 def _valor(j) -> int:
@@ -118,10 +119,105 @@ def asegurar_contratos(estado: dict) -> None:
         asegurar_contrato(j)
 
 
-def valor_club(equipo) -> int:
-    """v4.7.0: valor del club = valor de mercado de la plantilla + saldo."""
-    return (sum(int(getattr(j, 'valor', 0) or 0) for j in getattr(equipo, 'jugadores', []) or [])
-            + int(getattr(equipo, 'balance', 0) or 0))
+def valor_club(equipo, estado: Optional[dict] = None) -> int:
+    """v4.7.0: valor del club = valor de mercado de la plantilla + saldo.
+    v0.4.26.0: con `estado`, el club del user suma además su venta de camisetas (valor_camisetas)."""
+    valor = (sum(int(getattr(j, 'valor', 0) or 0) for j in getattr(equipo, 'jugadores', []) or [])
+             + int(getattr(equipo, 'balance', 0) or 0))
+    if estado is not None and equipo is estado.get('mi_equipo'):
+        valor += valor_camisetas(estado)
+    return valor
+
+
+# --- v0.4.26.0: venta de camisetas, un activo del club ────────────────────────────
+# Ingreso por jornada = base de ingresos del club (su tamaño) × CAMISETAS_FRAC × popularidad / 50. La popularidad
+# (0-100, datos_carrera['camisetas']) se dispara cuando el club rinde por encima de lo que se esperaba de él
+# (la meta de la directiva) y baja despacio. El valor del club suma MULT_VALOR_CAMISETAS años de ese ingreso.
+CAMISETAS_FRAC = 0.10                  # del ingreso base, a popularidad 50
+POPULARIDAD_INICIAL = 50.0
+POPULARIDAD_MIN, POPULARIDAD_MAX = 10.0, 100.0
+MULT_VALOR_CAMISETAS = 5               # el club vale 5 años de camisetas más
+SUBE_POR_PUESTO, SUBE_MAX = 0.8, 6.0   # por jornada: por cada puesto sobre la meta (tope por jornada)
+BAJA_BASE, BAJA_POR_PUESTO, BAJA_MAX = 0.1, 0.1, 1.0   # por jornada bajo la meta: baja despacio
+POP_VICTORIA, POP_DERROTA = 0.8, -0.3
+JORNADAS_PESO_TABLA = 4                # hasta la 4ª jornada la tabla pesa de a poco (todavía no dice nada)
+POP_CAMPEON_LIGA, POP_CAMPEON_COPA = 8.0, 6.0
+POP_SUPERADO, POP_FALLADO = 4.0, -4.0  # al cierre de la temporada, según la meta
+
+
+def popularidad(estado: dict) -> float:
+    """Popularidad de las camisetas del club del user (0-100). Sin dato (partida vieja, club nuevo): la inicial."""
+    try:
+        c = (estado.get('datos_carrera') or {}).get('camisetas')
+        return float(c.get('popularidad', POPULARIDAD_INICIAL)) if isinstance(c, dict) else POPULARIDAD_INICIAL
+    except Exception as e:
+        logger.error(f"No se pudo leer la popularidad de las camisetas: {e}")
+        return POPULARIDAD_INICIAL
+
+
+def ingreso_anual_camisetas(estado: dict) -> int:
+    """Lo que dejarían las camisetas en una temporada entera con la popularidad de hoy."""
+    mi, liga = estado.get('mi_equipo'), estado.get('liga')
+    if mi is None or liga is None:
+        return 0
+    base = base_ingresos(mi, getattr(liga, 'tipo', ''), getattr(liga, 'division', 1) or 1)
+    return int(base * CAMISETAS_FRAC * popularidad(estado) / 50.0)
+
+
+def valor_camisetas(estado: dict) -> int:
+    """Lo que las camisetas suman al valor del club."""
+    return MULT_VALOR_CAMISETAS * ingreso_anual_camisetas(estado)
+
+
+def _cambiar_popularidad(estado: dict, delta: float) -> float:
+    c = estado.setdefault('datos_carrera', {}).setdefault('camisetas', {})
+    previa = float(c.get('popularidad', POPULARIDAD_INICIAL))
+    c['popularidad'] = round(max(POPULARIDAD_MIN, min(POPULARIDAD_MAX, previa + float(delta))), 2)
+    c['ultimo_delta'] = round(c['popularidad'] - previa, 2)
+    return c['popularidad']
+
+
+def _puesto_esperado(estado: dict, liga, mi) -> int:
+    """El puesto que se espera del club: la meta de la directiva de esta temporada; sin ella, el que le toca por la
+    media de su plantilla (lo mismo que nivel_temporada espera de un club de la IA)."""
+    obj = (estado.get('datos_carrera') or {}).get('objetivo') or {}
+    if obj.get('temporada') == int(estado.get('temporada', 1) or 1) and obj.get('pos_max'):
+        return int(obj['pos_max'])
+    ranking = sorted(liga.equipos, key=lambda e: -float(getattr(e, 'ovr_promedio', 0) or 0))
+    return next((i + 1 for i, e in enumerate(ranking) if e is mi), len(ranking))
+
+
+def actualizar_popularidad(estado: dict, gf: int, gc: int) -> float:
+    """Tras cada partido de liga del user: sube fuerte si va por encima de su meta (por puesto de ventaja y por
+    victoria) y baja despacio si va por debajo. Devuelve el cambio aplicado."""
+    mi, liga = estado.get('mi_equipo'), estado.get('liga')
+    if mi is None or liga is None:
+        return 0.0
+    jugados = max(0, int(getattr(liga, 'jornada_actual', 1) or 1) - 1)     # la tabla aún no cuenta este partido
+    peso = min(1.0, jugados / JORNADAS_PESO_TABLA)
+    orden = sorted(liga.equipos, key=lambda e: (getattr(e, 'puntos', 0), getattr(e, 'gf', 0) - getattr(e, 'gc', 0),
+                                                getattr(e, 'gf', 0)), reverse=True)
+    puesto = next((i + 1 for i, e in enumerate(orden) if e is mi or e.id == mi.id), len(orden))
+    margen = _puesto_esperado(estado, liga, mi) - puesto            # > 0: por encima de lo esperado
+    if margen > 0:
+        delta = min(SUBE_MAX, SUBE_POR_PUESTO * margen) * peso
+    elif margen < 0:
+        delta = -min(BAJA_MAX, BAJA_BASE + BAJA_POR_PUESTO * -margen) * peso
+    else:
+        delta = 0.0
+    delta += POP_VICTORIA if gf > gc else POP_DERROTA if gf < gc else 0.0
+    antes = popularidad(estado)
+    return round(_cambiar_popularidad(estado, delta) - antes, 2)
+
+
+def info_camisetas(estado: dict) -> dict:
+    """Para la pantalla de finanzas: popularidad, tendencia, ingreso anual con la de hoy, lo que sumó al valor del
+    club y lo cobrado esta temporada."""
+    c = (estado.get('datos_carrera') or {}).get('camisetas')
+    return {'popularidad': popularidad(estado),
+            'tendencia': float(c.get('ultimo_delta', 0.0)) if isinstance(c, dict) else 0.0,
+            'ingreso_anual': ingreso_anual_camisetas(estado), 'valor': valor_camisetas(estado),
+            'cobrado': int(libro(estado).get('camisetas', 0))}
 
 
 def masa_salarial(equipo, estado: Optional[dict] = None) -> int:
@@ -322,9 +418,16 @@ def procesar_jornada(estado: dict, es_local: bool, gf: int, gc: int) -> dict:
         patrocinio = int(medio * PATROCINIO_FRAC / n)
     taquilla = int(medio * TAQUILLA_FRAC / max(1, n / 2) * FACTOR_TAQUILLA[resultado]) if es_local else 0
     salarios = masa_salarial(mi, estado) // n
-    mi.balance = int(mi.balance) + patrocinio + taquilla - salarios
+    camisetas = 0
+    try:   # v0.4.26.0: se cobra con la popularidad de antes del partido; después el resultado la mueve
+        camisetas = ingreso_anual_camisetas(estado) // n
+        actualizar_popularidad(estado, gf, gc)
+    except Exception as e_cam:
+        logger.error(f"Error en la venta de camisetas: {e_cam}")
+    mi.balance = int(mi.balance) + patrocinio + taquilla + camisetas - salarios
     registrar(estado, 'patrocinio', patrocinio)
     registrar(estado, 'taquilla', taquilla)
+    registrar(estado, 'camisetas', camisetas)
     registrar(estado, 'salarios', salarios)
     dc = estado.setdefault('datos_carrera', {})
     estado.pop('aviso_finanzas', None)
@@ -352,7 +455,7 @@ def procesar_jornada(estado: dict, es_local: bool, gf: int, gc: int) -> dict:
             C.enviar(estado, 'directiva', "Saldo recuperado",
                      "El club ha vuelto a números positivos, por lo que se cancela la venta forzada.", ir)
         dc['jornadas_en_rojo'] = 0
-    return {'patrocinio': patrocinio, 'taquilla': taquilla, 'salarios': salarios}
+    return {'patrocinio': patrocinio, 'taquilla': taquilla, 'salarios': salarios, 'camisetas': camisetas}
 
 
 # v0.4.11.0: presupuesto por temporada. El saldo no se arrastra: al cerrar, el club se queda con
@@ -423,6 +526,15 @@ def aplicar_presupuesto_temporada(estado: dict) -> Optional[dict]:
                                  reg.get('objetivo_resultado', '') if propio else '',
                                  propio and reg.get('campeon_liga') == mi.nombre, campeon_copa)
     mi.balance = info['total']
+    try:   # v0.4.26.0: la temporada que cierra deja huella en la popularidad de las camisetas
+        resultado = reg.get('objetivo_resultado', '') if propio else ''
+        sube = POP_SUPERADO if resultado == 'superado' else POP_FALLADO if resultado == 'fallado' else 0.0
+        sube += POP_CAMPEON_LIGA if propio and reg.get('campeon_liga') == mi.nombre else 0.0
+        sube += POP_CAMPEON_COPA if campeon_copa else 0.0
+        if sube:
+            _cambiar_popularidad(estado, sube)
+    except Exception as e_pop:
+        logger.error(f"No se pudo mover la popularidad al cierre de la temporada: {e_pop}")
     dc['presupuesto_temporada'] = dict(info, temporada=temporada)
     try:
         from alpha_football import correo as C

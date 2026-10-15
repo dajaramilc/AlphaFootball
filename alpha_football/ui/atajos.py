@@ -26,7 +26,7 @@ POR_DEFECTO = "H Ayuda · ESC Volver"
 # v3.6.0: atajos reales de cada pantalla (leídos de sus KEYDOWN). Formato "Tecla Acción · ... · H Ayuda".
 ATAJOS = {
     'league_screen': "J Jugar · D +1 Día · C Cerrar · N Noticias · ← → Pestañas · ↑ ↓ Opción · Enter Abrir · R Resultados · M Correo · O Opciones · H Ayuda · ESC Salir",
-    'copa_screen': "1-4 Pestañas · ← → Fecha/Pestaña · C Copa · R Simular resto · H Ayuda · ESC Volver",   # v3.8.0
+    'copa_screen': "1-4 Pestañas · ← → Fecha/Pestaña · C Copa · H Ayuda · ESC Volver",   # v3.8.0; v0.4.26.0: sin "R Simular resto"
     'career_screen': "↑ ↓ Desplazar · L Logros · H Ayuda · ESC Volver",
     'team_screen': "Flechas Jugador · Espacio Cambiar · Enter OK · A Auto · R Reservas · [ ] Formación · - = Estilo · , . Ment. · H Ayuda · ESC Cancelar",
     'options_screen': "↑ ↓ Opción · ← → Volumen · Enter Activar (GUARDAR en carrera) · H Ayuda · ESC Volver",

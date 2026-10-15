@@ -2,8 +2,8 @@
 """
 ALPHA FOOTBALL — Energía, resistencia, lesiones y sanciones (v3.1.0)
 Sin UI y sin importar models (models importa de aquí los factores de rendimiento).
-La energía (0-100) baja minuto a minuto según la resistencia y se recupera al cerrar cada
-jornada de liga. Por debajo de 60 se lesiona más; el rendimiento baja desde 70 (barra amarilla)
+La energía (0-100) baja minuto a minuto según la resistencia y se recupera cada día que pasa
+(v0.4.26.0: cantidad fija por día). Por debajo de 60 se lesiona más; el rendimiento baja desde 70 (barra amarilla)
 y el doble de rápido desde 55 (barra roja).
 """
 from __future__ import annotations
@@ -21,6 +21,12 @@ UMBRAL_ROJO = 55            # v4.4.0: desde aquí cae el doble de rápido (barra
 BONUS_RASGO_RES = {'pulmon_de_hierro': 15, 'rustico': 8, 'regateador': -5}
 PROB_LESION_90 = 0.012
 PROB_ROJA_90 = 0.004
+# v0.4.26.0: recuperación fija POR DÍA = base + 0.025 × resistencia (−0.4 con más de 30 años):
+# resistencia 40 → 4.0/día (28/semana), 60 → 4.5 (31.5), 80 → 5.0 (35), 99 → 5.5 (38). Un partido gasta ~29.
+RECUP_BASE_DIA = 3.0
+RECUP_RES_DIA = 0.025
+RECUP_VETERANO_DIA = 0.4
+DIAS_SIN_CALENDARIO = 7.0   # descanso que se asume cuando no se sabe cuántos días pasaron (una semana)
 # v0.4.19.0: la lesión dura DÍAS (se cura con el calendario): (mínimo, máximo, peso) por gravedad.
 # Leve 3-10 días, moderada 2-4 semanas, grave 1-2 meses, muy grave 3-6 meses.
 DURACION_LESION = ((3, 10, 50), (14, 28, 27), (30, 60, 17), (90, 180, 6))
@@ -101,29 +107,29 @@ def puntaje_once(j) -> float:
 
 
 def recuperacion(j) -> float:
-    r = 15 + 0.15 * _res(j)
-    return r - 3 if _edad(j) > 30 else r
+    """v0.4.26.0: energía que recupera en UN día de descanso (fija, no depende de la duración de la temporada).
+    Antes era lo de una jornada repartido en `dias_por_jornada` (13-17 días con el calendario real): en 17 días
+    un jugador recuperaba solo 26-34 y llegaba cansado al siguiente partido. Ahora ≈ 28-38 por semana."""
+    r = RECUP_BASE_DIA + RECUP_RES_DIA * _res(j)
+    return r - RECUP_VETERANO_DIA if _edad(j) > 30 else r
 
 
-def recuperar(j, factor: float = 1.0) -> None:
-    """v0.4.11.0: `factor` = parte de una jornada de descanso (días / días por jornada)."""
-    j.energia = min(100.0, float(getattr(j, 'energia', 100.0)) + recuperacion(j) * factor)
+def recuperar(j, dias: float = DIAS_SIN_CALENDARIO) -> None:
+    """v0.4.26.0: `dias` = días de descanso (antes `factor`, parte de una jornada). Sin dato, una semana."""
+    j.energia = min(100.0, float(getattr(j, 'energia', 100.0)) + recuperacion(j) * max(0.0, float(dias)))
 
 
 def recuperar_todos(estado: dict, dias: Optional[float] = None) -> list:
     """Cierre de jornada de liga: recuperan todos los clubes de las 10 ligas y los de la copa.
-    v0.4.11.0: con `dias` la recuperación es proporcional a los días de descanso (calendario.py);
-    sin `dias`, la fija de siempre.
+    v0.4.11.0: con `dias` la recuperación es proporcional a los días de descanso (calendario.py).
+    v0.4.26.0: la energía recupera `recuperacion(j)` POR DÍA (fija); sin `dias`, una semana (DIAS_SIN_CALENDARIO).
     v0.4.19.0: también pasan esos días para las lesiones (sin `dias`, los de una jornada). Devuelve los
     jugadores de tu club que se recuperaron y avisa al DT por correo (Cuerpo médico)."""
-    factor = 1.0
+    dias_energia = DIAS_SIN_CALENDARIO if dias is None else max(0.0, float(dias))
     dias_lesion = 7.0                                 # sin calendario: una semana por jornada
     try:
         from alpha_football.calendario import dias_por_jornada
-        por_jornada = dias_por_jornada(estado)
-        dias_lesion = por_jornada if dias is None else max(0.0, float(dias))
-        if dias is not None:
-            factor = max(0.0, float(dias)) / por_jornada
+        dias_lesion = dias_por_jornada(estado) if dias is None else max(0.0, float(dias))
     except Exception as e:
         logger.error(f"No se pudo calcular el descanso por días: {e}")
         if dias is not None:
@@ -145,7 +151,7 @@ def recuperar_todos(estado: dict, dias: Optional[float] = None) -> list:
             continue
         vistos.add(id(eq))
         for j in getattr(eq, 'jugadores', []) or []:
-            recuperar(j, factor)
+            recuperar(j, dias_energia)
             if n_lesion > 0 and int(getattr(j, 'lesion_dias', 0) or 0) > 0:
                 j.lesion_dias = max(0, int(j.lesion_dias) - n_lesion)
                 if j.lesion_dias == 0 and eq is mi:

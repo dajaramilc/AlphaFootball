@@ -348,6 +348,30 @@ def _noticia_fichaje(estado: dict, jugador, de: str, a: str, monto: int, propio:
                       puntaje=puntaje, **({'hora': hora} if hora is not None else {}))
 
 
+MAX_ULTIMO_PASE = 1500          # v0.4.26.0: notas de "cuándo cambió de club" que se guardan antes de podar las viejas
+
+
+def _anotar_ultimo_pase(estado: dict, jugador) -> None:
+    """v0.4.26.0: anota la fecha en que el jugador cambió de club por última vez (datos_carrera['ultimo_pase'],
+    por nombre completo, que es único en la carrera). El historial de pases no sirve: la IA hace cientos y se
+    recorta. market.cambio_reciente la lee para bajar la probabilidad de que vuelva a moverse en 12 meses."""
+    try:
+        from datetime import date
+        from alpha_football.correo import _hoy_iso
+        from alpha_football.market import DIAS_CAMBIO_RECIENTE
+        hoy, nombre = _hoy_iso(estado), getattr(jugador, 'nombre_completo', None)
+        if not hoy or not nombre:
+            return
+        notas = estado.setdefault('datos_carrera', {}).setdefault('ultimo_pase', {})
+        notas[nombre] = hoy
+        if len(notas) > MAX_ULTIMO_PASE:      # fuera lo que ya pasó del año: no cuenta para nada
+            limite = date.fromisoformat(hoy).toordinal() - DIAS_CAMBIO_RECIENTE
+            for viejo in [n for n, f in notas.items() if date.fromisoformat(str(f)).toordinal() < limite]:
+                del notas[viejo]
+    except Exception as e:
+        logger.error(f"No se pudo anotar la fecha del último pase: {e}")
+
+
 def registrar_pase(estado: dict, jugador, de: str, a: str, monto: int, propio: bool,
                    confirmado: bool = False) -> None:
     """Agrega un pase al historial persistente (datos_carrera['historial_pases']) y, si es relevante y no
@@ -376,6 +400,7 @@ def registrar_pase(estado: dict, jugador, de: str, a: str, monto: int, propio: b
             jugador.ventana_traspaso = clave_ventana_traspaso(
                 int(estado.get('temporada', 1) or 1), int(getattr(liga, 'jornada_actual', 1) or 1),
                 int(getattr(liga, 'num_jornadas', 22) or 22), estado=estado)
+            _anotar_ultimo_pase(estado, jugador)
         # v2.9.1: el tope solo recorta pases ajenos (la IA hace cientos por temporada y
         # borraba los tuyos de la pestaña PROPIO).
         exceso = sum(1 for h in hist if not h.get('propio')) - MAX_HISTORIAL
@@ -443,7 +468,7 @@ def fichar(estado: dict, jugador, club, precio: Optional[int] = None) -> tuple[b
     if TP.pendiente_de(estado, jugador) is not None:
         return False, f"Ya está acordado: llega {TP.texto_apertura(estado)}."
     from alpha_football import dia_final as DF      # v0.4.14.0: el último día, un fichaje cuesta 3 horas
-    if not TP.puede_concretar(estado, DF.HORAS_FICHAJE):
+    if not TP.puede_concretar(estado, DF.HORAS_FICHAJE, jugador):
         return _fichar_diferido(estado, jugador, club, precio)
     try:
         if club is not None:
@@ -546,11 +571,39 @@ def necesidades(mi_equipo) -> dict:
     return peor
 
 
+def es_comprable(estado: dict, jugador, club) -> bool:
+    """v0.4.26.0: ¿se lo puede comprar hoy? Las mismas puertas que cierran fichar() y evaluar_compra(): a préstamo,
+    traspaso ya acordado, llegó a su club en esta ventana, club con la plantilla corta o tu clásico (esos solo por
+    cláusula) y tu club sancionado por la liga. No tiene efectos: lo usa el ojeador."""
+    try:
+        from alpha_football import sancion_liga as SL
+        from alpha_football import traspasos_pendientes as TP
+        from alpha_football.market import traspasado_en_ventana
+        if SL.motivo_bloqueo(estado):
+            return False
+        if getattr(jugador, 'prestamo', None) or TP.pendiente_de(estado, jugador) is not None:
+            return False
+        if club is None:                       # agente libre
+            return True
+        if traspasado_en_ventana(estado, jugador):
+            return False
+        if plantilla_corta(estado, club) and not getattr(jugador, 'remate', False):
+            return False
+        from alpha_football.data.clasicos import es_clasico
+        if es_clasico(club, estado.get('mi_equipo')) and int(getattr(jugador, 'moral', 70)) >= MORAL_BAJA:
+            return False
+        return True
+    except Exception as e:
+        logger.error(f"No se pudo saber si {getattr(jugador, 'nombre_completo', '?')} se puede comprar: {e}")
+        return False
+
+
 def recomendar_fichajes(estado: dict, n: int = 3) -> list:
     """
     n fichajes (jugador, club, etiqueta, precio, motivo) que mejoran el puesto más flojo del
     once y que el user puede pagar (y fichar según market.puede_fichar). Prioriza posiciones
     distintas y la mejora por dólar; los jóvenes con potencial suman.
+    v0.4.26.0: solo los que se pueden comprar de verdad (es_comprable).
     """
     mi = estado.get('mi_equipo')
     if mi is None:
@@ -569,6 +622,8 @@ def recomendar_fichajes(estado: dict, n: int = 3) -> list:
         if precio > mi.balance:
             continue
         if puede_fichar is not None and not puede_fichar(mi, j, precio)[0]:
+            continue
+        if not es_comprable(estado, j, club):
             continue
         mejora = j.overall - base
         extra_pot = max(0, (getattr(j, 'potencial', 0) or j.overall) - j.overall) * 0.3 if j.edad <= 23 else 0
@@ -599,14 +654,19 @@ def recomendaciones_ojeador(estado: dict) -> list:
     guardado = dc.get('ojeador') or {}
     pool = {id(j): (j, club, et) for j, club, et in pool_buscador(estado)}
     if guardado.get('clave') == clave:
-        recs = []
+        recs, caidos = [], False
         for r in guardado.get('recs', []):
             hallado = next(((j, club, et) for j, club, et in pool.values()
                             if f"{j.nombre} {j.apellido}" == r['jugador'] and j.posicion == r['posicion']), None)
-            if hallado:
+            if not hallado:
+                continue             # ya no está en el pool (lo ficharon): la lista solo se acorta, como siempre
+            if es_comprable(estado, hallado[0], hallado[1]):
                 j, club, et = hallado
                 recs.append((j, club, et, precio_fichaje(j), r['motivo']))
-        return recs
+            else:
+                caidos = True        # v0.4.26.0: ya no se puede comprar (llegó a su club, se acordó...): se rehace
+        if not caidos:
+            return recs
     recs = recomendar_fichajes(estado)
     dc['ojeador'] = {'clave': clave, 'recs': [
         {'jugador': f"{j.nombre} {j.apellido}", 'posicion': j.posicion, 'motivo': m}
@@ -718,10 +778,9 @@ def evaluar_compra(estado: dict, jugador, club, monto: int) -> tuple:
                      'jugador': jugador.nombre_completo, 'monto': monto,
                      'jornada': int(getattr(estado.get('liga'), 'jornada_actual', 1) or 1),
                      'temporada': int(estado.get('temporada', 1) or 1)})
-        if hora is not None:
-            pend[-1]['hora_resp'] = hora
+        dias = DF.fijar_respuesta(estado, pend[-1], hora)      # v0.4.26.0: responde a los 1-3 días
         dc['analisis_compras'] = pend
-        return 'analiza', f"{club.nombre}: \"Lo analizamos\". {DF.texto_respuesta(hora)}", 0
+        return 'analiza', f"{club.nombre}: \"Lo analizamos\". {DF.texto_respuesta(hora, dias=dias)}", 0
     return 'rechaza', f"{club.nombre} rechaza. Pide {dinero_exacto(minimo)}.", minimo
 
 
@@ -774,7 +833,7 @@ def analizar_contrato(estado: dict, neg: dict) -> Optional[str]:
     """
     v4.4.0: si el salario ofrecido es al menos el 85% de lo que pide (y los años valen), el
     jugador "lo analiza": queda pendiente en datos_carrera['analisis_contratos'] y responde por
-    correo en la próxima jornada (contraofertas.resolver_analisis). None = rechazo normal.
+    correo a los 1-3 días (v0.4.26.0; antes, la próxima jornada: contraofertas.resolver_analisis). None = rechazo normal.
     """
     j, modo, anios = neg['jugador'], neg['modo'], int(neg['anios'])
     pedido = salario_pedido(j, modo, neg['clausula_mult'])
@@ -795,10 +854,9 @@ def analizar_contrato(estado: dict, neg: dict) -> Optional[str]:
                  'clausula_mult': float(neg['clausula_mult']),
                  'jornada': int(getattr(estado.get('liga'), 'jornada_actual', 1) or 1),
                  'temporada': int(estado.get('temporada', 1) or 1)})
-    if hora is not None:
-        pend[-1]['hora_resp'] = hora
+    dias = DF.fijar_respuesta(estado, pend[-1], hora)      # v0.4.26.0: responde a los 1-3 días
     dc['analisis_contratos'] = pend
-    return f"{j.nombre_completo}: \"Lo analizo\". {DF.texto_respuesta(hora, uno=True)}"
+    return f"{j.nombre_completo}: \"Lo analizo\". {DF.texto_respuesta(hora, uno=True, dias=dias)}"
 
 
 def _fijar_contrato(jugador, salario: int, anios: int, clausula_mult: float) -> None:
