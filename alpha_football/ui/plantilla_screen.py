@@ -235,14 +235,99 @@ def _dinero(v: int) -> str:
     return f"${v / 1_000_000:.1f}M" if v >= 1_000_000 else f"${v / 1000:.0f}K"
 
 
-def _liberar_seleccionado(estado: dict, jugador) -> None:
-    if estado.get('plantilla_liberar_sel') != getattr(jugador, 'id', None):
-        estado['plantilla_liberar_sel'] = getattr(jugador, 'id', None)
+R_OVERLAY_LIB = pygame.Rect(320, 170, 640, 380)       # v0.4.27.0: confirmación de LIBERAR
+
+
+def rects_overlay_liberar() -> dict:
+    """v0.4.27.0: botones CONFIRMAR / CANCELAR de la ventana de liberar."""
+    r = R_OVERLAY_LIB
+    return {'confirmar': pygame.Rect(r.x + 40, r.bottom - 76, 270, 52),
+            'cancelar': pygame.Rect(r.right - 310, r.bottom - 76, 270, 52)}
+
+
+def _pedir_liberar(estado: dict, jugador) -> None:
+    """v0.4.27.0: abre la ventana de confirmación con la indemnización (antes: repetir L). Si el jugador no se
+    puede liberar (a préstamo, con un acuerdo), el motivo sale directo en el aviso de la ficha."""
+    try:
+        from alpha_football.negociacion import motivo_no_liberable
+        motivo = motivo_no_liberable(estado, jugador)
+    except Exception as e:
+        logger.error(f"No se pudo comprobar si se puede liberar: {e}")
+        motivo = None
+    if motivo:
+        estado['plantilla_liberar_msg'] = (motivo, 'rojo', pygame.time.get_ticks() + 4000)
+        return
+    estado['plantilla_liberar_sel'] = getattr(jugador, 'id', None)
+
+
+def _confirmar_liberar(estado: dict, jugadores: list) -> None:
+    """v0.4.27.0: CONFIRMAR en la ventana: rescinde el contrato del jugador que quedó marcado."""
+    jid = estado.pop('plantilla_liberar_sel', None)
+    jugador = next((j for j in jugadores if getattr(j, 'id', None) == jid), None)
+    if jugador is None:
         return
     from alpha_football.negociacion import liberar_jugador
     ok, mensaje = liberar_jugador(estado, jugador)
-    estado.pop('plantilla_liberar_sel', None)
     estado['plantilla_liberar_msg'] = (mensaje, 'verde' if ok else 'rojo', pygame.time.get_ticks() + 4000)
+
+
+def _dibujar_overlay_liberar(screen, estado: dict, jugadores: list, mouse_pos) -> None:
+    """v0.4.27.0: ventana modal: a quién se libera, cuánto cuesta y cómo queda el saldo; CONFIRMAR / CANCELAR."""
+    jid = estado.get('plantilla_liberar_sel')
+    jugador = next((j for j in jugadores if getattr(j, 'id', None) == jid), None)
+    if jugador is None:
+        estado.pop('plantilla_liberar_sel', None)
+        return
+    from alpha_football.negociacion import INDEMNIZACION_LIBERACION, dinero_exacto, indemnizacion_liberacion
+    indemnizacion = indemnizacion_liberacion(jugador)
+    saldo = int(getattr(estado.get('mi_equipo'), 'balance', 0) or 0)
+    anios = int(getattr(jugador, 'contrato_anios', 0) or 0)
+    velo = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
+    velo.fill((0, 0, 0, 160))
+    screen.blit(velo, (0, 0))
+    r = R_OVERLAY_LIB
+    pygame.draw.rect(screen, (14, 20, 38), r, border_radius=10)
+    pygame.draw.rect(screen, COLORS['dorado'], r, width=2, border_radius=10)
+    x, y = r.x + 28, r.y + 20
+    draw_text(screen, "LIBERAR JUGADOR", (x, y), size='lg', color='dorado')
+    y += 54
+    draw_text(screen, f"{jugador.nombre} {jugador.apellido}  ·  {jugador.posicion}  ·  {jugador.edad} años  ·  "
+                      f"media {jugador.overall}", (x, y), size='md', color='blanco')
+    y += 36
+    draw_text(screen, f"Contrato: {anios} año{'s' if anios != 1 else ''}  ·  "
+                      f"{dinero_exacto(getattr(jugador, 'salario', 0))}/año", (x, y), size='sm', color='azul')
+    y += 36
+    draw_text(screen, f"Indemnización a pagar: {dinero_exacto(indemnizacion)}", (x, y), size='md', color='rojo')
+    y += 32
+    draw_text(screen, f"({round(INDEMNIZACION_LIBERACION * 100)} % del sueldo anual por cada año de contrato que le queda)",
+              (x, y), size='sm', color='azul', shadow=False)
+    y += 30
+    draw_text(screen, f"Saldo del club: {dinero_exacto(saldo)}  →  {dinero_exacto(saldo - indemnizacion)}",
+              (x, y), size='sm', color='blanco' if saldo - indemnizacion >= 0 else 'rojo')
+    y += 28
+    draw_text(screen, "Saldrá de tu plantilla y quedará como agente libre.", (x, y), size='sm', color='blanco',
+              shadow=False)
+    rs = rects_overlay_liberar()
+    draw_button(screen, rs['confirmar'], "CONFIRMAR (Enter)", rs['confirmar'].collidepoint(mouse_pos))
+    draw_button(screen, rs['cancelar'], "CANCELAR (Esc)", rs['cancelar'].collidepoint(mouse_pos))
+
+
+def _boton_chico(screen, rect: pygame.Rect, texto: str, hover: bool, size: str = 'xs') -> None:
+    """v0.4.27.0: botón de las opciones de la ficha con letra pequeña (el 'md' de draw_button no cabía en su
+    recuadro). Mismos colores que draw_button; el texto va centrado y, si aun así no cabe, recortado."""
+    try:
+        if hover:
+            fondo, borde, color = (30, 40, 70), COLORS['verde'], COLORS['verde']
+        else:
+            fondo, borde, color = COLORS['panel'], COLORS['azul'], COLORS['blanco']
+        pygame.draw.rect(screen, fondo, rect, border_radius=6)
+        pygame.draw.rect(screen, borde, rect, width=2, border_radius=6)
+        img = get_font(size).render(texto, True, color)
+        ancho = min(img.get_width(), rect.width - 8)
+        screen.blit(img, (rect.centerx - ancho // 2, rect.centery - img.get_height() // 2),
+                    pygame.Rect(0, 0, ancho, img.get_height()))
+    except Exception as e:
+        logger.error(f"No se pudo dibujar el botón '{texto}': {e}")
 
 
 def _dibujar_ficha(screen, j, titular: bool, mouse_pos, estado: Optional[dict] = None) -> None:
@@ -284,18 +369,11 @@ def _dibujar_ficha(screen, j, titular: bool, mouse_pos, estado: Optional[dict] =
         logger.error(f"No se pudo dibujar la ficha: {e}")
     # préstamo en su propia línea (la de estado ya viene llena con sanciones y amarillas)
     rects = _rects()
-    confirmar = estado and estado.get('plantilla_liberar_sel') == getattr(j, 'id', None)
     aviso = None
-    if confirmar:
-        try:
-            from alpha_football.negociacion import dinero_exacto, indemnizacion_liberacion
-            aviso = (f"¿Liberar por {dinero_exacto(indemnizacion_liberacion(j))}? Repite L o clic.", 'rojo')
-        except Exception as e:
-            logger.error(f"No se pudo calcular la indemnización: {e}")
-    elif estado and (msg := estado.get('plantilla_liberar_msg')) and pygame.time.get_ticks() < msg[2]:
-        aviso = (msg[0], msg[1])
+    if estado and (msg := estado.get('plantilla_liberar_msg')) and pygame.time.get_ticks() < msg[2]:
+        aviso = (msg[0], msg[1])          # v0.4.27.0: el resultado de liberar (la confirmación es una ventana aparte)
     if aviso:
-        draw_text(screen, aviso[0], (R_FICHA.x + 20, rects['renovar'].y - 30), size='sm', color=aviso[1])
+        draw_text(screen, str(aviso[0])[:46], (R_FICHA.x + 20, rects['renovar'].y - 30), size='sm', color=aviso[1])
     else:
         lineas_pr = ([f"A PRÉSTAMO de {p_pr['dueno']}"[:40],
                       f"Vuelve en la jornada {p_pr['vuelve'][1]} de la temporada {p_pr['vuelve'][0]}"] if p_pr
@@ -305,14 +383,15 @@ def _dibujar_ficha(screen, j, titular: bool, mouse_pos, estado: Optional[dict] =
     r = rects['transferible']
     texto = ("PIDE SALIR" if getattr(j, 'pide_salir', False)                  # v4.4.0: bloqueado
              else "QUITAR DE TRANSFERIBLES" if getattr(j, 'transferible', False) else "PONER EN TRANSFERIBLES (T)")
-    draw_button(screen, r, texto, r.collidepoint(mouse_pos))
+    # v0.4.27.0: las opciones de la ficha con letra pequeña, para que quepan en su recuadro
+    _boton_chico(screen, r, texto, r.collidepoint(mouse_pos))
     rr = rects['renovar']
-    draw_button(screen, rr, "RENOVAR (R)", rr.collidepoint(mouse_pos) and not p_pr)
+    _boton_chico(screen, rr, "RENOVAR (R)", rr.collidepoint(mouse_pos) and not p_pr)
     rl = rects['lista_prestamo']
-    draw_button(screen, rl, "A PRÉSTAMO" if p_pr else "EN LISTA (P)" if en_lista else "PRÉSTAMO (P)",
-                rl.collidepoint(mouse_pos) and not p_pr)
+    _boton_chico(screen, rl, "A PRÉSTAMO" if p_pr else "EN LISTA (P)" if en_lista else "PRÉSTAMO (P)",
+                 rl.collidepoint(mouse_pos) and not p_pr)
     liberar = rects['liberar']
-    draw_button(screen, liberar, "CONFIRMAR (L)" if confirmar else "LIBERAR (L)", liberar.collidepoint(mouse_pos))
+    _boton_chico(screen, liberar, "LIBERAR (L)", liberar.collidepoint(mouse_pos))
 
 
 def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
@@ -359,9 +438,13 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                         estado['prestamos_scroll'] = (int(estado.get('prestamos_scroll', 0) or 0)
                                                       + (-1 if ev.key == pygame.K_UP else 1))
                     continue
+                if estado.get('plantilla_liberar_sel') is not None:   # v0.4.27.0: la confirmación de liberar es modal
+                    if ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                        _confirmar_liberar(estado, jugadores)
+                    elif ev.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE, pygame.K_n):
+                        estado.pop('plantilla_liberar_sel', None)
+                    continue
                 if ev.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
-                    if estado.pop('plantilla_liberar_sel', None) is not None:
-                        continue
                     return 'league_screen'
                 if ev.key == pygame.K_p:                          # lista de préstamo
                     from alpha_football.prestamos import alternar_lista
@@ -373,7 +456,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 elif ev.key == pygame.K_t:
                     alternar_transferible(jugadores[orden[pos_sel]])
                 elif ev.key == pygame.K_l:
-                    _liberar_seleccionado(estado, jugadores[orden[pos_sel]])
+                    _pedir_liberar(estado, jugadores[orden[pos_sel]])
                 elif ev.key == pygame.K_r:
                     if getattr(jugadores[orden[pos_sel]], 'prestamo', None):   # a préstamo: no se renueva
                         continue
@@ -388,6 +471,13 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 elif pos_sel >= scroll + FILAS_VISIBLES:
                     scroll = pos_sel - FILAS_VISIBLES + 1
 
+        if click_pos and estado.get('plantilla_liberar_sel') is not None:     # v0.4.27.0: la ventana de liberar
+            r_lib = rects_overlay_liberar()
+            if r_lib['confirmar'].collidepoint(click_pos):
+                _confirmar_liberar(estado, jugadores)
+            elif r_lib['cancelar'].collidepoint(click_pos) or not R_OVERLAY_LIB.collidepoint(click_pos):
+                estado.pop('plantilla_liberar_sel', None)
+            click_pos = None
         if click_pos and estado.get('prestamos_abierto'):      # el panel PRÉSTAMOS se come los clics
             filas = _filas_prestamos(estado)
             ini = _scroll_prestamos(estado, len(filas))
@@ -416,7 +506,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             elif rects['transferible'].collidepoint(click_pos):
                 alternar_transferible(jugadores[orden[pos_sel]])
             elif rects['liberar'].collidepoint(click_pos):
-                _liberar_seleccionado(estado, jugadores[orden[pos_sel]])
+                _pedir_liberar(estado, jugadores[orden[pos_sel]])
             elif rects['renovar'].collidepoint(click_pos):
                 if not getattr(jugadores[orden[pos_sel]], 'prestamo', None):   # a préstamo: no se renueva
                     from alpha_football.negociacion import iniciar_negociacion
@@ -514,6 +604,8 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         _dibujar_ficha(screen, jugadores[orden[pos_sel]], orden[pos_sel] in titulares, mouse_pos, estado)
         if estado.get('prestamos_abierto'):
             _dibujar_overlay_prestamos(screen, estado, mouse_pos)
+        if estado.get('plantilla_liberar_sel') is not None:
+            _dibujar_overlay_liberar(screen, estado, jugadores, mouse_pos)
         return None
     except Exception as e:
         logger.error(f"Error en plantilla_screen: {e}", exc_info=True)

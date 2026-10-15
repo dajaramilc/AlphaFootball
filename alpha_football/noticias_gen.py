@@ -31,7 +31,9 @@ OVR_FIGURA = 80
 JORNADAS_ENTRE_LESIONES = 8     # no se repite la lesión de un mismo jugador antes de estas jornadas
 CADA_N_JORNADAS_PROMESAS = 6
 PROB_POLEMICO = 0.12
-RECORDS_BASE = {'goles': 25, 'asistencias': 15}      # récord inicial de una temporada de liga
+RECORDS_BASE = {'goles': 25, 'asistencias': 15,      # récord inicial de una temporada de liga
+                'traspaso': 222_000_000}             # v0.4.27.0: el traspaso más caro, el de Neymar ($222M)
+RECORDS_NOMBRE_BASE = {'traspaso': "Neymar"}         # quién tiene el récord al empezar (los de liga no tienen dueño)
 CERCA_DEL_RECORD = 3
 NOMBRE_STAT = {'goles': "goles", 'asistencias': "asistencias"}
 VENTANA_CARRERA = 3             # v0.4.26.0: jornadas desde el aviso en que la carrera de un premio aún se publica
@@ -95,8 +97,15 @@ def _memoria(estado: dict) -> dict:
     m.setdefault('titulos', [])           # v0.4.25.0: títulos ya anunciados ("camp:<temporada>:<liga>:<división>"...)
     records = dc.setdefault('records', {})
     for stat, base in RECORDS_BASE.items():
-        records.setdefault(stat, {'valor': base, 'nombre': '', 'temporada': 0})
+        records.setdefault(stat, {'valor': base, 'nombre': RECORDS_NOMBRE_BASE.get(stat, ''), 'temporada': 0})
     return m
+
+
+def record_traspaso(estado: dict) -> dict:
+    """v0.4.27.0: el récord de traspaso vigente, {'valor', 'nombre', 'temporada', ...}; arranca en el de Neymar, $222M.
+    Es el dict guardado en datos_carrera['records']['traspaso']: quien bate el récord lo actualiza en el sitio."""
+    _memoria(estado)
+    return estado['datos_carrera']['records']['traspaso']
 
 
 def _ya(estado: dict, clave: str) -> bool:
@@ -289,8 +298,9 @@ def _carrera(estado: dict, memoria: str, solo_sudamerica: bool, num: int, den: i
     if not top:
         return 0
     m[memoria].append(t)
-    lineas = [f"{i + 1}. {_nombre(j)} ({eq.nombre}) · media {j.overall}, {j.goles} goles, {j.asistencias} asistencias, "
-              f"nota {j.promedio_nota:.1f}" for i, (_p, eq, j) in enumerate(top)]
+    # v0.4.27.0: nombre en negrita y una línea en blanco entre cada jugador
+    lineas = [f"{i + 1}. {N.negrita(_nombre(j))} ({eq.nombre}) · media {j.overall}, {j.goles} goles, "
+              f"{j.asistencias} asistencias, nota {j.promedio_nota:.1f}" for i, (_p, eq, j) in enumerate(top)]
     lider = _nombre(top[0][2])
     if solo_sudamerica:
         titular = N.titular(f"Carrera al Sudamericano del Año: {lider} lidera",
@@ -300,7 +310,7 @@ def _carrera(estado: dict, memoria: str, solo_sudamerica: bool, num: int, den: i
         titular = N.titular(f"Carrera al Balón de Oro: {lider} lidera",
                             f"Balón de Oro: {lider} lidera la carrera", f"Balón de Oro: lidera {lider}")
         intro = "A mitad de temporada los candidatos al Balón de Oro son:\n"
-    N.publicar(estado, 'premio', titular, intro + "\n".join(lineas), importancia=4,
+    N.publicar(estado, 'premio', titular, intro + "\n" + "\n\n".join(lineas), importancia=4,
                equipos=[x[1] for x in top], jugadores=[x[2] for x in top])
     return 1
 
@@ -655,10 +665,26 @@ def generar_jornada(estado: dict, rng=None) -> int:
 
 # --- cierre de la temporada del user ------------------------------------------------------------------------------
 
+def _copas_de_este_cierre(estado: dict, campeones_copas) -> set:
+    """v0.4.27.0: las copas que terminan CON este cierre de temporada. Con los continentes desfasados es solo la de
+    tu continente: la otra se cerró en su momento y su campeón ya se anunció cuando ganó la final (nombrarlo ahora, con
+    su "último campeón conocido", es una noticia fuera de tiempo). Sin desfase se cierran las dos a la vez."""
+    tipos = set(campeones_copas or {})
+    try:
+        from alpha_football import temporadas as TS, calendario as CAL
+        if TS.activo(estado):
+            return tipos & {TS.copa_de(CAL.continente(estado))}
+    except Exception as e:
+        logger.error(f"noticias_gen: no se pudo ver qué copa cierra con tu temporada: {e}", exc_info=True)
+    return tipos
+
+
 def _cierre_campeones(estado: dict, liga, campeon_liga, campeones_copas, kw: dict) -> int:
-    """Campeones de tu temporada. Lo que ya se anunció en su momento (título asegurado, final de copa) no se repite."""
+    """Campeones de tu temporada. Lo que ya se anunció en su momento (título asegurado, final de copa) no se repite, y
+    la copa del otro continente no se nombra en tu cierre (v0.4.27.0)."""
     from alpha_football import competiciones as CP
     n = 0
+    propias = _copas_de_este_cierre(estado, campeones_copas)
     nombre_t = N.nombre_temporada(estado, kw['temporada'])
     if campeon_liga:
         nombre = getattr(campeon_liga, 'nombre', campeon_liga)
@@ -670,7 +696,7 @@ def _cierre_campeones(estado: dict, liga, campeon_liga, campeones_copas, kw: dic
             _anotar(estado, ganado)
             n += 1
     for tipo, club in (campeones_copas or {}).items():
-        if not club:
+        if not club or tipo not in propias:
             continue
         nombre = getattr(club, 'nombre', club)
         copa = CP.NOMBRE_COPA.get(tipo, tipo)
@@ -774,8 +800,9 @@ def _cierre_equipo_del_anio(estado: dict, liga, kw: dict) -> int:
     for pos, n, titulo in SECCIONES_ONCE:
         elegidos = sorted(por_pos[pos], key=lambda x: (x[0], x[1]), reverse=True)[:n]
         once += elegidos
-        renglones = [f"{_nombre(x[3])} · {x[2].nombre} · {x[0]:.1f}" for x in elegidos]
-        bloques.append(titulo + "\n" + "\n".join(renglones))
+        # v0.4.27.0: nombre en negrita y una línea en blanco entre cada jugador
+        renglones = [f"{N.negrita(_nombre(x[3]))} · {x[2].nombre} · {x[0]:.1f}" for x in elegidos]
+        bloques.append(titulo + "\n" + "\n\n".join(renglones))
     nombre_t = N.nombre_temporada(estado, kw['temporada'])
     titular = N.titular(f"Equipo del año {nombre_t} de {liga.nombre}", f"Equipo del año de {liga.nombre}")
     N.publicar(estado, 'premio', titular, "\n\n".join(bloques), importancia=4,

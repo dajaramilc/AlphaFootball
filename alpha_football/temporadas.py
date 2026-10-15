@@ -159,7 +159,8 @@ def ascensos_descensos(estado: dict, paises: Optional[Iterable[str]] = None,
                     res['premio_ascenso_user'] = premio
                     try:   # el premio de ascenso también va al libro de finanzas de la temporada
                         from alpha_football.finanzas import registrar
-                        registrar(estado, 'premios', int(premio or 0), temporada_libro)
+                        registrar(estado, 'premios', int(premio or 0), temporada_libro,
+                                  concepto="Premio de ascenso")       # v0.4.27.0
                     except Exception as e_lib_asc:
                         logger.error(f"No se pudo registrar el premio de ascenso: {e_lib_asc}")
             except Exception as e_asc:
@@ -251,7 +252,11 @@ def _avanzar_copa_de(estado: dict, cont: str) -> None:
     from alpha_football import competiciones as CP
     tipo = copa_de(cont)
     CP._asegurar(estado)
-    CP._avanzar_copa(estado, CP.copa(estado, tipo), random.Random(), CP._jornada_copa(estado, tipo), jugar_user=False)
+    c = CP.copa(estado, tipo)
+    CP._avanzar_copa(estado, c, random.Random(), CP._jornada_copa(estado, tipo), jugar_user=False)
+    # v0.4.27.0: el campeón se anuncia en cuanto se juega la final (aunque la simule el reloj). `_avanzar_copa` ya lo
+    # hace; esta es la red de seguridad (idempotente) para una copa que ya tenía campeón sin anunciar.
+    CP._anunciar_campeon(estado, c)
 
 
 def poner_al_dia(estado: dict, fecha: date, cont: Optional[str] = None) -> int:
@@ -335,14 +340,13 @@ def _congelar_premios(estado: dict, cont: str, campeon_copa: Optional[str]) -> N
 
 
 def _noticias_cierre(estado: dict, cont: str, res: dict, anio_cerrado: Optional[int] = None) -> None:
-    """v0.4.23.0 (antes, un correo de Prensa): noticia del campeón de su copa y otra con los campeones de liga de la
-    temporada del otro continente. v0.4.25.0: la copa ya se anunció al jugarse la final (aquí solo si faltó) y la
-    segunda lleva SOLO los campeones de liga; los clubes que descienden van en su propia noticia (los mejores)."""
-    from alpha_football import noticias, noticias_gen, competiciones as CP
+    """v0.4.23.0 (antes, un correo de Prensa): noticia con los campeones de liga de la temporada del otro continente.
+    v0.4.25.0: lleva SOLO los campeones de liga; los clubes que descienden van en su propia noticia (los mejores).
+    v0.4.27.0: la copa no se nombra aquí: su campeón se anuncia solo cuando se gana la final (competiciones /
+    `_copa` de `cerrar_continente`), nunca meses después en un cierre."""
+    from alpha_football import noticias, noticias_gen
     from alpha_football.paises import pais_de
     nombre_t = noticias.nombre_anio(cont, anio_cerrado) if anio_cerrado is not None else str(anio(estado, cont))
-    if res.get('copa'):
-        noticias_gen.anunciar_copa(estado, CP.copa(estado, copa_de(cont)))
     lineas = []
     for tipo in paises_de(cont):
         campeon = (res.get('campeones') or {}).get(tipo)
@@ -383,6 +387,9 @@ def cerrar_continente(estado: dict, cont: str) -> dict:
         CP.simular_todo(estado, tipos=(tipo_copa,))
         res['copa'] = CP.campeon(estado, tipo_copa)
         m.setdefault('campeones', {})[tipo_copa] = res['copa']
+        # v0.4.27.0: si por lo que sea no salió al jugarse la final, el campeón se anuncia ahora, ANTES de sortear la
+        # copa nueva (después `CP.copa` ya es la de la temporada siguiente y no tiene campeón)
+        CP._anunciar_campeon(estado, CP.copa(estado, tipo_copa))
 
     def _campeones() -> None:
         for liga, tipo, division in ligas(estado, paises):

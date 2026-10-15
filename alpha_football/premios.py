@@ -229,7 +229,8 @@ def _entregar(estado: dict, p: dict, gala: bool = True, frenar: bool = True) -> 
                           f"{g.get('nombre', '?')} ({g.get('equipo', '?')}, {g.get('liga', '?')}) {cfg['frase']} de la "
                           f"temporada {nombre_t}: {g.get('goles', 0)} goles, {g.get('asistencias', 0)} "
                           f"asistencias y nota {float(g.get('nota', 0) or 0):.2f}.{otros}",
-                          importancia=5, accion=C.accion('career_screen', "VER PALMARÉS"))
+                          importancia=5, accion=C.accion('career_screen', "VER PALMARÉS"),
+                          jugadores=[g])           # v0.4.27.0: Enter abre la ficha del ganador (por su nombre)
     except Exception as e:
         logger.error(f"No se pudo anunciar el {cfg['nombre']}: {e}")
     club = estado.get('mi_equipo')

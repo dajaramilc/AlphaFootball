@@ -241,7 +241,8 @@ def evaluar_temporada(estado: dict, posicion: int) -> dict:
         mi.balance = int(mi.balance) - deuda
         try:
             from alpha_football.finanzas import registrar
-            registrar(estado, 'directiva', -deuda, int(obj.get('temporada') or estado.get('temporada', 1) or 1))
+            registrar(estado, 'directiva', -deuda, int(obj.get('temporada') or estado.get('temporada', 1) or 1),
+                      concepto="Devolución del espaldarazo financiero")      # v0.4.27.0
         except Exception as e:
             logger.error(f"No se pudo registrar la deuda del espaldarazo: {e}")
     completar_financieros(estado, obj)
@@ -701,23 +702,36 @@ def _base_secundario(estado: dict, mi) -> dict:
 
 
 def definir_objetivo_marca(estado: dict, rng: Optional[random.Random] = None) -> Optional[dict]:
-    """Una meta de marca por temporada: valor del club +10% o fichar una estrella (media +5)."""
+    """Una meta de marca por temporada: valor del club +10%, fichar una estrella (media +5) o, v0.4.27.0, cobrar
+    en camisetas un 10% más de lo que dejaría la popularidad de hoy (finanzas.meta_camisetas)."""
     oc = _vigente(estado, 'objetivo_marca')
     if oc is not None:
         return oc
     mi = estado.get('mi_equipo')
     if mi is None:
         return None
-    from alpha_football.finanzas import valor_club
+    from alpha_football.finanzas import valor_club, meta_camisetas
     oc = _base_secundario(estado, mi)
     from alpha_football import sancion_liga as SL       # v0.4.17.0: sancionado por la liga no puede fichar una estrella
     sancionado = SL.activa(estado) is not None
     azar = (rng or random.Random()).random()
-    if valor_club(mi, estado) > 0 and (sancionado or azar < 0.5):   # en rojo: la meta de valor no tiene sentido
+    meta_cam = meta_camisetas(estado)
+    posibles = []
+    if valor_club(mi, estado) > 0:                      # en rojo: la meta de valor no tiene sentido
+        posibles.append('valor')
+    if not sancionado:
+        posibles.append('estrella')
+    if meta_cam > 0:                                    # v0.4.27.0: la venta de camisetas, otra meta de marca
+        posibles.append('camisetas')
+    if not posibles:
+        return None                                     # sin meta de marca esta temporada
+    tipo = posibles[min(int(azar * len(posibles)), len(posibles) - 1)]
+    if tipo == 'valor':
         meta = int(valor_club(mi, estado) * 1.10)       # v0.4.26.0: el valor incluye las camisetas
         oc.update(tipo='valor', meta=meta, texto=f"Llegar a ${meta / 1_000_000:.1f}M de valor del club")
-    elif sancionado:
-        return None                                     # sin meta de marca esta temporada
+    elif tipo == 'camisetas':
+        oc.update(tipo='camisetas', meta=meta_cam,
+                  texto=f"Cobrar ${meta_cam / 1_000_000:.1f}M en camisetas esta temporada")
     else:
         meta = round(float(getattr(mi, 'ovr_promedio', 0) or 0)) + 5
         oc.update(tipo='estrella', meta=meta, texto=f"Fichar un jugador de media {meta} o más")
@@ -766,6 +780,9 @@ def progreso_secundario(estado: dict, oc: dict) -> float:
     if t == 'valor':     # el aporte del espaldarazo es deuda: no sube el valor
         from alpha_football.finanzas import valor_club
         f = (valor_club(mi, estado) - deuda_espaldarazo(estado)) / meta if meta > 0 else 0.0
+    elif t == 'camisetas':    # v0.4.27.0: lo cobrado en camisetas esa temporada (libro_de: sin reiniciar nada)
+        from alpha_football.finanzas import cobrado_camisetas
+        f = cobrado_camisetas(estado, oc.get('temporada')) / meta if meta > 0 else 0.0
     elif t == 'estrella':
         f = 1.0 if any(int(j.overall) >= int(meta) for j in _nuevos(estado, oc)) else 0.0
     elif t == 'fichar_joven':
@@ -938,7 +955,7 @@ def pedir_espaldarazo(estado: dict, nivel: int) -> tuple:
     obj['texto'] = _texto_meta(obj['pos_max']) + " (espaldarazo)"
     try:
         from alpha_football.finanzas import registrar
-        registrar(estado, 'directiva', op['monto'])
+        registrar(estado, 'directiva', op['monto'], concepto="Espaldarazo financiero de la directiva")   # v0.4.27.0
     except Exception as e:
         logger.error(f"Error al registrar el espaldarazo: {e}")
     from alpha_football import correo as C

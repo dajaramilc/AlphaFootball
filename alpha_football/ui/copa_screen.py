@@ -235,7 +235,8 @@ def cobrar_premios_copa(estado: dict) -> int:
             mi.balance = int(getattr(mi, 'balance', 0) or 0) + cobrado
             try:
                 from alpha_football.finanzas import registrar
-                registrar(estado, 'premios', cobrado)
+                registrar(estado, 'premios', cobrado,       # v0.4.27.0: concepto del historial de transacciones
+                          concepto=f"Premio de {CP.NOMBRE_COPA[t]}: {alcanzada}")
             except Exception as e_fin:
                 logger.error(f"No se pudo registrar el premio de copa en finanzas: {e_fin}")
             logger.info(f"Premio de {CP.NOMBRE_COPA[t]} ({alcanzada}): ${cobrado:,}")

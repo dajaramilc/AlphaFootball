@@ -44,15 +44,15 @@ ATAJOS = {
     'buscador_screen': "↑ ↓ Jugador · Tab Campo · Enter Buscar · Filtros · Solo libres · H Ayuda · ESC Volver",
     'favoritos_screen': "↑ ↓ Jugador · Enter Negociar · Supr Quitar · Clic en la caja Buscar · H Ayuda · ESC Volver",
     'historial_pases_screen': "← → Pestaña · ↑ ↓ RePág AvPág Desplazar · H Ayuda · ESC Volver",
-    'ojeador_screen': "← → Fichaje · Enter Fichar · M Notificaciones · H Ayuda · ESC Volver",
+    'ojeador_screen': "← → Fichaje · Enter Fichar · F Favorito · M Notificaciones · H Ayuda · ESC Volver",
     'objetivos_screen': "I Reglas · H Ayuda · ESC Volver",
-    'correo_screen': "↑ ↓ Mensaje · Enter Ir · O Opciones · H Ayuda · ESC Volver",
+    'correo_screen': "↑ ↓ Mensaje · RePág AvPág Texto · Enter Ir · O Opciones · H Ayuda · ESC Volver",   # v0.4.27.0
     'notificaciones_screen': "← → Panel · ↑ ↓ Elegir · Enter Abrir · O Opciones · H Ayuda · ESC Volver",   # v0.4.10.0
-    'noticias_screen': "↑ ↓ Noticia · RePág AvPág Saltar · Enter Ir al botón · O Opciones · H Ayuda · ESC Volver",   # v0.4.23.0
+    'noticias_screen': "↑ ↓ Noticia · RePág AvPág Saltar · Enter Ver ficha / Ir al botón · F Favorito (en la ficha) · O Opciones · H Ayuda · ESC Volver",   # v0.4.27.0
     'despido_screen': "← → Club · Enter Aceptar · H Ayuda",
-    'finanzas_screen': "1 2 3 Espaldarazo · H Ayuda · ESC Volver",
+    'finanzas_screen': "1 2 3 Espaldarazo · T Historial de transacciones · H Ayuda · ESC Volver",   # v0.4.27.0
     'patrocinios_screen': "← → Espacio · ↑ ↓ Oferta · F Firmar · P Prima · 1 2 Negociar · R Rechazar · X Rescindir · H Ayuda · ESC Volver",
-    'negociacion_screen': "← → Tab Botón · Enter Pulsar · 0-9 Monto · H Ayuda · ESC Cancelar",
+    'negociacion_screen': "← → Tab Botón · Enter Pulsar · 0-9 Monto · F Favorito · H Ayuda · ESC Cancelar",
     'contrato_dt_screen': "← → Oferta · Enter Aceptar · R Rechazar renovación · H Ayuda · ESC Volver",
     'veredicto_screen': "Enter Continuar · H Ayuda",
     'gala_balon_screen': "Enter Continuar · H Ayuda",   # v0.4.17.0

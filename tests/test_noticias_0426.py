@@ -100,7 +100,8 @@ def test_carreras_balon_y_sudamericano_separadas(monkeypatch):
     assert G._candidatos_balon(e, None) == 1
     premios = [x for x in N.lista(e) if x['tipo'] == 'premio']
     assert len(premios) == 1 and "Balón de Oro" in premios[0]['titular'] and "Sudamericano" not in premios[0]['titular']
-    assert f"1. {estrella.nombre_completo}" in premios[0]['cuerpo'] and "media 95" in premios[0]['cuerpo']
+    # v0.4.27.0: el nombre va en negrita ('**...**') y una línea en blanco separa a cada candidato
+    assert f"1. **{estrella.nombre_completo}**" in premios[0]['cuerpo'] and "media 95" in premios[0]['cuerpo']
     assert G._candidatos_balon(e, None) == 0                         # una vez por temporada
 
     jornada['v'] = n * 3 // 4                                        # otra fecha: el Sudamericano
@@ -109,7 +110,7 @@ def test_carreras_balon_y_sudamericano_separadas(monkeypatch):
     premios = [x for x in N.lista(e) if x['tipo'] == 'premio']
     sud = next(x for x in premios if "Sudamericano" in x['titular'])
     assert len(premios) == 2 and "Balón de Oro" not in sud['titular']
-    assert f"1. {brasileno.nombre_completo}" in sud['cuerpo']
+    assert f"1. **{brasileno.nombre_completo}**" in sud['cuerpo']
     assert sud['equipos_ids'] and set(sud['equipos_ids']) <= ids_sa   # solo clubes sudamericanos
     assert G._candidatos_sudamericano(e, None) == 0
 

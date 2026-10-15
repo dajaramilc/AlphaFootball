@@ -159,14 +159,22 @@ def test_banco_completo():
     antiguos = {'copa_final', 'copa_semi', 'clasico', 'titulo', 'descenso', 'lider'}
     nuevos = {'copa_ronda', 'racha_buena', 'racha_mala', 'lesionados', 'favorito', 'david', 'rival_directo', 'debut',
               'cierre', 'figura', 'goleada_favor', 'goleada_contra'}
-    assert set(P.BANCO) == antiguos | nuevos
+    # v0.4.27.0: motivos según la situación real de la copa y de la liga (prensa_banco_contexto)
+    contexto_ = {'grupos', 'grupos_lider', 'grupos_clasificado', 'grupos_peligro', 'grupos_milagro',
+                 'grupos_eliminado', 'copa_ida', 'vuelta_ventaja', 'vuelta_remontada', 'vuelta_igualada',
+                 'copa_penales', 'vuelta_remontada_ok', 'vuelta_ventaja_perdida', 'titulo_cerca', 'campeon_ya',
+                 'descendido', 'ultima_jornada', 'salvado'}
+    assert set(P.BANCO) == antiguos | nuevos | contexto_
     assert set(P.MOTIVO_TEXTO) >= set(P.BANCO)
+    # los que no tienen alguno de los grupos: sin post (previa sola), sin pre (postpartido solo) o con post por llave
+    sin_algun_grupo = {'lesionados', 'goleada_favor', 'goleada_contra', 'copa_penales', 'vuelta_ventaja',
+                       'vuelta_remontada', 'vuelta_igualada', 'vuelta_remontada_ok', 'vuelta_ventaja_perdida', 'salvado'}
     for motivo, fases in P.BANCO.items():
         grupos = [('pre', fases.get('pre') or [])] + [(f'post/{r}', (fases.get('post') or {}).get(r) or [])
                                                        for r in ('gana', 'empata', 'pierde')]
         for nombre, preguntas in grupos:
-            if not preguntas:                                            # solo lesionados (sin post) y goleadas (sin pre)
-                assert motivo in ('lesionados', 'goleada_favor', 'goleada_contra'), (motivo, nombre)
+            if not preguntas:
+                assert motivo in sin_algun_grupo, (motivo, nombre)
                 continue
             minimo = 3 if motivo in antiguos else 1                       # los de siempre: 2 + las nuevas
             assert len(preguntas) >= minimo, (motivo, nombre)
@@ -183,7 +191,8 @@ def test_todas_las_marcas_se_rellenan():
     for motivo, fases in P.BANCO.items():
         grupos = list(fases.get('pre') or []) + [q for v in (fases.get('post') or {}).values() for q in v]
         for q in grupos:
-            for ctx in (None, {}, {'jugador': "Pérez", 'fase': "Octavos", 'puesto': 3, 'racha': 4, 'lesionados': 5}):
+            for ctx in (None, {}, {'jugador': "Pérez", 'fase': "Octavos", 'puesto': 3, 'racha': 4, 'lesionados': 5,
+                                   'ida': "2-0"}):
                 marcas = P._marcas(ctx, "Club A", "Club B")
                 for texto in [q['texto']] + list(q['respuestas'].values()):
                     for k, v in marcas.items():
@@ -430,7 +439,7 @@ def test_motivos_debut_y_cierre_y_prioridades():
     e['mi_equipo'].rival = ''
     p, local, visit = _situar(e, liga.num_jornadas)                      # última jornada
     _tabla(e, 6, 7)
-    assert P.motivo_partido(e, local, visit, 'liga') == 'cierre'
+    assert P.motivo_partido(e, local, visit, 'liga') == 'ultima_jornada'   # v0.4.27.0: el último partido tiene el suyo
     p, local, visit = _situar(e, liga.num_jornadas - 1)                  # penúltima
     assert P.motivo_partido(e, local, visit, 'liga') == 'cierre'
     _tabla(e, 1, n)
@@ -462,21 +471,228 @@ def test_motivos_de_racha_y_enfermeria():
     assert P.contexto(e, local, visit, 'liga')['jugador'] == e['mi_equipo'].jugadores[5].apellido
 
 
-def test_copa_que_no_es_semi_ni_final_es_copa_ronda():
+def test_copa_que_no_es_semi_ni_final_se_pregunta_por_su_ronda():
+    """v0.4.27.0: sin datos del motor, la ida de una ronda es 'copa_ida' y la vuelta cae en 'copa_ronda'; la primera
+    fase ya no se pregunta como una eliminación directa."""
     e = _estado()
     p, local, visit = _situar(e, 8)
-    for fase in ("Octavos", "Cuartos", "Playoff", "Fase de liga"):
+    for fase in ("Octavos", "Cuartos", "Playoff"):
         e['partido_copa_dict'] = {'id': 'champions-1-1', 'fase': fase}
-        assert P.motivo_partido(e, local, visit, 'copa') == 'copa_ronda', fase
+        assert P.motivo_partido(e, local, visit, 'copa') == 'copa_ida', fase
+        e['partido_copa_dict'] = {'id': 'champions-1-2', 'fase': fase, 'ida_de': 'champions-1-1'}
+        assert P.motivo_partido(e, local, visit, 'copa') == 'copa_ronda', fase      # vuelta sin la ida a la vista
+    e['partido_copa_dict'] = {'id': 'champions-0-1', 'fase': "Fase de liga"}
+    assert P.motivo_partido(e, local, visit, 'copa') == 'grupos'
     e['partido_copa_dict'] = {'id': 'champions-3-1', 'fase': 'Semifinal'}
-    assert P.motivo_partido(e, local, visit, 'copa') == 'copa_semi'
+    assert P.motivo_partido(e, local, visit, 'copa') == 'copa_semi'           # pre de la ida de una semifinal
     e['partido_copa_dict'] = {'id': 'champions-1-1', 'fase': 'Cuartos'}
     conf = P.evaluar_pre(e, local, visit, 'copa')
-    assert conf and conf['motivo'] == 'copa_ronda' and '{' not in conf['pregunta']['texto']
+    assert conf and conf['motivo'] == 'copa_ida' and '{' not in conf['pregunta']['texto']
     assert P.contexto(e, local, visit, 'copa')['fase'] == 'Cuartos'
     q = P._pregunta('copa_ronda', 'pre', None, 'k', "Mi Club", "Rival FC", P.contexto(e, local, visit, 'copa'))
-    assert '{' not in q['texto']
+    assert '{' not in q['texto'] and 'partido único' not in q['texto'] + " ".join(q['respuestas'].values())
     assert P._marcas({'fase': 'Cuartos'}, "A", "B")['fase'] == 'Cuartos'
+
+
+# ------------------------------------------------------------------ v0.4.27.0: la situación real de la copa y de la liga
+def _fila(n, pts):
+    return {'nombre': n, 'pts': pts, 'pj': 0}
+
+
+def _tabla_grupo(**pts):
+    return sorted((_fila(n, p) for n, p in pts.items()), key=lambda f: -f['pts'])
+
+
+def test_estado_en_la_primera_fase_de_la_copa():
+    """Grupo de 4 de la Libertadores (pasan 2): eliminado, clasificado, milagro, peligro, líder y normal."""
+    restan = {'Yo': 1, 'A': 1, 'B': 1, 'C': 1}
+    est = lambda **pts: P._estado_grupos(_tabla_grupo(**pts), restan, 2, 'Yo', 'A')['estado']
+    assert est(Yo=0, A=9, B=9, C=3) == 'eliminado'                       # dos clubes ya le sacan más de lo que alcanza
+    assert est(Yo=9, A=3, B=3, C=0) == 'clasificado'                     # nadie más puede pasarlo salvo uno
+    assert est(Yo=4, A=7, B=6, C=0) == 'milagro'                         # a 2 del segundo con un partido: solo ganando y rezando
+    assert P._estado_grupos(_tabla_grupo(Yo=3, A=9, B=7, C=0), {'Yo': 2, 'A': 1, 'B': 1, 'C': 2}, 2, 'Yo',
+                            'A')['estado'] == 'peligro'                  # perder lo deja sin cuentas
+    assert P._estado_grupos(_tabla_grupo(Yo=3, A=1, B=1, C=0), {n: 4 for n in restan}, 2, 'Yo')['estado'] == 'lider'
+    assert P._estado_grupos(_tabla_grupo(Yo=0, A=0, B=0, C=0), {n: 6 for n in restan}, 2, 'Yo')['estado'] == 'normal'
+    # la fase de liga de la Champions: 36 clubes, pasan 24; al arrancar nadie está "en peligro" por el orden alfabético
+    todos = {f"C{i:02d}": 0 for i in range(36)}
+    todos['Z Yo'] = 0
+    assert P._estado_grupos(_tabla_grupo(**todos), {n: 8 for n in todos}, 24, 'Z Yo')['estado'] == 'normal'
+
+
+def _estado_llave(ida, vuelta=None, penales=None, ganador=None, fase='Cuartos'):
+    """Estado con una llave Yo (local en la vuelta) vs Rival: `ida` = (goles del local de la ida, del visitante)."""
+    from types import SimpleNamespace
+    pid = {'id': 'champions-1-0', 'fecha': 1, 'fase': fase, 'local': 'Rival', 'visitante': 'Yo', 'gl': ida[0],
+           'gv': ida[1], 'jugado': True, 'llave': 0}
+    pvu = {'id': 'champions-2-0', 'fecha': 2, 'fase': fase, 'local': 'Yo', 'visitante': 'Rival', 'gl': 0, 'gv': 0,
+           'jugado': False, 'llave': 0, 'ida_de': 'champions-1-0'}
+    if vuelta is not None:
+        pvu.update(gl=vuelta[0], gv=vuelta[1], jugado=True)
+        if penales:
+            pvu['penales'] = {'a': penales[0], 'b': penales[1]}
+    c = {'tipo': 'champions', 'partidos': [pid, pvu], 'clubes': [], 'campeon': None,
+         'llaves': [{'fase': fase, 'a': 'Yo', 'b': 'Rival', 'ida': pid['id'], 'vuelta': pvu['id'], 'ganador': ganador}]}
+    yo, rival = SimpleNamespace(id=1, nombre='Yo'), SimpleNamespace(id=2, nombre='Rival')
+    return ({'mi_equipo': yo, 'datos_carrera': {'copas': {'champions': c}},
+             'partido_copa_dict': dict(pvu, tipo='champions')}, yo, rival)
+
+
+def test_la_vuelta_pregunta_segun_la_ida():
+    e, yo, rival = _estado_llave((0, 2))                                   # ganaste la ida 2-0 de visitante
+    assert P._motivo_copa(e, yo, rival, 'pre')[0] == 'vuelta_ventaja'
+    assert P.contexto(e, yo, rival, 'copa')['ida'] == '2-0'
+    e, yo, rival = _estado_llave((2, 0))                                   # la perdiste
+    assert P._motivo_copa(e, yo, rival, 'pre')[0] == 'vuelta_remontada'
+    e, yo, rival = _estado_llave((1, 1))
+    assert P._motivo_copa(e, yo, rival, 'pre')[0] == 'vuelta_igualada'
+    # las preguntas con {ida} se rellenan con el marcador de la ida (y suenan bien si falta el dato)
+    assert P._marcas({'ida': "2-0"}, "Yo", "Rival")['ida'] == "2-0" and P._marcas({}, "Yo", "Rival")['ida'] == "la ida"
+    q = P._pregunta('vuelta_ventaja', 'pre', None, 'k', "Yo", "Rival", {'ida': "2-0"})
+    assert '{' not in q['texto'] + " ".join(q['respuestas'].values())
+    q = P._pregunta('vuelta_remontada', 'pre', None, 'k', "Yo", "Rival", P.contexto(e, yo, rival, 'copa'))
+    assert '{' not in q['texto'] + " ".join(q['respuestas'].values())
+
+
+def test_el_postpartido_de_la_vuelta_depende_de_quien_avanza():
+    e, yo, rival = _estado_llave((2, 0), (3, 0), ganador='Yo')            # perdiste la ida 0-2 y ganas 3-0
+    motivo, sit = P._motivo_copa(e, yo, rival, 'post')
+    assert motivo == 'vuelta_remontada_ok' and sit['avanza'] is True and sit['global'] == (3, 2)
+    assert P._clave_post(motivo, 'gana', {'copa': sit}) == 'gana'
+    assert P._nota_cierre(sit, motivo) == "y clasificar por el global (3-2)"
+    e, yo, rival = _estado_llave((0, 2), (0, 3), ganador='Rival')         # ganaste la ida 2-0 y pierdes 0-3
+    motivo, sit = P._motivo_copa(e, yo, rival, 'post')
+    assert motivo == 'vuelta_ventaja_perdida' and sit['avanza'] is False
+    assert P._clave_post(motivo, 'pierde', {'copa': sit}) == 'pierde'
+    e, yo, rival = _estado_llave((0, 2), (0, 1), ganador='Yo')            # pierdes la vuelta 0-1 pero pasas (global 2-1)
+    motivo, sit = P._motivo_copa(e, yo, rival, 'post')
+    assert motivo == 'copa_ronda' and P._clave_post(motivo, 'pierde', {'copa': sit}) == 'gana'   # ¡no "quedan fuera"!
+    e, yo, rival = _estado_llave((0, 1), (0, 1), penales=(4, 3), ganador='Yo')   # global 1-1 y penales 4-3
+    motivo, sit = P._motivo_copa(e, yo, rival, 'post')
+    assert motivo == 'copa_penales' and sit['penales'] == (4, 3)
+    assert P._nota_cierre(sit, motivo) == "y clasificar en los penales (4-3)"
+    e, yo, rival = _estado_llave((0, 1), (0, 1), penales=(2, 3), ganador='Rival')   # y los pierdes 2-3
+    motivo, sit = P._motivo_copa(e, yo, rival, 'post')
+    assert motivo == 'copa_penales' and P._clave_post(motivo, 'empata', {'copa': sit}) == 'pierde'
+    assert P._nota_cierre(sit, motivo) == "y quedar eliminado en los penales (2-3)"
+
+
+def test_la_ida_no_dice_pasan_de_ronda_ni_quedan_fuera():
+    for resultado in ('gana', 'empata', 'pierde'):
+        textos = " ".join(q['texto'] for q in P.BANCO['copa_ida']['post'][resultado])
+        assert 'Pasan de ronda' not in textos and 'Quedan fuera' not in textos
+    e = _estado()
+    p, local, visit = _situar(e, 8)
+    e['partido_copa_dict'] = {'id': 'champions-2-0', 'fase': 'Semifinal'}
+    assert P.motivo_partido(e, local, visit, 'copa', fase='post') == 'copa_ida'    # ida de semifinal, postpartido
+
+
+def test_la_goleada_no_pisa_a_la_eliminatoria_decidida():
+    e, yo, rival = _estado_llave((4, 0), (3, 0), ganador='Rival')         # perdiste la ida 0-4 y ganas 3-0: fuera
+    conf = P.evaluar_post(e, yo, rival, 3, 0, 'copa')
+    assert conf and conf['motivo'] == 'copa_ronda' and conf['resultado'] == 'gana'   # ganó el partido, no la llave
+    assert conf['nota'] == "y quedar eliminado por el global (3-4)"
+    marcas = P._marcas(P.contexto(e, yo, rival, 'copa'), conf['club'], conf['rival'])
+
+    def llenar(texto):
+        for k, v in marcas.items():
+            texto = texto.replace('{' + k + '}', v)
+        return texto
+    de_perder = {llenar(q['texto']) for q in P.BANCO['copa_ronda']['post']['pierde']}
+    assert conf['pregunta']['texto'] in de_perder                         # la de quedar fuera, no la de "pasan de ronda"
+
+
+def test_final_decidida_por_penales_nunca_pregunta_por_un_empate():
+    e, yo, rival = _estado_llave((0, 0), None, fase='Final')
+    final = {'id': 'champions-16-0', 'fecha': 16, 'fase': 'Final', 'local': 'Yo', 'visitante': 'Rival', 'gl': 1,
+             'gv': 1, 'jugado': True, 'llave': 0, 'penales': {'a': 5, 'b': 4}}
+    c = e['datos_carrera']['copas']['champions']
+    c['partidos'] = [final]
+    c['llaves'] = [{'fase': 'Final', 'a': 'Yo', 'b': 'Rival', 'ida': final['id'], 'vuelta': None, 'ganador': 'Yo'}]
+    e['partido_copa_dict'] = dict(final, tipo='champions', gl=0, gv=0, jugado=False)
+    motivo, sit = P._motivo_copa(e, yo, rival, 'post')
+    assert motivo == 'copa_final' and sit['avanza'] is True and sit['penales'] == (5, 4)
+    assert P._clave_post(motivo, 'empata', {'copa': sit}) == 'gana'       # campeón: el banco de "¡Campeones!"
+    assert P._nota_cierre(sit, motivo) == "y ganar la copa en los penales (5-4)"
+
+
+def test_liga_titulo_asegurable_campeon_y_descenso_matematicos():
+    from types import SimpleNamespace as NS
+
+    def eq(i, pts):
+        return NS(id=i, nombre=f"E{i}", puntos=pts, gf=10, gc=5)
+
+    def estado(yo, otros, division=1, calendario=None):
+        mi = eq(0, yo)
+        return {'liga': NS(equipos=[mi] + [eq(i + 1, p) for i, p in enumerate(otros)], calendario=calendario or [],
+                           division=division), 'mi_equipo': mi}
+    ctx = lambda quedan, puesto=1: {'quedan': quedan, 'jornada': 30, 'puesto': puesto}
+    assert P.situacion_liga(estado(70, [50, 40, 30]), ctx(3), 'pre')['campeon_ya'] is True    # 20 > 3 partidos
+    s = P.situacion_liga(estado(60, [55, 40, 30]), ctx(2), 'pre')
+    assert s['cerca'] is True and s['campeon_ya'] is False                                    # ganando hoy ya no lo alcanzan
+    assert P.situacion_liga(estado(60, [58, 40, 30]), ctx(2), 'pre')['cerca'] is False
+    assert P.situacion_liga(estado(10, [20, 25, 11]), ctx(1, 4), 'pre')['descendido'] is True  # dos clubes ya inalcanzables
+    assert P.situacion_liga(estado(10, [20, 25, 11], division=2), ctx(1, 4), 'pre')['descendido'] is False
+    # en el postpartido la tabla ya incluye el resultado: la de antes se reconstruye con el calendario
+    cal = [NS(jornada=30, jugado=True, local_id=0, visitante_id=1, goles_local=1, goles_visitante=0)]
+    e = estado(63, [55, 40, 30], calendario=cal)
+    assert P._puntos_antes_de(e['liga'], 30)[0] == 60
+    s = P.situacion_liga(e, ctx(2), 'post')                                                   # ganó y ya nadie lo alcanza
+    assert s['campeon_ahora'] is True and s['campeon_ya'] is False and s['cerca'] is True
+    assert P._clave_post('titulo_cerca', 'empata', {'liga': s}) == 'campeon_sin_ganar'
+
+
+def test_ultima_jornada_decide_el_postpartido_por_como_termino():
+    e = _estado(); liga = e['liga']; n = len(liga.equipos)
+    p, local, visit = _situar(e, liga.num_jornadas)
+    _tabla(e, 6, 7)
+    assert P.motivo_partido(e, local, visit, 'liga') == 'ultima_jornada'
+    es_local = local.id == e['mi_equipo'].id
+    conf = P.evaluar_post(e, local, visit, *((1, 0) if es_local else (0, 1)), 'liga', pos_antes=6)
+    assert conf and conf['motivo'] == 'ultima_jornada' and conf['resultado'] == 'gana'
+    P.saltar(e)
+
+
+def test_la_figura_que_no_jugo_no_sale_en_el_postpartido():
+    e = _estado()
+    p, local, visit = _situar(e, 8)
+    _tabla(e, 6, 7)
+    figura = e['mi_equipo'].jugadores[2]
+    figura.goles = 9
+    ctx = P.contexto(e, local, visit, 'liga', fase='post')
+    filas = [{'nombre': "Otro Jugador", 'g': 0, 'a': 0}]
+    e['postpartido'] = {'filas_l': filas, 'filas_v': []}
+    assert P._figura_encaja(e, ctx, 'gana') is False                     # no aparece en el partido: no jugó
+    nombre = getattr(figura, 'nombre_completo', None) or figura.apellido
+    e['postpartido'] = {'filas_l': [{'nombre': nombre, 'g': 2, 'a': 0}], 'filas_v': []}
+    assert P._figura_encaja(e, ctx, 'gana') is True and P._figura_encaja(e, ctx, 'pierde') is False
+    e['postpartido'] = {'filas_l': [{'nombre': nombre, 'g': 0, 'a': 0}], 'filas_v': []}
+    assert P._figura_encaja(e, ctx, 'gana') is False and P._figura_encaja(e, ctx, 'pierde') is True
+    e.pop('postpartido')
+    assert P._figura_encaja(e, ctx, 'gana') is True                      # sin datos del partido no se puede saber
+
+
+def test_figura_de_la_previa_es_alguien_disponible():
+    e = _estado()
+    p, local, visit = _situar(e, 8)
+    _tabla(e, 6, 7)
+    mi = e['mi_equipo']
+    mi.jugadores[5].goles = 12
+    mi.jugadores[5].lesion_dias = 10                                     # el goleador está lesionado
+    mi.jugadores[3].goles = 7
+    ctx = P.contexto(e, local, visit, 'liga')
+    assert ctx['jugador'] == mi.jugadores[3].apellido and ctx['goles_figura'] == 7
+    assert P.contexto(e, local, visit, 'liga', fase='post')['jugador'] == mi.jugadores[5].apellido
+
+
+def test_declaraciones_del_dt_rival_variadas_y_por_motivo():
+    assert len(set(P.DECLARACIONES_RIVAL)) >= 30
+    assert all('{club}' in d for d in P.DECLARACIONES_RIVAL)
+    vistas = {P._declaracion_rival(f"k{i}", 'copa_final') for i in range(80)}
+    assert len(vistas) >= 10                                             # muchas distintas, y de las de la final salen
+    assert any(v in P.DECLARACIONES_POR_MOTIVO['copa_final'] for v in vistas)
+    assert P._declaracion_rival("x", 'motivo_que_no_existe') in P.DECLARACIONES_RIVAL
+    assert P._declaracion_rival("x", 'clasico') == P._declaracion_rival("x", 'clasico')   # determinista
 
 
 def test_goleada_manda_sobre_los_motivos_menores_en_el_postpartido():

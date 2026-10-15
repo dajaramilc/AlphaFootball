@@ -30,7 +30,9 @@ def acreditar_venta(estado: dict, jugador, comprador, monto: int, asunto: Option
         mi.balance += neto
     try:
         from alpha_football.finanzas import registrar
-        registrar(estado, 'ventas', neto)
+        registrar(estado, 'ventas', neto,       # v0.4.27.0: concepto del historial de transacciones
+                  concepto=f"Venta de {getattr(jugador, 'nombre_completo', 'un jugador')} a "
+                           f"{getattr(comprador, 'nombre', 'otro club')}")
     except Exception as e:
         logger.error(f"acreditar_venta: no se pudo registrar el ingreso: {e}")
     try:

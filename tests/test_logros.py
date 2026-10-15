@@ -1,4 +1,4 @@
-"""0.4.23.0: logros del DT (cada uno publica una noticia) y su overlay en HISTORIAL DE CARRERA. 0.4.25.0: 29 hitos."""
+"""0.4.23.0: logros del DT (cada uno publica una noticia) y su overlay en HISTORIAL DE CARRERA. 0.4.25.0: 29 hitos. 0.4.27.0: 31."""
 import sys, os, copy, json
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ['SDL_VIDEODRIVER'] = 'dummy'
@@ -19,7 +19,8 @@ IDS = ('titulo_liga', 'final_continental', 'pj_50', 'pj_100', 'pj_200', 'racha_8
        'fichaje_84')
 IDS_NUEVOS = ('bicampeon', 'tricampeon', 'campeon_continental', 'balon_oro', 'pj_300', 'pj_500', 'victorias_50',
               'victorias_100', 'racha_5', 'racha_12', 'invicto_10', 'invicto_20', 'manita', 'muro_5', 'viajero_5',
-              'clasicos_5', 'goleador_30', 'millonario', 'temporadas_5', 'temporadas_10')
+              'clasicos_5', 'goleador_30', 'millonario', 'temporadas_5', 'temporadas_10',
+              'rey_continental', 'el_alpha')                                      # 0.4.27.0
 
 
 def _estado():
@@ -71,7 +72,7 @@ def test_estructura_y_json():
     assert set(est['contadores']) >= {'pj', 'racha', 'clasicos_seguidos'} and est['obtenidos'] == {}
     json.dumps(d)
     assert G.logros({})['obtenidos'] == {}                               # sin datos_carrera (guardado viejo)
-    assert len(G.LOGROS) == 29 and {x[0] for x in G.LOGROS} == set(IDS) | set(IDS_NUEVOS)
+    assert len(G.LOGROS) == 31 and {x[0] for x in G.LOGROS} == set(IDS) | set(IDS_NUEVOS)
     assert len({x[0] for x in G.LOGROS}) == len(G.LOGROS)                # sin ids repetidos
     assert all(titulo and desc for _id, titulo, desc in G.LOGROS)
 
@@ -279,10 +280,25 @@ def test_logros_del_historial_y_del_estado():
     assert 'goleador_30' not in G.revisar(e)
     mi.jugadores[0].goles = 30
     assert 'goleador_30' in G.revisar(e)
-    mi.balance = 999_999_999
+    mi.balance = 549_999_999                                             # 0.4.27.0: la caja fuerte baja a 550 M
     assert 'millonario' not in G.revisar(e)
-    mi.balance = 1_000_000_000
+    mi.balance = 550_000_000
     assert 'millonario' in G.revisar(e)
+
+
+def test_rey_continental_y_el_alpha():
+    """0.4.27.0: Rey Continental = ganar la Champions y la Libertadores (en temporadas distintas, la copa de cada
+    temporada se pisa con la siguiente); El Alpha = ganar la Intercontinental."""
+    e = _estado(); mi = e['mi_equipo']
+    dc = e.setdefault('datos_carrera', {})
+    dc['copas'] = {'champions': {'campeon': mi.nombre, 'clubes': []}}
+    assert 'rey_continental' not in G.revisar(e)
+    dc['copas'] = {'libertadores': {'campeon': mi.nombre, 'clubes': []}}
+    assert 'rey_continental' in G.revisar(e)
+    assert 'el_alpha' not in G.revisar(e)
+    dc['intercontinental'] = {'historial': [{'anio': 2027, 'campeon': mi.nombre, 'finalista': 'Otro',
+                                             'marcador': '1-0'}]}
+    assert 'el_alpha' in G.revisar(e)
 
 
 def test_balon_de_oro_de_tu_club_desbloquea_su_logro():

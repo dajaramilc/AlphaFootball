@@ -130,6 +130,8 @@ def test_liberar_jugador_paga_indemnizacion_y_corta_sueldo():
 
 
 def test_plantilla_pide_confirmacion_para_liberar():
+    """v0.4.27.0: LIBERAR abre una ventana con la indemnización (antes: repetir L); CANCELAR / Esc la cierran sin
+    liberar y CONFIRMAR / Enter liberan."""
     e = estado_carrera()
     mi = e['mi_equipo']
     j = mi.jugadores[0]
@@ -140,19 +142,81 @@ def test_plantilla_pide_confirmacion_para_liberar():
     plantilla_screen.render(screen, e)
     click(plantilla_screen._rects()['liberar'].center)
     plantilla_screen.render(screen, e)
-    assert j in mi.jugadores
+    assert j in mi.jugadores                                   # la ventana está abierta, nadie se liberó
     assert e['plantilla_liberar_sel'] == j.id
+    pygame.event.clear()
+    assert plantilla_screen.render(screen, e) is None          # y se dibuja sin fallar
+
+    rs = plantilla_screen.rects_overlay_liberar()
+    click(rs['cancelar'].center)                               # CANCELAR
+    plantilla_screen.render(screen, e)
+    assert j in mi.jugadores and e.get('plantilla_liberar_sel') is None
+
+    key(pygame.K_l)
+    plantilla_screen.render(screen, e)
+    assert e['plantilla_liberar_sel'] == j.id
+    key(pygame.K_ESCAPE)                                       # Esc cierra la ventana, no la pantalla
+    assert plantilla_screen.render(screen, e) is None
+    assert j in mi.jugadores and e.get('plantilla_liberar_sel') is None
 
     click(plantilla_screen._rects()['liberar'].center)
     plantilla_screen.render(screen, e)
-    assert j not in mi.jugadores
+    click(rs['confirmar'].center)                              # CONFIRMAR
+    plantilla_screen.render(screen, e)
+    assert j not in mi.jugadores and j in e['free_agents_list'] and e.get('plantilla_liberar_sel') is None
     print("  test_plantilla_pide_confirmacion_para_liberar: OK")
+
+
+def test_liberar_con_enter_y_sin_ventana_si_no_se_puede():
+    """v0.4.27.0: Enter confirma la ventana; a un jugador a préstamo ni se le abre (el motivo sale directo)."""
+    e = estado_carrera()
+    mi = e['mi_equipo']
+    j, prestado = mi.jugadores[0], mi.jugadores[1]
+    e['plantilla_sel'] = 0
+    pygame.event.clear()
+    plantilla_screen.render(screen, e)
+    key(pygame.K_l)
+    plantilla_screen.render(screen, e)
+    assert e['plantilla_liberar_sel'] == j.id
+    key(pygame.K_RETURN)
+    plantilla_screen.render(screen, e)
+    assert j not in mi.jugadores and e.get('plantilla_liberar_sel') is None
+
+    prestado.prestamo = {'dueno': "Otro Club", 'pct_dueno': 50, 'vuelve': [1, 10]}
+    e['plantilla_sel'] = mi.jugadores.index(prestado)
+    pygame.event.clear()
+    plantilla_screen.render(screen, e)
+    key(pygame.K_l)
+    plantilla_screen.render(screen, e)
+    assert e.get('plantilla_liberar_sel') is None and prestado in mi.jugadores
+    assert "préstamo" in e['plantilla_liberar_msg'][0] and e['plantilla_liberar_msg'][1] == 'rojo'
+    print("  test_liberar_con_enter_y_sin_ventana_si_no_se_puede: OK")
+
+
+def test_liberar_publica_noticia_con_la_ficha_del_jugador():
+    """v0.4.27.0 (O + C): liberar a tu jugador es noticia; guarda su id y su nombre para abrir la ficha desde NOTICIAS."""
+    from alpha_football import noticias as N
+    e = estado_carrera()
+    mi = e['mi_equipo']
+    j = mi.jugadores[0]
+    j.salario, j.contrato_anios = 1_000_000, 1
+    from alpha_football.negociacion import liberar_jugador
+    ok, _m = liberar_jugador(e, j)
+    assert ok
+    libs = [n for n in N.lista(e) if n.get('liberacion')]
+    assert len(libs) == 1 and libs[0]['propio'] and libs[0]['jugadores_ids'] == [j.id]
+    assert libs[0]['jugadores_nombres'] == [j.nombre_completo] and N.etiqueta(libs[0]) == "LIBERADO"
+    refs = N.jugadores_de(e, libs[0])                          # ya es agente libre: se encuentra por su nombre
+    assert len(refs) == 1 and refs[0][0] is j and refs[0][1] == "Agente libre"
+    print("  test_liberar_publica_noticia_con_la_ficha_del_jugador: OK")
 
 
 TESTS = [test_ordenar_plantilla, test_alternar_transferible_baja_moral, test_guardado_transferible,
          test_transferibles_atraen_ofertas, test_pantalla_plantilla,
          test_liberar_jugador_paga_indemnizacion_y_corta_sueldo,
-         test_plantilla_pide_confirmacion_para_liberar]
+         test_plantilla_pide_confirmacion_para_liberar,
+         test_liberar_con_enter_y_sin_ventana_si_no_se_puede,
+         test_liberar_publica_noticia_con_la_ficha_del_jugador]
 
 
 if __name__ == '__main__':

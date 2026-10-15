@@ -207,7 +207,7 @@ def cierre_temporada(estado: dict, rng: Optional[random.Random] = None) -> list:
     """Jóvenes (≤24) con buena moral y buena temporada suben de potencial (ver CORTES_POT_TEMPORADA)."""
     azar = rng or random.Random()
     mi = estado.get('mi_equipo')
-    textos = []
+    textos, subidas = [], []
     from alpha_football import forma as FO
     for j in list(getattr(mi, 'jugadores', []) or []):
         en_forma = FO.nivel(j) in ('buena', 'imparable')
@@ -220,11 +220,14 @@ def cierre_temporada(estado: dict, rng: Optional[random.Random] = None) -> list:
             if inc:
                 j.potencial = min(99, j.potencial + inc)
                 textos.append(f"{j.nombre} {j.apellido} +{inc} de potencial")
+                subidas.append((f"{j.nombre} {j.apellido}", inc))
     if textos:
         try:
             from alpha_football import correo as C
+            # v0.4.27.0: un jugador por párrafo (línea en blanco entre ellos) y el nombre en negrita
+            lineas = [f"{C.negrita(nombre)} +{inc_t} de potencial" for nombre, inc_t in subidas]
             C.enviar(estado, 'club', f"Suben de potencial: {len(textos)} joven{'es' if len(textos) != 1 else ''}",
-                     "Gracias a su buena moral y a una buena temporada, suben de potencial: " + "; ".join(textos) + ".",
+                     "Gracias a su buena moral y a una buena temporada, suben de potencial:\n\n" + "\n\n".join(lineas),
                      C.accion('plantilla_screen', "VER PLANTILLA"))
         except Exception as e:
             logger.error(f"No se pudo avisar el bonus de potencial: {e}")

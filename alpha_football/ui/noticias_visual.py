@@ -11,6 +11,7 @@ caché es segura y el dibujo por cuadro no hace trabajo.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional
 
 import pygame
@@ -29,13 +30,144 @@ def vaciar_cache() -> None:
     _CACHE.clear()
 
 
+_NEGRITAS: dict = {}
+
+
+def fuente_negrita(nombre: str):
+    """v0.4.27.0: la fuente en negrita del tamaño `nombre` ('xs'/'sm'/'md'...). Es una fuente propia (la de
+    theme.get_font se comparte y no se toca), cacheada por tamaño en píxeles."""
+    from alpha_football.ui.theme import FONT_SIZES, get_font
+    get_font(nombre)                                  # asegura pygame.font inicializado
+    px = FONT_SIZES.get(nombre, 24)
+    f = _NEGRITAS.get(px)
+    if f is None:
+        try:
+            f = pygame.font.SysFont("arial", px, bold=True)
+        except Exception as e:
+            logger.error(f"No se pudo crear la fuente en negrita de {px} px: {e}")
+            f = pygame.font.Font(None, px)
+            f.set_bold(True)
+        _NEGRITAS[px] = f
+    return f
+
+
+def _negrita_de(fuente):
+    """La versión en negrita de `fuente` si salió de theme.get_font; si no, la misma (sin distinguir la negrita)."""
+    try:
+        from alpha_football.ui.theme import FONT_SIZES, get_font
+        for nombre in FONT_SIZES:
+            if get_font(nombre) is fuente:
+                return fuente_negrita(nombre)
+    except Exception as e:
+        logger.debug(f"noticias_visual: sin fuente en negrita: {e}")
+    return fuente
+
+
+def tramos(linea) -> list:
+    """[(texto, negrita)] de una línea con marcas '**' (las impares son negrita; una marca sin cerrar deja
+    en negrita hasta el final de la línea)."""
+    return [(t, i % 2 == 1) for i, t in enumerate(str(linea or '').split(N.NEGRITA)) if t]
+
+
+def _serializar(trozos) -> str:
+    return ''.join(N.negrita(t) if neg else t for t, neg in trozos)
+
+
+def _ancho_tramos(trozos, fuente, f_neg) -> int:
+    return sum((f_neg if neg else fuente).size(t)[0] for t, neg in trozos)
+
+
+def _palabras_marcadas(parrafo: str) -> list:
+    """Las palabras del párrafo, cada una como [(texto, negrita)] (una negrita que cruza un espacio se corta ahí)."""
+    palabras, actual = [], []
+    for i, pieza in enumerate(parrafo.split(N.NEGRITA)):
+        for trozo in re.split(r'(\s+)', pieza):
+            if not trozo:
+                continue
+            if trozo.isspace():
+                if actual:
+                    palabras.append(actual)
+                    actual = []
+            else:
+                actual.append((trozo, i % 2 == 1))
+    if actual:
+        palabras.append(actual)
+    return palabras
+
+
+def _envolver_marcado(parrafo: str, fuente, ancho: int) -> list:
+    """Como el ajuste normal, pero midiendo las palabras en negrita con la fuente en negrita. Cada línea sale con
+    sus marcas balanceadas (una negrita que cruza dos líneas se cierra y se reabre)."""
+    f_neg = _negrita_de(fuente)
+    espacio = fuente.size(" ")[0]
+    lineas, actual, ancho_actual = [], [], 0
+    for p in _palabras_marcadas(parrafo):
+        w = _ancho_tramos(p, fuente, f_neg)
+        if not actual:
+            actual, ancho_actual = [p], w
+        elif ancho_actual + espacio + w <= ancho:
+            actual.append(p)
+            ancho_actual += espacio + w
+        else:
+            lineas.append(" ".join(_serializar(x) for x in actual))
+            actual, ancho_actual = [p], w
+    lineas.append(" ".join(_serializar(x) for x in actual))
+    return lineas
+
+
+def _con_elipsis(linea: str, fuente, ancho: int) -> str:
+    """La línea recortada para que, con "…" al final, quepa en `ancho` px."""
+    if N.NEGRITA not in linea:
+        while linea and fuente.size(linea + "…")[0] > ancho:
+            linea = linea[:-1]
+        return linea.rstrip() + "…"
+    f_neg = _negrita_de(fuente)
+    trozos = tramos(linea)
+    while trozos and _ancho_tramos(trozos + [("…", False)], fuente, f_neg) > ancho:
+        t, neg = trozos[-1]
+        if len(t) > 1:
+            trozos[-1] = (t[:-1], neg)
+        else:
+            trozos.pop()
+    if trozos:
+        t, neg = trozos[-1]
+        trozos[-1] = (t.rstrip(), neg)
+    return _serializar(trozos + [("…", False)])
+
+
+def dibujar_linea(screen, linea, pos: tuple, size: str = 'sm', color: str = 'blanco', shadow: bool = False) -> None:
+    """v0.4.27.0: dibuja una línea del cuerpo de una noticia o de un correo; lo que va entre '**' sale en negrita.
+    Sin marcas es un draw_text normal."""
+    from alpha_football.ui.theme import COLORS, draw_text, get_font
+    linea = str(linea or '')
+    if N.NEGRITA not in linea:
+        draw_text(screen, linea, pos, size=size, color=color, shadow=shadow)
+        return
+    try:
+        f_n, f_b = get_font(size), fuente_negrita(size)
+        rgb = COLORS.get(color, COLORS['blanco'])
+        x, y = pos
+        for texto, neg in tramos(linea):
+            f = f_b if neg else f_n
+            if shadow:
+                screen.blit(f.render(texto, True, (0, 0, 0)), (x + 2, y + 2))
+            screen.blit(f.render(texto, True, rgb), (x, y))
+            x += f.size(texto)[0]
+    except Exception as e:
+        logger.error(f"No se pudo dibujar la línea con negrita '{linea}': {e}")
+
+
 def envolver(texto, fuente, ancho: int, max_lineas: int) -> list:
     """Parte `texto` en líneas que caben en `ancho` px; si sobran líneas, la última termina en "…".
     Los saltos de línea del texto se respetan (un "\n" corta la línea y una línea en blanco queda como "").
-    Una palabra más ancha que `ancho` se deja entera en su línea (el recorte lo hace la superficie)."""
+    Una palabra más ancha que `ancho` se deja entera en su línea (el recorte lo hace la superficie).
+    v0.4.27.0: lo que va entre '**' es negrita y se mide con la fuente en negrita (`dibujar_linea` lo dibuja)."""
     lineas = []
     for parrafo in str(texto or '').split('\n'):
-        palabras = parrafo.split()
+        if N.NEGRITA in parrafo and parrafo.replace(N.NEGRITA, '').strip():
+            lineas.extend(_envolver_marcado(parrafo, fuente, ancho))
+            continue
+        palabras = parrafo.replace(N.NEGRITA, '').split()
         if not palabras:
             lineas.append("")                      # línea en blanco: separa bloques del cuerpo
             continue
@@ -54,10 +186,7 @@ def envolver(texto, fuente, ancho: int, max_lineas: int) -> list:
         lineas.pop()
     if len(lineas) > max_lineas:
         lineas = lineas[:max_lineas]
-        ultima = lineas[-1]
-        while ultima and fuente.size(ultima + "…")[0] > ancho:
-            ultima = ultima[:-1]
-        lineas[-1] = ultima.rstrip() + "…"
+        lineas[-1] = _con_elipsis(lineas[-1], fuente, ancho)
     return lineas
 
 

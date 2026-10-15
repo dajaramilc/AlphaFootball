@@ -365,7 +365,8 @@ def revisar_dia(estado: dict, fecha: date) -> Optional[str]:
              ('temporadas', 'revisar_jornada'),                  # v0.4.16.0: el otro continente juega y cierra por fecha
              ('intercontinental', 'revisar_jornada'),            # v0.4.26.0: la final de diciembre
              ('premios', 'revisar_jornada'),                     # v0.4.17.0: galas del Balón de Oro y del Sudamericano
-             ('finanzas', 'limitar_presupuestos'))               # v0.4.25.0: ningún club pasa de 350 M€
+             # v0.4.27.0: el techo de 350 M$ ya no recorta cada día (solo el presupuesto nuevo al empezar temporada)
+             ('market', 'sincronizar_valor_lesionados'))         # v0.4.27.0: el lesionado vale menos mientras lo está
     for modulo, funcion in pasos:
         try:
             mod = __import__(f"alpha_football.{modulo}", fromlist=[funcion])

@@ -107,7 +107,8 @@ def cobrar_multa(estado: dict) -> Optional[dict]:
                   f"y le resta {PUNTOS_MULTA} puntos al club en esta temporada.")
     try:
         from alpha_football.finanzas import registrar as _registrar
-        _registrar(estado, 'premios', -cobrado)      # mismo renglón que el premio/multa de la directiva
+        _registrar(estado, 'premios', -cobrado,      # mismo renglón que el premio/multa de la directiva
+                   concepto="Multa de la liga por exceder el tope salarial")      # v0.4.27.0
     except Exception as e:
         logger.error(f"No se pudo registrar la multa de la liga: {e}")
     if not estado.get('despido_pendiente'):          # al despedido ya no le sirve

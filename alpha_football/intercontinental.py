@@ -2,7 +2,7 @@
 """
 ALPHA FOOTBALL — Copa Intercontinental (v0.4.26.0)
 En diciembre, una semana después de la final de la Libertadores: el campeón de la Libertadores contra el
-último campeón de la Champions, a partido único (empate = penales). Premio: 20 M€ al campeón y 6 M€ al
+último campeón de la Champions, a partido único (empate = penales). Premio: $20M al campeón y $6M al
 finalista.
 - Solo con los continentes desfasados (temporadas.activo) y reloj (dias.activo): la Libertadores termina en
   diciembre y la Champions ya tiene campeón desde junio.
@@ -52,7 +52,7 @@ def _user(estado: dict) -> str:
 
 
 def _mm(monto: int) -> str:
-    return f"{int(monto) / 1_000_000:.0f} M€"
+    return f"${int(monto) / 1_000_000:.0f}M"
 
 
 def fecha_base(anio: int) -> date:
@@ -251,7 +251,8 @@ def _cerrar(estado: dict, reg: dict) -> None:
             if club == user:
                 from alpha_football.finanzas import registrar
                 from alpha_football import correo as C
-                registrar(estado, 'premios', monto)
+                registrar(estado, 'premios', monto,       # v0.4.27.0: concepto del historial de transacciones
+                          concepto=f"Premio de la {NOMBRE}: {'campeón' if club == campeon else 'finalista'}")
                 C.enviar(estado, 'directiva', f"Premio de la {NOMBRE}",
                          f"{'¡Campeones del mundo!' if club == campeon else 'Fuimos finalistas.'} Ingresaron "
                          f"{_mm(monto)} a las arcas del club por la {NOMBRE} ({marcador(reg)}).",
@@ -274,6 +275,12 @@ def _cerrar(estado: dict, reg: dict) -> None:
                           f"{finalista} cobra {_mm(PREMIO_FINALISTA)} como finalista.", importancia=5)
     except Exception as e:
         logger.error(f"intercontinental: no se pudo publicar al campeón: {e}")
+    if campeon == user:
+        try:   # v0.4.27.0: logro "El Alpha"
+            from alpha_football import logros
+            logros.desbloquear(estado, 'el_alpha')
+        except Exception as e:
+            logger.error(f"intercontinental: no se pudo desbloquear el logro El Alpha: {e}")
     logger.info(f"Intercontinental {reg['anio']}: campeón {campeon} ({marcador(reg)}).")
 
 

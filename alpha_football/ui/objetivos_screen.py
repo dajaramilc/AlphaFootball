@@ -194,6 +194,14 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                   'verde' if hecho else 'dorado')
             draw_text(screen, "CUMPLIDO" if hecho else "EN CURSO", (x2, r.y + 132), size='sm',
                       color='verde' if hecho else 'azul')
+            if oc2.get('tipo') == 'camisetas':     # v0.4.27.0: la venta de camisetas, a la vista en Marca
+                try:
+                    from alpha_football.finanzas import cobrado_camisetas
+                    cobrado = cobrado_camisetas(estado, oc2.get('temporada'))
+                    draw_text(screen, f"Llevas {_m(cobrado)} de {_m(oc2.get('meta', 0))} en camisetas",
+                              (x2, r.y + 166), size='sm', color='blanco')
+                except Exception as e_cam:
+                    logger.error(f"No se pudo mostrar lo cobrado en camisetas: {e_cam}")
             draw_text(screen, f"Cumplir: +{D.CALIF_SECUNDARIO['cumplido']} calificación · fallar: "
                               f"{D.CALIF_SECUNDARIO['fallado']}", (x2, r.y + 200), size='sm', color='blanco')
 

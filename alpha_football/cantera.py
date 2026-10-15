@@ -180,28 +180,31 @@ _MOTIVO = {'edad': "cumplió la edad límite", 'no_renovo': "no siguió en el cl
 
 
 def _linea(j: Any) -> str:
-    return f"{j.nombre_completo} ({j.posicion}, {j.edad} años, media {j.overall})"
+    from alpha_football.correo import negrita
+    return f"{negrita(j.nombre_completo)} ({j.posicion}, {j.edad} años, media {j.overall})"
 
 
 def _correo_informe(estado: dict, res: dict) -> None:
     from alpha_football import correo as C
     joya = res.get('joya')
     partes = []
+    # v0.4.27.0: cada lista con un jugador por párrafo (línea en blanco entre ellos) y el nombre en negrita
     if joya is not None:
         partes.append(f"Tenemos una joya: {_linea(joya)}. Está casi al nivel del primer equipo; le "
                       "recomendamos verlo cuanto antes.")
     altas = [j for j in res['llegan'] if j is not joya]
     if altas:
-        partes.append("Altas: " + "; ".join(_linea(j) for j in altas) + ".")
+        partes.append("Altas:\n" + "\n\n".join(_linea(j) for j in altas))
     if res['se_van']:
-        partes.append("Bajas: " + "; ".join(f"{j.nombre_completo} ({_MOTIVO[m]})" for j, m in res['se_van']) + ".")
+        partes.append("Bajas:\n" + "\n\n".join(f"{C.negrita(j.nombre_completo)} ({_MOTIVO[m]})"
+                                                for j, m in res['se_van']))
     mejores = sorted(res['mejoran'], key=lambda t: -t[1])[:3]
     if mejores:
-        partes.append("Los que más progresaron: "
-                      + "; ".join(f"{j.nombre_completo} (+{s}, media {j.overall})" for j, s in mejores) + ".")
+        partes.append("Los que más progresaron:\n"
+                      + "\n\n".join(f"{C.negrita(j.nombre_completo)} (+{s}, media {j.overall})" for j, s in mejores))
     asunto = (f"Una joya en la cantera: {joya.nombre_completo}" if joya is not None
               else f"Informe de cantera: {len(res['llegan'])} altas, {len(res['se_van'])} bajas")
-    C.enviar(estado, 'cantera', asunto, "\n".join(partes), C.accion('cantera_screen', "VER CANTERA"))
+    C.enviar(estado, 'cantera', asunto, "\n\n".join(partes), C.accion('cantera_screen', "VER CANTERA"))
 
 
 def revisar_jornada(estado: dict, rng: Optional[random.Random] = None) -> Optional[dict]:

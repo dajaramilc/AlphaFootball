@@ -22,6 +22,7 @@ except Exception:
     def draw_text(screen, text, pos, size='md', color='blanco', shadow=True): pass
 
 from alpha_football import correo as C
+from alpha_football.ui import noticias_visual as V      # v0.4.27.0: ajuste y dibujo con negrita
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ def _rect_accion() -> pygame.Rect:
 
 R_BORRAR = pygame.Rect(R_MSG.right - 200, R_MSG.bottom - 70, 180, 50)   # v4.7.0
 LINEAS_CUERPO = 18
+SALTO_CUERPO = 9            # v0.4.27.0: líneas que mueve RePág / AvPág en un mensaje largo (la rueda mueve 3)
 ALTO_OPCION = 46            # v0.4.10.0: botones de decisión de un evento (uno por opción, apilados)
 
 
@@ -67,21 +69,9 @@ def _borrar(estado: dict, m: dict) -> None:
 
 
 def _envolver(texto: str, ancho_px: int, size: str = 'sm') -> list:
-    """Parte el texto en líneas que caben en `ancho_px`; v4.7.0: respeta los saltos de párrafo."""
-    fuente, lineas = get_font(size), []
-    for parrafo in str(texto).split('\n'):
-        linea = ""
-        for palabra in parrafo.split():
-            prueba = (linea + " " + palabra).strip()
-            if fuente.size(prueba)[0] > ancho_px and linea:
-                lineas.append(linea)
-                linea = palabra
-            else:
-                linea = prueba
-        lineas.append(linea)
-    while lineas and not lineas[-1]:
-        lineas.pop()
-    return lineas
+    """Parte el texto en líneas que caben en `ancho_px`; v4.7.0: respeta los saltos de párrafo (y las líneas en
+    blanco). v0.4.27.0: lo que va entre '**' es negrita (el ajuste lo comparte con las noticias)."""
+    return V.envolver(texto, get_font(size), ancho_px, 10 ** 4)
 
 
 def _ir(estado: dict, msg: dict) -> Optional[str]:
@@ -127,14 +117,20 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         mensajes = _mensajes(estado)
         sel = max(0, min(int(estado.get('correo_sel', 0) or 0), len(mensajes) - 1))
         opc = int(estado.get('correo_opc', 0) or 0)
+        scroll = int(estado.get('correo_scroll', 0) or 0)            # v0.4.27.0: primera línea visible del cuerpo
         mouse_pos = pygame.mouse.get_pos()
         click = None
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
                 return 'menu'
+            if ev.type == pygame.MOUSEWHEEL:
+                scroll -= ev.y * 3
             if ev.type == pygame.KEYDOWN:
                 if ev.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
                     return 'notificaciones_screen'
+                if ev.key in (pygame.K_PAGEUP, pygame.K_PAGEDOWN):
+                    scroll += SALTO_CUERPO if ev.key == pygame.K_PAGEDOWN else -SALTO_CUERPO
+                    continue
                 pend = _evento_pendiente(mensajes[sel]) if mensajes else None
                 if pend and ev.key in (pygame.K_LEFT, pygame.K_RIGHT):      # v0.4.10.0: elegir opción
                     opc = max(0, min(len(pend['opciones']) - 1, opc + (1 if ev.key == pygame.K_RIGHT else -1)))
@@ -188,13 +184,18 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         estado['correo_sel'] = sel
         estado['correo_opc'] = opc
         if mensajes:
+            if estado.get('correo_scroll_id') != mensajes[sel]['id']:      # otro mensaje: el cuerpo vuelve al principio
+                estado['correo_scroll_id'] = mensajes[sel]['id']
+                scroll = 0
             C.marcar_leido(estado, mensajes[sel]['id'])
+        estado['correo_scroll'] = max(0, scroll)
 
         draw_gradient_bg(screen)
         cual = estado.get('correo_canal')
         draw_text(screen, {'mensaje': "MENSAJES", 'correo': "CORREO"}.get(cual, "CORREO"), (16, 12), size='lg', color='dorado')
         draw_text(screen, f"{len(mensajes)} en total  ·  {C.no_leidos(estado, cual)} sin leer  ·  "
-                          f"↑/↓ elegir · Enter acción · Supr borrar · Esc volver", (16, 48), size='sm', color='azul')
+                          f"↑/↓ elegir · Enter acción · Supr borrar · RePág/AvPág texto · Esc volver", (16, 48),
+                  size='sm', color='azul')
         draw_button(screen, _volver(), "VOLVER", _volver().collidepoint(mouse_pos))
         draw_panel(screen, R_LISTA)
         draw_panel(screen, R_MSG)
@@ -221,8 +222,20 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             draw_text(screen, ficha, (R_MSG.right - 4 - ancho_ficha, y), size='md', color='verde')
         for k, linea in enumerate(_envolver(m['asunto'], R_MSG.width - 40 - ancho_ficha, 'md')[:2]):
             draw_text(screen, linea, (x, y + 26 + k * 30), size='md', color='dorado')
-        for k, linea in enumerate(_envolver(C.formatear(estado, m), R_MSG.width - 40)[:LINEAS_CUERPO - (6 if m.get('evento') else 0)]):
-            draw_text(screen, linea, (x, y + 96 + k * 23), size='sm', color='blanco')
+        # v0.4.27.0: los mensajes largos (listas de jugadores con línea en blanco) se recorren con RePág / AvPág o la
+        # rueda; con texto de más, la última fila del cuerpo lleva el indicador
+        cuerpo = _envolver(C.formatear(estado, m), R_MSG.width - 40)
+        cupo = LINEAS_CUERPO - (6 if m.get('evento') else 0)
+        if len(cuerpo) > cupo:
+            cupo -= 1
+        scroll = max(0, min(int(estado.get('correo_scroll', 0) or 0), max(0, len(cuerpo) - cupo)))
+        estado['correo_scroll'] = scroll
+        for k, linea in enumerate(cuerpo[scroll:scroll + cupo]):
+            V.dibujar_linea(screen, linea, (x, y + 96 + k * 23), size='sm', color='blanco', shadow=True)
+        if len(cuerpo) > cupo:
+            draw_text(screen, f"Líneas {scroll + 1}-{min(len(cuerpo), scroll + cupo)} de {len(cuerpo)}  ·  "
+                              f"RePág / AvPág o rueda del ratón para seguir", (x, y + 96 + cupo * 23), size='sm',
+                      color='azul', shadow=False)
         acc = m.get('accion') or {}
         if acc.get('pantalla'):
             draw_button(screen, _rect_accion(), acc.get('texto', 'IR'), _rect_accion().collidepoint(mouse_pos))

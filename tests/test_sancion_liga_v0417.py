@@ -347,13 +347,14 @@ def test_sancionado_no_recibe_la_meta_de_fichar_una_estrella():
     _sancionar(e)
     for semilla in range(12):
         D._dc(e).pop('objetivo_marca', None)
-        assert D.definir_objetivo_marca(e, random.Random(semilla))['tipo'] == 'valor', semilla
-    e2 = estado_carrera()                                   # sin sanción siguen saliendo las dos metas
+        # v0.4.27.0: sancionado sale 'valor' o 'camisetas' (nunca 'estrella')
+        assert D.definir_objetivo_marca(e, random.Random(semilla))['tipo'] in ('valor', 'camisetas'), semilla
+    e2 = estado_carrera()                                   # sin sanción siguen saliendo las tres metas
     tipos = set()
     for semilla in range(12):
         D._dc(e2).pop('objetivo_marca', None)
         tipos.add(D.definir_objetivo_marca(e2, random.Random(semilla))['tipo'])
-    assert tipos == {'valor', 'estrella'}
+    assert tipos == {'valor', 'estrella', 'camisetas'}
     print("  test_sancionado_no_recibe_la_meta_de_fichar_una_estrella: OK")
 
 

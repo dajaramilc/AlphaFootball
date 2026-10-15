@@ -1114,7 +1114,10 @@ def _render_tabla_copa(screen, estado, mouse_pos=(0, 0)) -> None:
     if not c:
         draw_text(screen, "La copa todavía no se sorteó.", (cuerpo.x + 8, cuerpo.y + 20), size='sm', color='blanco')
         return
-    if tipo == 'champions':
+    if c.get('llaves'):
+        # v0.4.27.0: terminada la fase de liga / de grupos (ya hay eliminatorias armadas) el panel muestra las llaves
+        S.dibujar_llaves(screen, cuerpo, c, user, compacto=True)
+    elif tipo == 'champions':
         S.dibujar_tabla_liga(screen, cuerpo, c, user, compacto=True)
     else:
         S.dibujar_grupos(screen, cuerpo, c, user, compacto=True, solo=S.grupo_de(c, user))
@@ -1505,14 +1508,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 migrar_economia(estado)           # v4.6.0: save viejo: sueldos ×1.6 una sola vez
         except Exception as e_con:
             logger.error(f"Error al asignar contratos: {e_con}")
-        try:  # v0.4.25.0: partidas guardadas con clubes por encima del techo (hoy 350 M€; el reloj lo repite cada día)
-            dc = estado.setdefault('datos_carrera', {})
-            if not dc.get('techo_presupuesto_v0425'):
-                from alpha_football.finanzas import limitar_presupuestos
-                limitar_presupuestos(estado)
-                dc['techo_presupuesto_v0425'] = True
-        except Exception as e_techo:
-            logger.error(f"Error al limitar los presupuestos: {e_techo}")
+        # v0.4.27.0: el techo de 350 M$ ya no recorta al cargar: solo el presupuesto nuevo al empezar temporada
         try:  # v2.8.0 (v4.6.0: después de migrar sueldos): objetivo de la temporada (una vez por temporada / club)
             from alpha_football.directiva import definir_objetivo
             definir_objetivo(estado)

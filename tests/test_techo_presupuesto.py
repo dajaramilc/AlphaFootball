@@ -1,5 +1,7 @@
-"""0.4.25.0: ningún club puede tener más de 350 M€ de presupuesto (migración al cargar + red de seguridad diaria) y
-todos los clubes de la IA reajustan su presupuesto al empezar cada temporada, con la misma fórmula que el user."""
+"""0.4.25.0: ningún club arranca la temporada con más de 350 M$ de presupuesto y todos los clubes de la IA reajustan su
+presupuesto al empezar cada temporada, con la misma fórmula que el user.
+0.4.27.0: el techo ya NO recorta durante la temporada (ni el reloj ni la carga): un club puede juntar más de 350 M$ y el
+recorte es solo el del presupuesto nuevo al empezar la temporada siguiente."""
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ['SDL_VIDEODRIVER'] = 'dummy'
@@ -72,13 +74,33 @@ def test_sin_partida_no_lanza():
     assert F.limitar_presupuestos({'primera_division': None, 'mi_equipo': None}) == 0
 
 
-def test_el_reloj_lo_aplica_cada_dia():
+def test_el_reloj_ya_no_recorta_durante_la_temporada():
+    """v0.4.27.0: antes lo recortaba cada día; ahora el club conserva su saldo hasta el cierre."""
     e = estado_carrera()
     club = _clubes(e)[0]
     club.balance = 900_000_000
     D.hoy(e)                                                              # crea el reloj
     D.revisar_dia(e, D.hoy(e))
-    assert club.balance == TECHO
+    assert club.balance == 900_000_000
+
+
+def test_el_cierre_de_un_continente_no_recorta_a_los_del_otro():
+    """v0.4.27.0: el cierre con filtro de países solo reajusta a los clubes de esos países."""
+    import random
+    e = estado_carrera()
+    club = _clubes(e)[0]
+    club.balance = 900_000_000
+    MIA.ingresos_fin_temporada(e, random.Random(1), paises=['no_existe'])    # ninguna liga coincide
+    assert club.balance == 900_000_000
+
+
+def test_el_presupuesto_nuevo_de_la_ia_sale_topado_al_cerrar_la_temporada():
+    import random
+    e = estado_carrera()
+    club, _tipo, _division, _base = _club_ia_modesto(e)
+    club.balance = 900_000_000                                            # durante la temporada podía pasar
+    MIA.ingresos_fin_temporada(e, random.Random(1))
+    assert club.balance <= TECHO
 
 
 def test_el_cobro_de_fin_de_temporada_respeta_el_techo():
@@ -87,11 +109,12 @@ def test_el_cobro_de_fin_de_temporada_respeta_el_techo():
     club = _clubes(e)[0]
     club.balance = TECHO - 1_000                                          # cobra un ingreso enorme y se pasaría
     MIA.ingresos_fin_temporada(e, random.Random(1))
-    assert all(int(eq.balance) <= TECHO for eq in _clubes(e))
+    # el tuyo no cobra aquí (lo reajusta finanzas.aplicar_presupuesto_temporada al cerrar)
+    assert all(int(eq.balance) <= TECHO for eq in _clubes(e) if eq is not e['mi_equipo'])
 
 
 def test_el_presupuesto_nuevo_del_user_tampoco_pasa_del_techo():
-    info = F.presupuesto_temporada(500_000_000, 900_000_000, 'superado', True, True)    # ×1.65 × 1.20 = 990 M€ sin techo
+    info = F.presupuesto_temporada(500_000_000, 900_000_000, 'superado', True, True)    # ×1.65 × 1.20 = 990 M$ sin techo
     assert info['total'] == TECHO
     assert F.presupuesto_temporada(100_000_000, 20_000_000, 'cumplido')['total'] < TECHO   # el techo no toca a los normales
 

@@ -26,7 +26,7 @@ RETORNO_VENTA = 0.90
 # (antes +5, muy estricto). El dinero pasa a ser el límite real para los cracks.
 MARGEN_FICHAJE = 15
 
-# Como los valores ahora son realistas (cracks €100M+), se escalan los presupuestos para
+# Como los valores ahora son realistas (cracks $100M+), se escalan los presupuestos para
 # que el mercado siga siendo jugable (clubes grandes pueden fichar; los chicos ahorran).
 BUDGET_SCALE = 8
 
@@ -268,15 +268,43 @@ def es_jugador_latam(jugador: Any) -> bool:
 # v0.4.26.0: precios regulados. Defensas y porteros valen menos y la caída por edad se acelera desde los 30.
 FACTOR_POSICION_VALOR = {'DEF': 0.85, 'POR': 0.75}
 CAIDA_EDAD_LINEAL, CAIDA_EDAD_CUADRATICA, PISO_FACTOR_EDAD = 0.08, 0.01, 0.20
+# v0.4.27.0: mientras está lesionado un jugador vale menos, según los DÍAS DE BAJA QUE LE QUEDAN (al sanar vuelve a
+# su valor). Tramos (días restantes, descuento) con interpolación lineal entre ellos: pocos días casi no pesan, unas
+# semanas moderado, meses fuerte; con más de 180 días queda el último descuento (piso de valor: ×0.55).
+DESCUENTO_LESION_TRAMOS = ((0, 0.00), (7, 0.03), (28, 0.12), (90, 0.30), (180, 0.45))
+VALOR_MINIMO = 50_000
 
 
-def calcular_valor(jugador: Any) -> int:
+def descuento_por_lesion(dias) -> float:
+    """Fracción (0-0.45) que pierde el valor de un jugador al que le quedan `dias` días de lesión (0 = sano)."""
+    try:
+        d = int(dias or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if d <= 0:
+        return 0.0
+    previo = DESCUENTO_LESION_TRAMOS[0]
+    for tramo in DESCUENTO_LESION_TRAMOS[1:]:
+        if d <= tramo[0]:
+            return previo[1] + (d - previo[0]) / (tramo[0] - previo[0]) * (tramo[1] - previo[1])
+        previo = tramo
+    return DESCUENTO_LESION_TRAMOS[-1][1]
+
+
+def factor_valor_lesion(dias) -> float:
+    """Multiplicador del valor por la lesión: 1.0 sano, bajando con los días que faltan (ver DESCUENTO_LESION_TRAMOS)."""
+    return 1.0 - descuento_por_lesion(dias)
+
+
+def calcular_valor(jugador: Any, con_lesion: bool = True) -> int:
     """
     Valor de mercado realista (anclado a la vida real): limitado a un máximo inicial
     de $220M (en OVR 93). A partir de OVR 93, crece de forma equivalente/lineal
     pero no de forma descabellada. En LatAm se aplica un factor corrector de reducción (0.35)
     para ajustarse a su realidad de mercado.
     v0.4.26.0: × FACTOR_POSICION_VALOR (defensas ×0.85, porteros ×0.75) y veteranos más baratos.
+    v0.4.27.0: × factor_valor_lesion(lesion_dias) mientras está lesionado (más días de baja, menos vale);
+    `con_lesion=False` da el valor "sano" (la base de sueldos y cláusulas: un lesionado no renueva más barato).
     """
     try:
         overall = _campo(jugador, "overall", 50)
@@ -304,7 +332,8 @@ def calcular_valor(jugador: Any) -> int:
             factor_edad = max(PISO_FACTOR_EDAD, 1.0 - CAIDA_EDAD_LINEAL * anios - CAIDA_EDAD_CUADRATICA * anios * anios)
 
         factor_pos = FACTOR_POSICION_VALOR.get(str(_campo(jugador, "posicion", "") or ""), 1.0)
-        return max(50_000, int(valor_base * factor_edad * factor_pos))
+        factor_lesion = factor_valor_lesion(_campo(jugador, "lesion_dias", 0)) if con_lesion else 1.0
+        return max(VALOR_MINIMO, int(valor_base * factor_edad * factor_pos * factor_lesion))
     except Exception as e:
         logger.error(f"Error al calcular valor del jugador: {e}. Usando valor por defecto resiliente.")
         try:
@@ -312,6 +341,44 @@ def calcular_valor(jugador: Any) -> int:
             return max(50_000, int(ovr * ovr * 1000))
         except Exception:
             return 50000
+
+
+def sincronizar_valor_lesionados(estado: dict) -> int:
+    """v0.4.27.0 (lo llama dias.revisar_dia cada día): `Jugador.valor` es un valor guardado que solo se recalcula
+    al jugar, así que el que se lesiona (o sana) fuera de un partido seguiría con el valor viejo en los precios.
+    Cada día, el lesionado vale su valor sano × factor_valor_lesion(días que le quedan): el descuento se afloja a
+    medida que pasan los días, y al sanar vuelve al valor normal. El valor sano de cada lesionado se calcula una
+    sola vez (al lesionarse) y se recuerda en datos_carrera['valor_lesion'] = {clave: valor_sano}; así el barrido
+    diario no repite el cálculo caro. Tolerante: una lista vieja o sin datos recalcula el sano una vez.
+    Devuelve cuántos jugadores cambiaron de valor."""
+    try:
+        from alpha_football.finanzas import _todos_los_equipos
+        dc = estado.setdefault('datos_carrera', {})
+        previo = dc.get('valor_lesion')
+        marcados = previo if isinstance(previo, dict) else {k: None for k in (previo or []) if isinstance(k, str)}
+        jugadores = [j for eq in _todos_los_equipos(estado) for j in getattr(eq, 'jugadores', []) or []]
+        jugadores += list(estado.get('free_agents_list') or [])
+        lesionados_hoy, recalculados = {}, 0
+        for j in jugadores:
+            dias = int(getattr(j, 'lesion_dias', 0) or 0)
+            if dias <= 0 and not marcados:
+                continue
+            clave = f"{getattr(j, 'id', 0)}|{getattr(j, 'nombre', '')} {getattr(j, 'apellido', '')}"
+            if dias > 0:
+                sano = marcados.get(clave) or int(calcular_valor(j, con_lesion=False))
+                lesionados_hoy[clave] = int(sano)
+                nuevo = max(VALOR_MINIMO, int(sano * factor_valor_lesion(dias)))
+                if int(getattr(j, 'valor', 0) or 0) != nuevo:
+                    j.valor = nuevo
+                    recalculados += 1
+            elif clave in marcados:         # sanó: vuelve a su valor normal
+                j.valor = int(calcular_valor(j))
+                recalculados += 1
+        dc['valor_lesion'] = lesionados_hoy
+        return recalculados
+    except Exception as e:
+        logger.error(f"No se pudo sincronizar el valor de los lesionados: {e}")
+        return 0
 
 DESCUENTO_ULTIMO_ANIO = 0.75
 

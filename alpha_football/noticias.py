@@ -36,6 +36,9 @@ ETIQUETA = {'resultado': "RESULTADO", 'fichaje': "FICHAJE", 'dt_cambio': "ENTREN
             'vestuario': "VESTUARIO", 'premio': "PREMIO", 'economia': "ECONOMÍA", 'cantera': "CANTERA",
             'promesa': "PROMESA", 'record': "RÉCORD", 'logro': "LOGRO", 'otro': "NOTICIA"}
 
+# v0.4.27.0: un fichaje atípico (negociacion._variante_fichaje) cambia solo la etiqueta de su tarjeta
+ETIQUETA_VARIANTE = {'ganga': "GANGA", 'generoso': "PAGO GENEROSO", 'traicion': "TRAICIÓN"}
+
 # categoría -> fondo de la tarjeta cuando la categoría no tiene imágenes
 COLOR = {'resultado': (38, 84, 150), 'fichaje': (22, 122, 92), 'rumor': (112, 72, 150),
          'entrenador': (68, 82, 104), 'titulo': (176, 132, 28), 'ascenso': (44, 132, 62),
@@ -86,6 +89,41 @@ def _entero(valor, defecto: int) -> int:
         return defecto
 
 
+NEGRITA = '**'
+
+
+def negrita(texto) -> str:
+    """v0.4.27.0: marca `texto` en negrita para el cuerpo de una noticia o de un correo ('**Nombre**'). Las
+    pantallas Noticias y Correo la dibujan; en cualquier otro sitio se quita con `sin_marcas`."""
+    return f"{NEGRITA}{texto}{NEGRITA}"
+
+
+def sin_marcas(texto) -> str:
+    """v0.4.27.0: el texto sin las marcas de negrita (para titulares, asuntos y vistas previas)."""
+    return str(texto if texto is not None else '').replace(NEGRITA, '')
+
+
+def _refs_jugadores(cosas) -> tuple:
+    """v0.4.27.0: ([ids], [nombres completos]) en paralelo. El id solo es único dentro de un club: el nombre completo
+    (único en la carrera) es lo que permite encontrar al jugador luego, en cualquier club. Con ids sueltos o dicts
+    sin nombre, el nombre queda vacío."""
+    ids, nombres = [], []
+    for x in cosas or ():
+        v = x.get('id') if isinstance(x, dict) else getattr(x, 'id', x)
+        if isinstance(x, dict):
+            nombre = x.get('nombre_completo') or f"{x.get('nombre', '')} {x.get('apellido', '')}".strip()
+        else:
+            nombre = (getattr(x, 'nombre_completo', None)
+                      or f"{getattr(x, 'nombre', '')} {getattr(x, 'apellido', '')}".strip())
+        if v is None and nombre:
+            v = -1                       # un dato sin id (la ficha del Balón de Oro): se encuentra por su nombre
+        if v is None:
+            continue
+        ids.append(v)
+        nombres.append(str(nombre or ''))
+    return ids, nombres
+
+
 def _normalizar(n: dict) -> None:
     """Completa una noticia de un guardado anterior (las de eventos.registrar_noticia: sin importancia y
     con la clave `jugadores`)."""
@@ -100,6 +138,7 @@ def _normalizar(n: dict) -> None:
     n['importancia'] = max(1, min(5, _entero(n.get('importancia'), IMPORTANCIA_FEED)))
     n.setdefault('equipos_ids', [])
     n.setdefault('jugadores_ids', list(n.get('jugadores') or []))
+    n.setdefault('jugadores_nombres', [])        # v0.4.27.0: en paralelo a jugadores_ids (vacío en las viejas)
     n.setdefault('dt_ids', [])
     n.setdefault('leida', False)
     n.setdefault('fecha_creacion', None)
@@ -133,7 +172,7 @@ def titular(*formas: str) -> str:
 
 
 def _recortar(titular: str) -> str:
-    t = ' '.join(str(titular).split())
+    t = ' '.join(sin_marcas(titular).split())      # v0.4.27.0: un titular nunca lleva negrita
     return t if len(t) <= MAX_TITULAR else t[:MAX_TITULAR - 1].rstrip() + '…'
 
 
@@ -148,13 +187,15 @@ def publicar(estado: dict, tipo: str, titular: str, cuerpo: str, importancia: in
         logger.debug(f"noticias: tipo desconocido {tipo!r}, se publica como 'otro'")
         tipo = 'otro'
     t, j = _ahora(estado)
+    ids_jug, nombres_jug = _refs_jugadores(jugadores)      # v0.4.27.0: con su nombre, para abrir la ficha desde la noticia
     n = dict(extra)
     n.update({'id': _siguiente_id(estado, noticias), 'tipo': tipo,
               'categoria': categoria if categoria in COLOR else CATEGORIA[tipo],
               'titular': _recortar(titular), 'cuerpo': str(cuerpo),
               'temporada': _entero(extra.get('temporada'), t), 'jornada': _entero(extra.get('jornada'), j),
               'importancia': max(1, min(5, _entero(importancia, IMPORTANCIA_FEED))),
-              'equipos_ids': _ids(equipos), 'jugadores_ids': _ids(jugadores), 'dt_ids': _ids(dts),
+              'equipos_ids': _ids(equipos), 'jugadores_ids': ids_jug, 'jugadores_nombres': nombres_jug,
+              'dt_ids': _ids(dts),
               'leida': False, 'fecha_creacion': _hoy(estado)})
     noticias.insert(0, n)
     while len(noticias) > MAX_NOTICIAS:      # sale la de menor importancia y, a igualdad, la más vieja
@@ -258,6 +299,55 @@ def retirar(estado: dict, noticia_id) -> bool:
     return True
 
 
+def jugadores_de(estado: dict, noticia: dict) -> list:
+    """v0.4.27.0: [(jugador, club)] de los jugadores de la noticia que todavía existen (en un club o entre los
+    agentes libres, con "Agente libre" como club), en el orden de la noticia. Se busca por nombre completo (único
+    en la carrera: el id solo lo es dentro de un club) y, con varios del mismo nombre, el que además tiene su id.
+    Una noticia vieja, sin nombres, solo encuentra por id a los de tu plantilla. Al que ya no está (se retiró)
+    simplemente se le omite."""
+    ids = list(noticia.get('jugadores_ids') or [])
+    if not ids:
+        return []
+    nombres = list(noticia.get('jugadores_nombres') or [])
+    nombres += [''] * (len(ids) - len(nombres))
+    quieren = {n for n in nombres if n}
+    mi = estado.get('mi_equipo')
+    por_nombre: dict = {}
+    if quieren:
+        clubes, vistos = [], set()
+        liga = estado.get('liga')
+        try:
+            from alpha_football.mercado_ia import ligas_de_la_partida
+            todas = [lg for lg, _t, _d in ligas_de_la_partida(estado)]
+        except Exception as e:
+            logger.debug(f"noticias: sin ligas para buscar jugadores: {e}")
+            todas = []
+        for eq in [mi] + list(getattr(liga, 'equipos', None) or []) + [e for lg in todas for e in lg.equipos]:
+            if eq is not None and id(eq) not in vistos:
+                vistos.add(id(eq))
+                clubes.append(eq)
+        for eq in clubes:
+            for j in getattr(eq, 'jugadores', None) or []:
+                nombre = getattr(j, 'nombre_completo', None)
+                if nombre in quieren:
+                    por_nombre.setdefault(nombre, []).append((j, getattr(eq, 'nombre', '')))
+        for j in estado.get('free_agents_list') or []:
+            nombre = getattr(j, 'nombre_completo', None)
+            if nombre in quieren:
+                por_nombre.setdefault(nombre, []).append((j, "Agente libre"))
+    out = []
+    for i, nombre in zip(ids, nombres):
+        if nombre:
+            cands = por_nombre.get(nombre) or []
+            hallado = next((c for c in cands if getattr(c[0], 'id', None) == i), cands[0] if cands else None)
+        else:                                    # noticia vieja: solo tu plantilla, por id
+            j = next((x for x in getattr(mi, 'jugadores', None) or [] if getattr(x, 'id', None) == i), None)
+            hallado = (j, getattr(mi, 'nombre', '')) if j is not None else None
+        if hallado is not None and all(hallado[0] is not x[0] for x in out):
+            out.append(hallado)
+    return out
+
+
 def purgar(estado: dict) -> int:
     """Borra las de JORNADAS_VIDA o más jornadas de antigüedad. Devuelve cuántas borró."""
     noticias = lista(estado)
@@ -272,6 +362,10 @@ def etiqueta(noticia: dict) -> str:
     """Texto de la etiqueta de la tarjeta ("FICHAJE", "RUMOR"…); un ascenso viaja con tipo 'descenso'."""
     if noticia.get('categoria') == 'ascenso':
         return "ASCENSO"
+    if noticia.get('liberacion'):                  # v0.4.27.0: un club suelta a un jugador (tipo 'otro', imagen de fichaje)
+        return "LIBERADO"
+    if noticia.get('variante') in ETIQUETA_VARIANTE:    # v0.4.27.0: fichaje atípico (mismo tipo 'fichaje')
+        return ETIQUETA_VARIANTE[noticia['variante']]
     return ETIQUETA.get(noticia.get('tipo'), ETIQUETA['otro'])
 
 

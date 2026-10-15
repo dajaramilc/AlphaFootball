@@ -8,7 +8,7 @@ y cumple (o no) lo que te pide la directiva.
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Pygame](https://img.shields.io/badge/Pygame-2.6-2EA44F)
-![Versión](https://img.shields.io/badge/versión-0.4.26.0-FFD700)
+![Versión](https://img.shields.io/badge/versión-0.4.27.0-FFD700)
 ![Plataforma](https://img.shields.io/badge/plataforma-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 
 <img src="docs/img/hub.png" alt="Hub de la carrera" width="820">

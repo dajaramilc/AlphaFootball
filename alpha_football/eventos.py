@@ -144,6 +144,12 @@ def aplicar(estado: dict, efectos: list, prot: list, rng: Optional[random.Random
         if clave == 'dinero':
             monto = int(sum(int(getattr(j, 'salario', 0) or 0) for j in objs) * valor)
             mi.balance = int(mi.balance) + monto
+            try:   # v0.4.27.0: historial de transacciones (solo el historial: el libro de la temporada no lo cuenta)
+                from alpha_football.finanzas import anotar_movimiento
+                anotar_movimiento(estado, "Multa cobrada por la directiva" if monto >= 0 else "Gasto del club (evento)",
+                                  monto, 'evento')
+            except Exception as e_hist:
+                logger.error(f"No se pudo anotar el evento en el historial de transacciones: {e_hist}")
             out.append(("Multa cobrada: " if monto >= 0 else "Gasto del club: ") + _dinero(monto))
             continue
         v = azar.randint(*valor) if isinstance(valor, tuple) else valor

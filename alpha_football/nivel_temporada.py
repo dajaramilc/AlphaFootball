@@ -221,10 +221,11 @@ def _correo_user(estado: dict, user: dict, devueltos: dict) -> None:
         return
     prom = sum(d for _j, d in cambios) / len(cambios)
     orden = sorted(cambios, key=lambda x: x[1], reverse=user.get('caso') == 'ascenso')
-    lista = "; ".join(f"{j.nombre} {j.apellido} {d:+d}" for j, d in orden)
+    # v0.4.27.0: un jugador por párrafo (línea en blanco entre ellos) y el nombre en negrita
+    lista = "\n\n".join(f"{C.negrita(j.nombre + ' ' + j.apellido)} {d:+d}" for j, d in orden)
     C.enviar(estado, 'club', ASUNTOS.get(user.get('caso'), "Cambios de nivel en el plantel"),
              f"Le informamos de los cambios de nivel de la plantilla tras la pretemporada. Cambio promedio: "
-             f"{prom:+.1f} de media. {lista}.", C.accion('plantilla_screen', "VER PLANTILLA"))
+             f"{prom:+.1f} de media.\n\n{lista}", C.accion('plantilla_screen', "VER PLANTILLA"))
 
 
 def aplicar_topes(estado: dict, paises=None) -> dict:

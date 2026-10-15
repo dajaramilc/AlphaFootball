@@ -301,6 +301,9 @@ def test_equipo_del_ano():
             assert ln.count(" · ") == 2                                  # nombre · club · nota
     assert cuenta == {"PORTERO": 1, "DEFENSAS": 4, "MEDIOS": 3, "ATACANTES": 3}
     assert "\n\n" in eq[0]['cuerpo']                                     # una línea en blanco entre secciones
+    # v0.4.27.0: el nombre de cada jugador va en negrita y una línea en blanco lo separa del siguiente
+    assert all(ln.startswith("**") and ln.count("**") == 2 for ln in lineas if not ln.isupper())
+    assert eq[0]['cuerpo'].count("\n\n") == 3 + (4 - 1) + (3 - 1) + (3 - 1)       # 3 entre secciones + 3 + 2 + 2 entre jugadores
     vacio = _estado()                                                    # sin estadísticas: no inventa un equipo
     G.generar_cierre_temporada(vacio, 1, 'X', {}, [])
     assert not [n for n in _de_tipo(vacio, 'premio') if "Equipo del año" in n['titular']]
@@ -368,6 +371,19 @@ def test_copa_se_anuncia_al_jugar_la_final_y_el_cierre_no_la_repite():
     G.generar_cierre_temporada(e, 1, None, {'champions': 'Real Madrigal'}, [])
     assert len([x for x in _de_tipo(e, 'campeon') if "Champions" in x['titular']]) == 1
     assert G.anunciar_copa(e, None) == 0 and G.anunciar_copa(e, {'tipo': 'champions'}) == 0
+
+
+def test_el_cierre_no_nombra_la_copa_del_otro_continente():
+    """v0.4.27.0: con los continentes desfasados tu cierre solo nombra (si faltó) la copa de TU continente; la del
+    otro ya se anunció cuando se ganó y su "último campeón conocido" no se repite meses después."""
+    e = _estado()                                                         # Premier: tu continente es Europa → Champions
+    assert G._copas_de_este_cierre(e, {'champions': 'A', 'libertadores': 'B'}) == {'champions', 'libertadores'}
+    e['datos_carrera'].setdefault('mundo', {})['desfase'] = True
+    assert G._copas_de_este_cierre(e, {'champions': 'A', 'libertadores': 'B'}) == {'champions'}
+    G.generar_cierre_temporada(e, 1, None, {'champions': 'Real Madrigal', 'libertadores': 'Club Sudamericano'}, [])
+    titulares = [x['titular'] + " " + x['cuerpo'] for x in _de_tipo(e, 'campeon')]
+    assert any("Champions" in t and "Real Madrigal" in t for t in titulares)
+    assert not any("Libertadores" in t or "Club Sudamericano" in t for t in titulares)
 
 
 def test_descensos_de_otras_ligas_solo_nombran_a_los_mejores():

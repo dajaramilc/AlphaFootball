@@ -60,6 +60,7 @@ def _rects() -> dict:
         'clau_ciclo': pygame.Rect(jx, R_JUG.y + 140, 364, 44),
         'proponer': pygame.Rect(jx, R_JUG.y + 214, 364, 52),
         'volver': pygame.Rect(1016, 650, 248, 44),         # v3.9.0: termina en y=694 (antes 704)
+        'favorito': pygame.Rect(R_INFO.x + 20, R_INFO.bottom - 76, R_INFO.width - 40, 52),   # v0.4.27.0 (tecla F)
         'monto': pygame.Rect(cx + 50, R_CLUB.y + 110, 264, 44),          # v3.9.0: cajas expuestas (ayuda H)
         'salario': pygame.Rect(jx + 50, R_JUG.y + 70, 264, 44),
         'anios': pygame.Rect(jx + 470, R_JUG.y + 70, 144, 44),
@@ -68,6 +69,14 @@ def _rects() -> dict:
 
 def _m(v) -> str:
     return N.dinero_exacto(v)          # v3.5.0: montos exactos
+
+
+def _favorito(estado: dict, neg: dict, j) -> None:
+    """v0.4.27.0: agrega o quita al jugador de favoritos (el mismo sistema del buscador; los de tu plantilla no)."""
+    from alpha_football.ui.ficha_jugador import alternar_favorito
+    texto = alternar_favorito(estado, j)
+    if texto:
+        neg['msg_fav'] = (texto, pygame.time.get_ticks() + 3000)
 
 
 def _caja(screen, rect, texto, color='blanco'):
@@ -111,6 +120,9 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 return 'menu'
             if ev.type == pygame.KEYDOWN and ev.key == pygame.K_ESCAPE:
                 return salir()
+            if ev.type == pygame.KEYDOWN and ev.key == pygame.K_f:      # v0.4.27.0: F = agregar / quitar de favoritos
+                _favorito(estado, neg, j)
+                continue
             if ev.type == pygame.KEYDOWN and neg['etapa'] == 'club' and modo != 'prestamo':   # v3.5.0: monto tecleable (el % no)
                 neg['monto'] = editar_valor(neg['monto'], ev)
                 continue
@@ -119,6 +131,9 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             p = ev.pos
             if rects['volver'].collidepoint(p):
                 return salir()
+            if rects['favorito'].collidepoint(p):                       # v0.4.27.0
+                _favorito(estado, neg, j)
+                continue
             if neg['etapa'] == 'club':
                 if modo == 'prestamo':      # préstamo: % del sueldo que pagas y duración
                     from alpha_football import prestamos as PR
@@ -226,6 +241,14 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             if texto:
                 draw_text(screen, texto, (x, y), size=size, color=color)
             y += 44 if size == 'lg' else 32
+        # v0.4.27.0: AGREGAR A / QUITAR DE FAVORITOS (solo si el jugador no es de tu plantilla)
+        from alpha_football.ui.ficha_jugador import dibujar_boton_favorito, puede_ser_favorito
+        dibujar_boton_favorito(screen, rects['favorito'], estado, j, mouse_pos)
+        aviso_fav = neg.get('msg_fav')
+        if aviso_fav and pygame.time.get_ticks() < aviso_fav[1]:
+            draw_text(screen, str(aviso_fav[0])[:40], (x, rects['favorito'].y - 28), size='sm', color='verde')
+        elif puede_ser_favorito(estado, j):
+            draw_text(screen, "F favorito", (x, rects['favorito'].y - 28), size='sm', color='azul', shadow=False)
 
         # Paso 1: club
         draw_panel(screen, R_CLUB)

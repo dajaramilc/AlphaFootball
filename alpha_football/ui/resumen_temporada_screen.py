@@ -247,7 +247,8 @@ def avanzar_nueva_temporada(estado: dict) -> None:
                 logger.error(f"Error en el cierre de temporada de los DTs: {e_dts}")
             try:  # v2.9.0: premios de la temporada que termina en su libro de finanzas
                 from alpha_football.finanzas import registrar
-                registrar(estado, 'premios', bono_liga + int(registro.get('directiva_monto', 0) or 0), temp_anterior)
+                registrar(estado, 'premios', bono_liga + int(registro.get('directiva_monto', 0) or 0), temp_anterior,
+                          concepto="Premios de fin de temporada (liga y objetivo de la directiva)")   # v0.4.27.0
             except Exception as e_lib:
                 logger.error(f"Error al registrar los premios: {e_lib}")
             estado.setdefault('historial', []).append(registro)
@@ -259,7 +260,7 @@ def avanzar_nueva_temporada(estado: dict) -> None:
                 logger.error(f"Error al revisar los logros del cierre de temporada: {e_logros}")
             logger.info(
                 f"Fin T{temp_anterior}: pos {posicion}, pts {mi_equipo.puntos}, "
-                f"copa {mejor_fase}, bono €{bono_total:,}"
+                f"copa {mejor_fase}, bono ${bono_total:,}"
             )
         except Exception as e_hist:
             logger.error(f"Error al guardar historial de campaña: {e_hist}")
@@ -631,8 +632,8 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 bono_rect = R_BONO
                 draw_panel(screen, bono_rect)
                 pygame.draw.rect(screen, COLORS['verde'], bono_rect, width=2, border_radius=8)
-                _centrado(f"BONO DE FIN DE TEMPORADA: +€{bono_total:,}  "
-                          f"(Liga: €{bono_liga:,}  ·  Copa: €{bono_copa:,})", 609, 'sm', 'verde')
+                _centrado(f"BONO DE FIN DE TEMPORADA: +${bono_total:,}  "
+                          f"(Liga: ${bono_liga:,}  ·  Copa: ${bono_copa:,})", 609, 'sm', 'verde')
         except Exception as e_bono:
             logger.error(f"Error al mostrar banner de bono: {e_bono}")
 

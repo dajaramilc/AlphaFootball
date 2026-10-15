@@ -37,6 +37,19 @@ def _rects_fichar(n: int) -> list:
     return [pygame.Rect(r.x + 20, r.bottom - 68, r.width - 40, 48) for r in _rects_tarjetas(n)]
 
 
+def _rects_favorito(n: int) -> list:
+    """v0.4.27.0: botón AGREGAR A / QUITAR DE FAVORITOS de cada tarjeta (justo encima de FICHAR)."""
+    return [pygame.Rect(r.x + 20, r.bottom - 128, r.width - 40, 44) for r in _rects_tarjetas(n)]
+
+
+def _favorito(estado: dict, jugador) -> None:
+    """v0.4.27.0: agrega o quita de favoritos (el mismo sistema del buscador; sin duplicar)."""
+    from alpha_football.ui.ficha_jugador import alternar_favorito
+    texto = alternar_favorito(estado, jugador)
+    if texto:
+        estado['ojeador_msg'] = (texto, pygame.time.get_ticks() + 3000, 'verde')
+
+
 def _volver() -> pygame.Rect:
     return pygame.Rect(1116, 12, 148, 40)
 
@@ -82,9 +95,17 @@ def _render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 return 'menu'
             if ev.type == pygame.KEYDOWN and ev.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
                 return 'league_screen'
+            if ev.type == pygame.KEYDOWN and ev.key == pygame.K_f:      # v0.4.27.0: F = favorito de la tarjeta con foco
+                if foco < len(recs):
+                    _favorito(estado, recs[foco][0])
+                continue
             if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
                 if _volver().collidepoint(ev.pos):
                     return 'league_screen'
+                en_favorito = next((i for i, r in enumerate(_rects_favorito(len(recs))) if r.collidepoint(ev.pos)), None)
+                if en_favorito is not None:
+                    _favorito(estado, recs[en_favorito][0])
+                    continue
                 for (j, club, _et, precio, _m), r in zip(recs, _rects_fichar(len(recs))):
                     if r.collidepoint(ev.pos):
                         # v2.9.0: se negocia con el club y con el jugador.
@@ -103,8 +124,8 @@ def _render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                           f"  ·  Mercado {'ABIERTO' if abierta else 'cerrado (puedes fichar igual)'}"
                           f"  ·  Presupuesto ${mi.balance / 1_000_000:.1f}M",
                   (16, 56), size='sm', color='verde' if abierta else 'azul')
-        draw_text(screen, "Refuerza los puestos más flojos de tu mejor once, dentro de tu presupuesto.",
-                  (16, 82), size='sm', color='azul')
+        draw_text(screen, "Refuerza los puestos más flojos de tu mejor once, dentro de tu presupuesto.  "
+                          "F: agregar a favoritos al jugador con foco.", (16, 82), size='sm', color='azul')
         draw_button(screen, _volver(), "VOLVER", _volver().collidepoint(mouse_pos))
 
         if not recs:
@@ -129,6 +150,9 @@ def _render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                 draw_text(screen, linea, (x, y), size='sm', color='blanco')
                 y += 22
             draw_button(screen, bf, "FICHAR", bf.collidepoint(mouse_pos))
+        from alpha_football.ui.ficha_jugador import dibujar_boton_favorito      # v0.4.27.0
+        for (j, _c, _e, _p, _m), rf in zip(recs, _rects_favorito(len(recs))):
+            dibujar_boton_favorito(screen, rf, estado, j, mouse_pos)
 
         marcar(screen, rects_foco[foco])
         msg = estado.get('ojeador_msg')

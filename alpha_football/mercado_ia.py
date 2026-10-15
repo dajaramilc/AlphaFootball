@@ -141,11 +141,8 @@ def ingresos_fin_temporada(estado: dict, rng: Optional[random.Random] = None, pa
                 eq.balance = presupuesto_nuevo_ia(eq, tipo, division, resultado, bool(campeon), cobertura=hueco)
             except Exception as e_pres:
                 logger.error(f"No se pudo reajustar el presupuesto de {getattr(eq, 'nombre', '?')}: {e_pres}")
-    try:    # v0.4.25.0: tras cobrar, ningún club pasa del techo de presupuesto
-        from alpha_football.finanzas import limitar_presupuestos
-        limitar_presupuestos(estado)
-    except Exception as e_techo:
-        logger.error(f"No se pudo aplicar el techo de presupuesto: {e_techo}")
+    # v0.4.27.0: sin recorte general aquí: presupuesto_nuevo_ia ya topa el presupuesto de cada club que cierra
+    # (un recorte a todos tocaría de paso a los clubes del otro continente, que aún están a mitad de temporada)
     for eq in quebrados:
         try:
             quiebra_ia(estado, eq, azar)
@@ -189,13 +186,15 @@ def quiebra_ia(estado: dict, eq: Any, rng: Optional[random.Random] = None) -> li
     try:    # v0.4.23.0: es una noticia (antes, un correo de Prensa)
         from alpha_football.calendario import texto_fecha
         from alpha_football import noticias
-        lineas = [f"{j.nombre_completo} ({j.posicion} {j.overall}) por ${p / 1_000_000:.1f}M" for j, _c, p in rematados]
+        # v0.4.27.0: un jugador por párrafo, con el nombre en negrita
+        lineas = [f"{noticias.negrita(j.nombre_completo)} ({j.posicion} {j.overall}) por ${p / 1_000_000:.1f}M"
+                  for j, _c, p in rematados]
         plazo = f"hasta el {texto_fecha(vence)}" if vence else "durante unos días"
         noticias.publicar(estado, 'economia', f"Quiebra en {eq.nombre}",
                           f"{eq.nombre} se ha declarado en quiebra. La liga le resta {PUNTOS_QUIEBRA} puntos y no podrá "
                           "fichar esta temporada. "
-                          + ("Pone en remate a: " + "; ".join(lineas) + f". Puede ficharlos {plazo}; después se irán al "
-                             "club que los pague." if lineas else "No tenía jugadores para rematar."),
+                          + (("Pone en remate a:\n\n" + "\n\n".join(lineas) + f"\n\nPuede ficharlos {plazo}; después se "
+                              "irán al club que los pague.") if lineas else "No tenía jugadores para rematar."),
                           importancia=4, equipos=[eq], jugadores=[j for j, _c, _p in rematados],
                           accion=C.accion('buscador_screen', "VER BUSCADOR"))
     except Exception as e_c:
@@ -210,6 +209,7 @@ def resolver_remates(estado: dict, rng: Optional[random.Random] = None) -> list:
     pagarlos; el que no encuentra comprador sigue en remate. Retorna [(jugador, comprador o None, precio)].
     """
     from alpha_football import correo as C
+    from alpha_football.noticias import negrita
     dc = estado.get('datos_carrera') or {}
     pendientes = dc.get('remates') or []
     if not pendientes:
@@ -222,7 +222,7 @@ def resolver_remates(estado: dict, rng: Optional[random.Random] = None) -> list:
     azar = rng or random.Random()
     mi_equipo = estado.get('mi_equipo')
     ligas = ligas_de_la_partida(estado)
-    resueltos, por_club = [], {}
+    resueltos, por_club, jugadores_club = [], {}, {}
     for r in vencidos:
         try:
             eq = next((c for liga, _t, _d in ligas for c in liga.equipos if c.nombre == r.get('club')), None)
@@ -244,18 +244,20 @@ def resolver_remates(estado: dict, rng: Optional[random.Random] = None) -> list:
                 except Exception as e_h:
                     logger.error(f"No se pudo registrar el remate: {e_h}")
             resueltos.append((j, comprador, precio))
-            por_club.setdefault(eq.nombre, []).append(
-                f"{j.nombre_completo} ({j.posicion} {j.overall}) → "
+            por_club.setdefault(eq.nombre, []).append(      # v0.4.27.0: nombre en negrita, un jugador por párrafo
+                f"{negrita(j.nombre_completo)} ({j.posicion} {j.overall}) → "
                 + (f"{comprador.nombre} por ${precio / 1_000_000:.1f}M" if comprador is not None
                    else f"sin comprador: sigue disponible por ${precio / 1_000_000:.1f}M"))
+            jugadores_club.setdefault(eq.nombre, []).append(j)
         except Exception as e_r:
             logger.error(f"No se pudo resolver el remate de {r.get('jugador', '?')}: {e_r}")
     for club, lineas in por_club.items():
         try:    # v0.4.23.0: es una noticia (antes, un correo de Prensa)
             from alpha_football import noticias
             noticias.publicar(estado, 'economia', f"Remate de {club}",
-                              f"Se cerró el plazo del remate de {club}. " + "; ".join(lineas) + ".", importancia=3,
+                              f"Se cerró el plazo del remate de {club}:\n\n" + "\n\n".join(lineas), importancia=3,
                               equipos=[c for liga, _t, _d in ligas for c in liga.equipos if c.nombre == club][:1],
+                              jugadores=jugadores_club.get(club, []),
                               accion=C.accion('buscador_screen', "VER BUSCADOR"))
         except Exception as e_c:
             logger.error(f"No se pudo publicar la noticia del remate: {e_c}")

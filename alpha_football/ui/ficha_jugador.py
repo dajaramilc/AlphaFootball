@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 
 def _valor(j) -> int:
     v = int(getattr(j, 'valor', 0) or 0)
-    if v <= 0:
+    # v0.4.27.0: el lesionado vale menos; el valor guardado puede ser anterior a la lesión (se sincroniza por día)
+    if v <= 0 or int(getattr(j, 'lesion_dias', 0) or 0) > 0:
         try:
             from alpha_football.market import calcular_valor
             v = int(calcular_valor(j))
@@ -82,6 +83,18 @@ def dibujar_ficha(screen, rect: pygame.Rect, j, estado_txt: str = "", extra: Opt
             linea += f"  ·  {estado_txt}"
         draw_text(screen, _ajustar(linea, rect.width - 40), (x, y), size='sm', color='azul')
         y += 30
+        dias_lesion = int(getattr(j, 'lesion_dias', 0) or 0)
+        if dias_lesion > 0:     # v0.4.27.0: la lesión a la vista (y de paso, que por eso vale menos)
+            try:
+                from alpha_football.energia import texto_lesion
+                from alpha_football.market import descuento_por_lesion
+                baja = int(round(descuento_por_lesion(dias_lesion) * 100))      # el % real según los días que faltan
+                txt_les = f"LESIONADO — {texto_lesion(dias_lesion)}" + (f"  ·  vale {baja}% menos" if baja >= 1 else "")
+            except Exception as e_les:
+                logger.error(f"No se pudo armar el texto de la lesión: {e_les}")
+                txt_les = f"LESIONADO — {dias_lesion} días"
+            draw_text(screen, _ajustar(txt_les, rect.width - 40), (x, y), size='sm', color='rojo')
+            y += 24
         draw_text(screen, f"MEDIA {j.overall}   POTENCIAL {getattr(j, 'potencial', 0) or '?'}", (x, y), size='md', color='verde')
         y += 30
         draw_text(screen, f"Valor {dinero_exacto(_valor(j))}  ·  Moral {j.moral}  ·  Energía {int(getattr(j, 'energia', 100))}",
@@ -146,3 +159,50 @@ def dibujar_ficha(screen, rect: pygame.Rect, j, estado_txt: str = "", extra: Opt
     except Exception as e:
         logger.error(f"Error al dibujar la ficha del jugador: {e}")
     return y
+
+
+# --- v0.4.27.0: favoritos desde cualquier ficha de un jugador ajeno ----------------------------------------------
+# Usa el sistema de siempre (negociacion.es_favorito / alternar_favorito: por nombre completo en
+# datos_carrera['favoritos'], sin tope). Lo comparten NOTICIAS, el ojeador y la negociación; el buscador y
+# FAVORITOS ya tenían su botón. La tecla es F en todas.
+
+TECLA_FAVORITO = pygame.K_f
+
+
+def puede_ser_favorito(estado: dict, j) -> bool:
+    """Solo se sigue a un jugador de otro club o libre: los de tu plantilla no (favoritos() los excluye)."""
+    try:
+        mi = estado.get('mi_equipo')
+        nombre = getattr(j, 'nombre_completo', None)
+        if mi is None or j is None or not nombre:
+            return False
+        return nombre not in {x.nombre_completo for x in getattr(mi, 'jugadores', []) or []}
+    except Exception as e:
+        logger.error(f"No se pudo comprobar si es un posible favorito: {e}")
+        return False
+
+
+def dibujar_boton_favorito(screen, rect: pygame.Rect, estado: dict, j, mouse_pos) -> None:
+    """Botón AGREGAR A FAVORITOS / QUITAR DE FAVORITOS (con su estrella, como en el buscador). No dibuja nada si
+    el jugador es de tu plantilla."""
+    if not puede_ser_favorito(estado, j):
+        return
+    try:
+        from alpha_football import negociacion as N
+        from alpha_football.ui.buscador_screen import dibujar_boton_favorito as _boton
+        _boton(screen, rect, N.es_favorito(estado, j), mouse_pos)
+    except Exception as e:
+        logger.error(f"No se pudo dibujar el botón de favoritos: {e}")
+
+
+def alternar_favorito(estado: dict, j) -> Optional[str]:
+    """Agrega o quita a `j` de favoritos (sin duplicar) y devuelve el aviso para mostrar; None si no se puede."""
+    if not puede_ser_favorito(estado, j):
+        return None
+    try:
+        from alpha_football import negociacion as N
+        queda = N.alternar_favorito(estado, j)
+        return f"{j.nombre_completo} {'agregado a' if queda else 'quitado de'} favoritos"
+    except Exception as e:
+        logger.error(f"No se pudo cambiar el favorito: {e}")
+        return None

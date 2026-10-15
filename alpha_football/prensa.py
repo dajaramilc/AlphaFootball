@@ -20,10 +20,21 @@ TONOS = ('motivador', 'provocador', 'humilde', 'agresivo', 'ironico', 'diplomati
 FACTOR_TENSION = 1.6                  # factor de tarjetas del siguiente partido tras una respuesta agresiva
 MOTIVOS = ('copa_final', 'copa_semi', 'clasico', 'titulo', 'descenso', 'lider',      # por prioridad
            'debut', 'cierre', 'racha_mala', 'racha_buena', 'lesionados', 'favorito', 'david', 'rival_directo',
-           'figura', 'copa_ronda')
+           'figura', 'copa_ronda',
+           # v0.4.27.0: según la situación real de la copa (primera fase, ida, vuelta) y de la liga
+           'grupos', 'grupos_lider', 'grupos_clasificado', 'grupos_peligro', 'grupos_milagro', 'grupos_eliminado',
+           'copa_ida', 'vuelta_ventaja', 'vuelta_remontada', 'vuelta_igualada', 'copa_penales',
+           'vuelta_remontada_ok', 'vuelta_ventaja_perdida',
+           'titulo_cerca', 'campeon_ya', 'descendido', 'ultima_jornada', 'salvado')
 # solo se eligen si lo demás no pide conferencia; las goleadas se deciden con el marcador (postpartido)
 _BAJA_PRIORIDAD = ('lider', 'debut', 'cierre', 'racha_mala', 'racha_buena', 'lesionados', 'favorito', 'david',
-                   'rival_directo', 'figura', 'copa_ronda')
+                   'rival_directo', 'figura', 'copa_ronda', 'grupos', 'grupos_lider', 'grupos_clasificado')
+# v0.4.27.0: motivos de copa cuyo banco del postpartido se elige por quién avanza (gana = avanzas), no por el marcador
+_MOTIVOS_POR_LLAVE = ('copa_final', 'copa_semi', 'copa_ronda', 'copa_penales', 'vuelta_remontada_ok',
+                      'vuelta_ventaja_perdida')
+_FASES_GRUPOS = ('Fase de liga', 'Fase de grupos')    # primera etapa de cada copa (competiciones.ETAPAS)
+_CORTE_GRUPOS = {'champions': 24, 'libertadores': 2}  # cuántos puestos pasan de esa primera etapa
+_MAX_JORNADAS = 60                                    # más que esto no es un calendario de liga: sin matemática
 UMBRAL_GOLEADA = 3                    # diferencia de goles para que el postpartido hable de una goleada
 RACHA_BUENA = 3                       # victorias seguidas
 RACHA_MALA = 2                        # derrotas seguidas (o SIN_GANAR partidos sin ganar)
@@ -380,6 +391,9 @@ BANCO = {
 
 # v0.4.25.0: banco ampliado (preguntas nuevas para los motivos de siempre + motivos contextuales nuevos)
 from alpha_football.prensa_banco import BANCO_EXTRA, PREGUNTAS_EXTRA, MOTIVO_TEXTO_EXTRA   # noqa: E402
+# v0.4.27.0: banco según la situación real (copa: primera fase / ida / vuelta; liga: título, descenso, último partido)
+from alpha_football.prensa_banco_contexto import (   # noqa: E402
+    BANCO_CONTEXTO, MOTIVO_TEXTO_CONTEXTO, DECLARACIONES_GENERALES, DECLARACIONES_POR_MOTIVO)
 
 
 def _fusionar_banco() -> None:
@@ -389,12 +403,16 @@ def _fusionar_banco() -> None:
             BANCO[motivo]['post'].setdefault(resultado, []).extend(preguntas)
     for motivo, grupos in BANCO_EXTRA.items():
         BANCO[motivo] = grupos
+    for motivo, grupos in BANCO_CONTEXTO.items():
+        BANCO[motivo] = grupos
     MOTIVO_TEXTO.update(MOTIVO_TEXTO_EXTRA)
+    MOTIVO_TEXTO.update(MOTIVO_TEXTO_CONTEXTO)
 
 
 _fusionar_banco()
 
 # Lo que dice el DT rival en la previa (se muestra en el overlay; su costo es -1 de moral si respondes).
+# v0.4.27.0: más variaciones y, según el motivo del partido, declaraciones que encajan con lo que se juega.
 DECLARACIONES_RIVAL = (
     "No tenemos nada que temer de {club}. Vamos a imponer nuestro juego.",
     "{club} es un buen equipo, pero vamos a salir a por los tres puntos.",
@@ -402,7 +420,8 @@ DECLARACIONES_RIVAL = (
     "Que nadie se confíe: {club} tiene que ganarnos, y no será fácil.",
     "Vamos a salir a ganar, como siempre. Lo que haga {club} es su problema.",
     "{club} ha tenido altibajos y nosotros llegamos en un gran momento.",
-)
+) + DECLARACIONES_GENERALES
+_PROB_DECLARACION_DE_MOTIVO = 0.6    # con un motivo que tiene declaraciones propias, sale una de ellas el 60 % de las veces
 
 
 # ------------------------------------------------------------------ datos y búsquedas
@@ -499,32 +518,47 @@ def _contador(estado: dict, clave: str) -> int:
         return 0
 
 
-def _tu_figura(mi) -> Optional[object]:
-    """El jugador de tu plantel que más goles lleva en la temporada (a igualdad, el de más media)."""
+def _tu_figura(mi, solo_disponibles: bool = False) -> Optional[object]:
+    """El jugador de tu plantel que más goles lleva en la temporada (a igualdad, el de más media). v0.4.27.0: en la
+    previa (`solo_disponibles`) un lesionado o sancionado no puede ser la figura de la que habla la pregunta."""
     jugadores = list(getattr(mi, 'jugadores', None) or [])
+    if solo_disponibles:
+        disponibles = []
+        for j in jugadores:
+            try:
+                if j.disponible:
+                    disponibles.append(j)
+            except Exception as e:
+                logger.error(f"prensa: no se pudo ver si {getattr(j, 'apellido', '?')} está disponible: {e}")
+                disponibles.append(j)
+        jugadores = disponibles
     if not jugadores:
         return None
     return max(jugadores, key=lambda j: (int(getattr(j, 'goles', 0) or 0), int(getattr(j, 'overall', 0) or 0)))
 
 
-def contexto(estado: dict, local, visitante, modo: str, pos: Optional[int] = None) -> dict:
+def contexto(estado: dict, local, visitante, modo: str, pos: Optional[int] = None, fase: str = 'pre') -> dict:
     """Lo que la conferencia sabe del momento (los datos que rellenan las preguntas y deciden el motivo): puesto tuyo y
-    del rival, rachas, lesionados, tu figura y la ronda de copa. Nunca lanza: lo que no se pueda leer queda en 0."""
+    del rival, rachas, lesionados, tu figura y la ronda de copa. Nunca lanza: lo que no se pueda leer queda en 0.
+    v0.4.27.0: en copa, también el marcador de la ida (`ida`) y tus puntos / partidos que quedan de la primera fase."""
     ctx = {'puesto': 0, 'rival_puesto': 0, 'n': 0, 'jornada': 0, 'quedan': 99, 'racha': _contador(estado, 'racha'),
            'derrotas': _contador(estado, 'derrotas_seguidas'), 'sin_ganar': _contador(estado, 'sin_ganar'),
-           'lesionados': 0, 'jugador': '', 'jugador_id': '', 'goles_figura': 0, 'fase': ''}
+           'lesionados': 0, 'jugador': '', 'jugador_id': '', 'goles_figura': 0, 'fase': '', 'ida': ''}
     try:
         liga, mi = estado.get('liga'), estado.get('mi_equipo')
         if mi is not None:
             ctx['lesionados'] = sum(1 for j in getattr(mi, 'jugadores', None) or []
                                     if int(getattr(j, 'lesion_dias', 0) or 0) > 0)
-            figura = _tu_figura(mi)
+            figura = _tu_figura(mi, solo_disponibles=(fase == 'pre'))
             if figura is not None:
                 ctx['jugador'] = str(getattr(figura, 'apellido', '') or getattr(figura, 'nombre', ''))
                 ctx['jugador_id'] = str(getattr(figura, 'id', ''))
                 ctx['goles_figura'] = int(getattr(figura, 'goles', 0) or 0)
         if modo == 'copa':
             ctx['fase'] = str((estado.get('partido_copa_dict') or {}).get('fase', '') or '')
+            ida = situacion_copa(estado).get('ida')
+            if ida is not None:
+                ctx['ida'] = f"{ida[0]}-{ida[1]}"
         if modo == 'liga' and liga is not None and mi is not None and getattr(liga, 'equipos', None):
             tabla = sorted(liga.equipos, key=lambda x: (getattr(x, 'puntos', 0), getattr(x, 'gf', 0) - getattr(x, 'gc', 0),
                                                         getattr(x, 'gf', 0)), reverse=True)
@@ -541,11 +575,307 @@ def contexto(estado: dict, local, visitante, modo: str, pos: Optional[int] = Non
     return ctx
 
 
+# ------------------------------------------------------------------ v0.4.27.0: la situación real de copa y de liga
+def _goles_del_user(partido: Optional[dict], user: str) -> Optional[tuple]:
+    """(goles tuyos, goles del rival) de un partido ya jugado del motor de competiciones; None si no se jugó."""
+    if not partido or not partido.get('jugado'):
+        return None
+    gl, gv = int(partido.get('gl', 0) or 0), int(partido.get('gv', 0) or 0)
+    return (gl, gv) if partido.get('local') == user else (gv, gl)
+
+
+def _penales_del_user(partido: Optional[dict], user: str) -> Optional[tuple]:
+    """(penales tuyos, del rival) si el partido se definió desde los doce pasos (el motor los guarda como
+    {'a': del local, 'b': del visitante}); None si no hubo tanda."""
+    pen = (partido or {}).get('penales')
+    try:
+        if isinstance(pen, dict):
+            a, b = int(pen.get('a', 0)), int(pen.get('b', 0))
+        elif isinstance(pen, (list, tuple)) and len(pen) == 2:
+            a, b = int(pen[0]), int(pen[1])
+        else:
+            return None
+    except (TypeError, ValueError):
+        return None
+    return (a, b) if partido.get('local') == user else (b, a)
+
+
+def _estado_grupos(filas: list, restan: dict, corte: int, user: str, rival: str = '') -> dict:
+    """Dónde está el user en la tabla de su primera etapa: 'eliminado' (ya no le alcanza ni ganando todo) |
+    'clasificado' (pase asegurado) | 'milagro' (le queda una mínima posibilidad matemática) | 'peligro' (una derrota
+    lo dejaría fuera, o está fuera del corte con poco tiempo) | 'lider' | 'normal'. Solo usa cotas seguras (puntos
+    máximos posibles; un empate de puntos cuenta en contra del user). `restan` = partidos por jugar de cada club."""
+    pts = {f['nombre']: int(f['pts']) for f in filas}
+    pos = next((i + 1 for i, f in enumerate(filas) if f['nombre'] == user), 0)
+    if not pos:
+        return {'estado': 'normal', 'pos': 0, 'puntos': 0, 'quedan': 0}
+    mios, r = pts[user], int(restan.get(user, 0))
+    sit = {'estado': 'normal', 'pos': pos, 'puntos': mios, 'quedan': r}
+    otros = [n for n in pts if n != user]
+    if sum(1 for n in otros if pts[n] > mios + 3 * r) >= corte:
+        sit['estado'] = 'eliminado'
+    elif sum(1 for n in otros if pts[n] + 3 * int(restan.get(n, 0)) >= mios) < corte:
+        sit['estado'] = 'clasificado'
+    else:
+        linea = int(filas[corte - 1]['pts']) if len(filas) >= corte else mios     # el último que pasa hoy
+        falta = linea - mios
+        if pos > corte and falta >= max(1, 3 * r - 1):
+            sit['estado'] = 'milagro'
+        elif pos > corte and falta >= 1 and r <= 2:
+            sit['estado'] = 'peligro'
+        elif r >= 1 and sum(1 for n in otros
+                            if pts[n] + (3 if n == rival else 0) > mios + 3 * (r - 1)) >= corte:
+            sit['estado'] = 'peligro'                       # si pierde este partido, matemáticamente queda fuera
+        elif len(filas) > 1 and pos == 1 and mios > int(filas[1]['pts']):
+            sit['estado'] = 'lider'
+    return sit
+
+
+def _leer_grupos(c: dict, sit: dict, user: str, rival: str) -> None:
+    """Completa `sit` con tu lugar en la fase de liga (Champions) o en tu grupo (Libertadores)."""
+    from alpha_football import competiciones as CP
+    tipo = c.get('tipo')
+    etapa = 'Fase de liga' if tipo == 'champions' else 'Fase de grupos'
+    partidos = [p for p in c.get('partidos', []) if p.get('fase') == etapa]
+    if tipo == 'champions':
+        nombres = [x['nombre'] for x in c.get('clubes', [])]
+    else:
+        gi = next((i for i, g in enumerate(c.get('grupos') or []) if user in g), None)
+        if gi is None:
+            return
+        nombres = list(c['grupos'][gi])
+        partidos = [p for p in partidos if p.get('grupo') == gi]
+    if user not in nombres:
+        return
+    restan = {n: 0 for n in nombres}
+    for p in partidos:
+        if not p.get('jugado'):
+            for n in (p.get('local'), p.get('visitante')):
+                if n in restan:
+                    restan[n] += 1
+    sit.update(_estado_grupos(CP.tabla(nombres, partidos), restan, _CORTE_GRUPOS.get(tipo, 2), user, rival))
+
+
+def _leer_llave(c: dict, p: dict, sit: dict, user: str) -> None:
+    """Completa `sit` con el resultado de la ida, el global y (ya jugado) si avanzas y si fue por penales."""
+    por_id = {x.get('id'): x for x in c.get('partidos', [])}
+    actual = por_id.get(p.get('id'))
+    ida = por_id.get(p.get('ida_de')) if p.get('ida_de') else None
+    sit['ida'] = _goles_del_user(ida, user)
+    mio = _goles_del_user(actual, user)                      # None mientras no se juega
+    if mio is None:
+        return
+    sit['jugado'] = True
+    glob = mio if not p.get('ida_de') else (None if sit['ida'] is None
+                                            else (sit['ida'][0] + mio[0], sit['ida'][1] + mio[1]))
+    sit['global'] = glob
+    pen = _penales_del_user(actual, user)
+    llaves = c.get('llaves') or []
+    k = actual.get('llave')
+    llave = llaves[k] if isinstance(k, int) and 0 <= k < len(llaves) else {}
+    ganador = llave.get('ganador') or (c.get('campeon') if sit['tipo'] == 'final' else None)
+    if ganador:
+        sit['avanza'] = (ganador == user)
+    elif glob is not None and glob[0] != glob[1]:
+        sit['avanza'] = glob[0] > glob[1]
+    elif pen is not None:
+        sit['avanza'] = pen[0] > pen[1]
+    if glob is not None and glob[0] == glob[1] and pen is not None:
+        sit['penales'] = pen
+
+
+def _leer_intercontinental(estado: dict, sit: dict, user: str) -> None:
+    """La final Intercontinental (partido único; su resultado vive en datos_carrera['intercontinental'])."""
+    reg = (estado.get('datos_carrera') or {}).get('intercontinental') or {}
+    if not reg.get('jugado'):
+        return
+    es_local = reg.get('local') == user
+    gl, gv = int(reg.get('gl', 0) or 0), int(reg.get('gv', 0) or 0)
+    sit['jugado'], sit['global'] = True, ((gl, gv) if es_local else (gv, gl))
+    pen = reg.get('penales')
+    if isinstance(pen, dict):
+        a, b = int(pen.get('a', 0) or 0), int(pen.get('b', 0) or 0)
+        sit['penales'] = (a, b) if es_local else (b, a)
+    if reg.get('campeon'):
+        sit['avanza'] = (reg['campeon'] == user)
+
+
+def situacion_copa(estado: dict) -> dict:
+    """v0.4.27.0: qué se juega el user en su partido de copa actual (partido_copa_dict), leído del motor de
+    competiciones. Nunca lanza: lo que no se pueda leer queda en su valor neutro (la conferencia cae en 'copa_ronda').
+    - tipo: 'grupos' (fase de liga / de grupos) | 'ida' | 'vuelta' | 'final' | '' (sin partido de copa)
+    - estado (solo 'grupos'): 'eliminado' | 'clasificado' | 'milagro' | 'peligro' | 'lider' | 'normal'
+    - ida: (goles tuyos, del rival) de la ida, en la vuelta  - global: ida + este partido (ya jugado)
+    - avanza: True / False cuando la llave ya se resolvió (postpartido), si no None  - penales: (tuyos, del rival)"""
+    sit = {'tipo': '', 'fase': '', 'copa': '', 'estado': 'normal', 'pos': 0, 'puntos': 0, 'quedan': 0,
+           'ida': None, 'global': None, 'jugado': False, 'avanza': None, 'penales': None}
+    try:
+        p = estado.get('partido_copa_dict') or {}
+        fase = str(p.get('fase', '') or '')
+        sit['fase'] = fase
+        if fase in _FASES_GRUPOS:
+            sit['tipo'] = 'grupos'
+        elif re.search(r'\bfinal\b', fase.lower()):
+            sit['tipo'] = 'final'
+        elif p.get('ida_de'):
+            sit['tipo'] = 'vuelta'
+        elif fase:
+            sit['tipo'] = 'ida'
+        user = str(getattr(estado.get('mi_equipo'), 'nombre', '') or '')
+        if not sit['tipo'] or not user:
+            return sit
+        from alpha_football import competiciones as CP
+        copa = p.get('tipo') or CP.tipo_copa_user(estado) or ''
+        sit['copa'] = str(copa)
+        if copa == 'intercontinental':
+            _leer_intercontinental(estado, sit, user)
+            return sit
+        c = CP.copa(estado, copa) if copa else None
+        if not c:
+            return sit
+        if sit['tipo'] == 'grupos':
+            rival = p.get('visitante') if p.get('local') == user else p.get('local')
+            _leer_grupos(c, sit, user, str(rival or ''))
+        elif sit['tipo'] in ('vuelta', 'final'):
+            _leer_llave(c, p, sit, user)
+    except Exception as e:
+        logger.error(f"prensa: no se pudo leer la situación de la copa: {e}")
+    return sit
+
+
+def _puntos_antes_de(liga, jornada: int) -> dict:
+    """{id del club: puntos antes de esa jornada}: el postpartido ya trae el resultado dentro de la tabla, así que
+    se le resta lo que cada club sacó en la jornada (su calendario dice los marcadores)."""
+    pts = {x.id: int(getattr(x, 'puntos', 0) or 0) for x in liga.equipos}
+    for p in getattr(liga, 'calendario', None) or []:
+        if getattr(p, 'jornada', None) != jornada or not getattr(p, 'jugado', False):
+            continue
+        gl, gv = int(getattr(p, 'goles_local', 0) or 0), int(getattr(p, 'goles_visitante', 0) or 0)
+        for club, delta in ((p.local_id, 3 if gl > gv else (1 if gl == gv else 0)),
+                            (p.visitante_id, 3 if gv > gl else (1 if gl == gv else 0))):
+            if club in pts:
+                pts[club] -= delta
+    return pts
+
+
+def situacion_liga(estado: dict, ctx: dict, fase: str) -> dict:
+    """v0.4.27.0: la matemática real de la liga del user, con cotas seguras (los puntos que le quedan por jugar).
+    - campeon_ya: ya era campeón ANTES de este partido  - cerca: ganando este partido asegura el título
+    - campeon_ahora (postpartido): es campeón con este resultado  - titulo_vivo (postpartido): aún puede serlo
+    - descendido: el descenso es matemático (1ª división)  - salvado (último partido): se salvó en la última jornada
+    Nunca lanza: ante cualquier duda, todo en False (se usan los motivos de siempre)."""
+    s = {'campeon_ya': False, 'cerca': False, 'campeon_ahora': False, 'titulo_vivo': True, 'descendido': False,
+         'salvado': False}
+    try:
+        liga, mi = estado.get('liga'), estado.get('mi_equipo')
+        quedan, n = int(ctx.get('quedan', 99)), len(getattr(liga, 'equipos', None) or [])
+        if liga is None or mi is None or not n or not (0 < quedan <= _MAX_JORNADAS):
+            return s
+        post = fase == 'post'
+        ahora = {x.id: int(getattr(x, 'puntos', 0) or 0) for x in liga.equipos}
+        if mi.id not in ahora:
+            return s
+        antes = _puntos_antes_de(liga, int(ctx.get('jornada', 0) or 0)) if post else ahora
+
+        def rival_fuerte(pts: dict) -> int:
+            return max((v for k, v in pts.items() if k != mi.id), default=0)
+        p0, q0 = antes[mi.id], rival_fuerte(antes)
+        s['campeon_ya'] = p0 > q0 + 3 * quedan
+        s['cerca'] = (not s['campeon_ya']) and p0 + 3 > q0 + 3 * quedan
+        primera = getattr(liga, 'division', 1) == 1
+        ref, r = (ahora, quedan - 1) if post else (antes, quedan)      # r = partidos que le quedan después
+        if primera:
+            s['descendido'] = sum(1 for k, v in ref.items() if k != mi.id and v > ref[mi.id] + 3 * r) >= n - 2
+        if post:
+            p1, q1 = ahora[mi.id], rival_fuerte(ahora)
+            if r > 0:
+                s['campeon_ahora'] = p1 > q1 + 3 * r
+                s['titulo_vivo'] = p1 + 3 * r >= q1
+            else:                                        # terminó la liga: manda la tabla (puntos, diferencia, goles)
+                orden = sorted(liga.equipos, key=lambda x: (getattr(x, 'puntos', 0), getattr(x, 'gf', 0) - getattr(x, 'gc', 0),
+                                                            getattr(x, 'gf', 0)), reverse=True)
+                rank = next((i + 1 for i, x in enumerate(orden) if x.id == mi.id), 0)
+                s['campeon_ahora'] = s['titulo_vivo'] = (rank == 1)
+                if primera:
+                    s['descendido'] = rank >= n - 1
+                    s['salvado'] = int(ctx.get('puesto', 0) or 0) >= n - 2 and 0 < rank <= n - 2
+    except Exception as e:
+        logger.error(f"prensa: no se pudo calcular la matemática de la liga: {e}")
+    return s
+
+
+def _motivo_copa(estado: dict, local, visitante, fase: str) -> tuple:
+    """(motivo, situación de copa) de un partido de copa: la final, la vuelta según la ida (y, en el postpartido, según
+    quién avanzó y cómo), la semifinal de ida, el clásico, la ida de las demás rondas y la primera fase según el lugar
+    en la tabla. Si el motor no da datos cae en 'copa_semi' / 'copa_ronda', como antes."""
+    sit = situacion_copa(estado)
+    t, post = sit['tipo'], fase == 'post'
+    semi = 'semi' in sit['fase'].lower()
+    if t == 'final':
+        return 'copa_final', sit
+    if t == 'vuelta':
+        if not post and sit['ida'] is not None:
+            gf, gc = sit['ida']
+            return ('vuelta_ventaja' if gf > gc else 'vuelta_remontada' if gf < gc else 'vuelta_igualada'), sit
+        if post and sit['avanza'] is not None:
+            if sit['penales'] is not None:
+                return 'copa_penales', sit
+            if sit['ida'] is not None and sit['avanza'] and sit['ida'][0] < sit['ida'][1]:
+                return 'vuelta_remontada_ok', sit
+            if sit['ida'] is not None and not sit['avanza'] and sit['ida'][0] > sit['ida'][1]:
+                return 'vuelta_ventaja_perdida', sit
+        return ('copa_semi' if semi else 'copa_ronda'), sit
+    if t == 'ida' and semi:
+        return ('copa_ida' if post else 'copa_semi'), sit
+    from alpha_football.data.clasicos import es_clasico
+    if es_clasico(local, visitante):
+        return 'clasico', sit
+    if t == 'ida':
+        return 'copa_ida', sit
+    if t == 'grupos':
+        return {'eliminado': 'grupos_eliminado', 'milagro': 'grupos_milagro', 'clasificado': 'grupos_clasificado',
+                'peligro': 'grupos_peligro', 'lider': 'grupos_lider'}.get(sit['estado'], 'grupos'), sit
+    return 'copa_ronda', sit
+
+
+def _motivo_liga(estado: dict, ctx: dict, fase: str) -> tuple:
+    """(motivo, matemática de la liga) de un partido de liga con el puesto ya conocido. Primero lo que ya está
+    decidido o se decide hoy (título, descenso, última jornada); luego lo de siempre."""
+    liga = estado.get('liga')
+    puesto, n, jornada, quedan = ctx['puesto'], ctx['n'], ctx['jornada'], ctx['quedan']
+    post = fase == 'post'
+    sl = situacion_liga(estado, ctx, fase)
+    if post and quedan == 1:                                 # terminó la liga: el postpartido habla de cómo acabó
+        if sl['campeon_ahora']:
+            return ('campeon_ya' if sl['campeon_ya'] else 'titulo_cerca'), sl
+        if sl['descendido']:
+            return 'descendido', sl
+        return ('salvado' if sl['salvado'] else 'ultima_jornada'), sl
+    if sl['campeon_ya']:
+        return 'campeon_ya', sl
+    if post and sl['campeon_ahora']:                         # lo cerró en este partido
+        return 'titulo_cerca', sl
+    if sl['descendido']:
+        return 'descendido', sl
+    if sl['cerca']:
+        return 'titulo_cerca', sl
+    diferencia = ctx.get('diferencia_lider', 0)
+    if quedan <= 6 and (puesto == 1 or diferencia <= 3) and (not post or sl['titulo_vivo']):
+        return 'titulo', sl
+    if getattr(liga, 'division', 1) == 1 and puesto >= n - 1 and jornada >= 4:
+        return 'descenso', sl
+    if puesto == 1 and jornada >= 4:
+        return 'lider', sl
+    return _motivo_contextual(ctx, fase), sl
+
+
 def _motivo_contextual(ctx: dict, fase: str) -> Optional[str]:
     """Los motivos de contexto (v0.4.25.0), por prioridad. Se llaman solo cuando no hay título, descenso ni liderato."""
     n, puesto, rival, jornada = ctx['n'], ctx['puesto'], ctx['rival_puesto'], ctx['jornada']
     if jornada == 1:
         return 'debut'
+    if ctx['quedan'] == 1:                                   # v0.4.27.0: el último partido de la liga
+        return 'ultima_jornada'
     if 0 < ctx['quedan'] <= 2:
         return 'cierre'
     if ctx['derrotas'] >= RACHA_MALA or ctx['sin_ganar'] >= SIN_GANAR:
@@ -566,46 +896,43 @@ def _motivo_contextual(ctx: dict, fase: str) -> Optional[str]:
     return None
 
 
+def _resolver_motivo(estado: dict, local, visitante, modo: str, pos: Optional[int] = None,
+                     fase: str = 'pre') -> tuple:
+    """(motivo o None, extra) con `extra` = {'copa': situacion_copa o None, 'liga': situacion_liga o None}: lo que el
+    postpartido necesita para elegir el banco de preguntas (quién avanzó, si se cerró el título…)."""
+    extra = {'copa': None, 'liga': None}
+    try:
+        if modo == 'amistoso':
+            return None, extra
+        if modo == 'copa':
+            motivo, extra['copa'] = _motivo_copa(estado, local, visitante, fase)
+            return motivo, extra
+        from alpha_football.data.clasicos import es_clasico
+        if es_clasico(local, visitante):
+            return 'clasico', extra
+        if modo != 'liga':
+            return None, extra
+        liga, mi = estado.get('liga'), estado.get('mi_equipo')
+        if liga is None or mi is None or not getattr(liga, 'equipos', None):
+            return None, extra
+        ctx = contexto(estado, local, visitante, modo, pos, fase)
+        if not ctx['puesto']:
+            return None, extra
+        motivo, extra['liga'] = _motivo_liga(estado, ctx, fase)
+        return motivo, extra
+    except Exception as e:
+        logger.error(f"prensa: no se pudo evaluar el motivo del partido: {e}")
+    return None, extra
+
+
 def motivo_partido(estado: dict, local, visitante, modo: str, pos: Optional[int] = None,
                    fase: str = 'pre') -> Optional[str]:
     """Por qué este partido merece una conferencia (o None). `pos` pisa el puesto de liga del user (el post-partido
-    usa el de antes del partido). Nunca en amistosos. Los motivos de tabla solo valen en liga; en copa, la final y
-    la semifinal tienen los suyos y cualquier otra ronda es 'copa_ronda'. `fase` ('pre' | 'post'): la enfermería
-    llena solo se pregunta en la previa."""
-    try:
-        if modo == 'amistoso':
-            return None
-        if modo == 'copa':
-            fase_copa = str((estado.get('partido_copa_dict') or {}).get('fase', '')).lower()
-            if re.search(r'\bfinal\b', fase_copa):
-                return 'copa_final'
-            if 'semi' in fase_copa:
-                return 'copa_semi'
-        from alpha_football.data.clasicos import es_clasico
-        if es_clasico(local, visitante):
-            return 'clasico'
-        if modo == 'copa':
-            return 'copa_ronda'
-        if modo != 'liga':
-            return None
-        liga, mi = estado.get('liga'), estado.get('mi_equipo')
-        if liga is None or mi is None or not getattr(liga, 'equipos', None):
-            return None
-        ctx = contexto(estado, local, visitante, modo, pos)
-        puesto, n, jornada, quedan = ctx['puesto'], ctx['n'], ctx['jornada'], ctx['quedan']
-        if not puesto:
-            return None
-        diferencia = ctx.get('diferencia_lider', 0)
-        if quedan <= 6 and (puesto == 1 or diferencia <= 3):
-            return 'titulo'
-        if getattr(liga, 'division', 1) == 1 and puesto >= n - 1 and jornada >= 4:
-            return 'descenso'
-        if puesto == 1 and jornada >= 4:
-            return 'lider'
-        return _motivo_contextual(ctx, fase)
-    except Exception as e:
-        logger.error(f"prensa: no se pudo evaluar el motivo del partido: {e}")
-    return None
+    usa el de antes del partido). Nunca en amistosos. Los motivos de tabla solo valen en liga. v0.4.27.0: en copa
+    manda la situación real (primera fase según tu lugar en la tabla, ida, vuelta según la ida, final) y en liga
+    también lo que está matemáticamente decidido (título, descenso, último partido). `fase` ('pre' | 'post'): la
+    enfermería llena solo se pregunta en la previa."""
+    return _resolver_motivo(estado, local, visitante, modo, pos, fase)[0]
 
 
 def _marcas(ctx: Optional[dict], club: str, rival: str) -> dict:
@@ -613,13 +940,34 @@ def _marcas(ctx: Optional[dict], club: str, rival: str) -> dict:
     ctx = ctx or {}
     return {'rival': rival, 'club': club, 'jugador': ctx.get('jugador') or "tu goleador",
             'fase': ctx.get('fase') or "la copa", 'puesto': f"{ctx.get('puesto') or '?'}º",
-            'racha': str(ctx.get('racha') or RACHA_BUENA), 'lesionados': str(ctx.get('lesionados') or MIN_LESIONADOS)}
+            'racha': str(ctx.get('racha') or RACHA_BUENA), 'lesionados': str(ctx.get('lesionados') or MIN_LESIONADOS),
+            'ida': ctx.get('ida') or "la ida"}
+
+
+def _clave_post(motivo: str, resultado: str, extra: Optional[dict]) -> str:
+    """Qué grupo del banco del postpartido se usa: el resultado del partido, salvo que la eliminatoria o el título
+    se hayan decidido de otra forma (v0.4.27.0): en copa 'gana' = avanzas y 'pierde' = quedas fuera; el título
+    cerrado sin ganar tiene su grupo."""
+    extra = extra or {}
+    cs, sl = extra.get('copa') or {}, extra.get('liga') or {}
+    if cs.get('tipo') in ('vuelta', 'final') and cs.get('avanza') is not None and motivo in _MOTIVOS_POR_LLAVE:
+        return 'gana' if cs['avanza'] else 'pierde'
+    if motivo == 'titulo_cerca' and sl.get('campeon_ahora') and resultado != 'gana':
+        return 'campeon_sin_ganar'
+    return resultado
+
+
+def _grupo_post(motivo: str, clave: Optional[str]) -> list:
+    """Las preguntas del postpartido de ese motivo para esa clave (o las de 'cualquiera' si no importa el resultado)."""
+    post = BANCO.get(motivo, {}).get('post') or {}
+    return post.get(clave or 'empata') or post.get('cualquiera') or []
 
 
 def _pregunta(motivo: str, fase: str, resultado: Optional[str], clave: str, club: str, rival: str,
               ctx: Optional[dict] = None) -> dict:
-    """La pregunta (determinista por partido y fase) con sus marcas ya rellenadas."""
-    grupo = BANCO[motivo]['pre'] if fase == 'pre' else BANCO[motivo]['post'][resultado or 'empata']
+    """La pregunta (determinista por partido y fase) con sus marcas ya rellenadas. `resultado` es la clave del grupo
+    del postpartido (gana | empata | pierde, o la de `_clave_post`)."""
+    grupo = BANCO[motivo]['pre'] if fase == 'pre' else _grupo_post(motivo, resultado)
     q = copy.deepcopy(random.Random(f"{clave}:{fase}").choice(grupo))
     marcas = _marcas(ctx, club, rival)
     # el elogio solo sube la moral de tu figura si la pregunta habla de ella ({jugador}); si no, es para el plantel
@@ -632,6 +980,16 @@ def _pregunta(motivo: str, fase: str, resultado: Optional[str], clave: str, club
     q['texto'] = _llenar(q['texto'])
     q['respuestas'] = {t: _llenar(x) for t, x in q['respuestas'].items()}
     return q
+
+
+def _declaracion_rival(clave: str, motivo: str) -> str:
+    """Lo que dice el DT rival en la previa (determinista por partido): una de las generales o, si el motivo tiene
+    declaraciones propias, una de ellas la mayoría de las veces (v0.4.27.0)."""
+    rng = random.Random(f"{clave}:dt")
+    propias = DECLARACIONES_POR_MOTIVO.get(motivo) or ()
+    if propias and rng.random() < _PROB_DECLARACION_DE_MOTIVO:
+        return rng.choice(propias)
+    return rng.choice(DECLARACIONES_RIVAL)
 
 
 def evaluar_pre(estado: dict, local, visitante, modo: str) -> Optional[dict]:
@@ -656,7 +1014,7 @@ def evaluar_pre(estado: dict, local, visitante, modo: str) -> Optional[dict]:
         mi, rival = estado.get('mi_equipo'), _rival_de(estado, local, visitante)
         club, nombre_rival = getattr(mi, 'nombre', 'tu club'), getattr(rival, 'nombre', 'el rival')
         dt = _nombre_dt(estado, rival)
-        frase = random.Random(f"{clave}:dt").choice(DECLARACIONES_RIVAL).replace('{club}', club)
+        frase = _declaracion_rival(clave, motivo).replace('{club}', club)
         ctx = contexto(estado, local, visitante, modo)
         pregunta = _pregunta(motivo, 'pre', None, clave, club, nombre_rival, ctx)
         pregunta_jugador = bool(pregunta.get('usa_jugador'))
@@ -674,6 +1032,51 @@ def evaluar_pre(estado: dict, local, visitante, modo: str) -> Optional[dict]:
         return None
 
 
+def _figura_encaja(estado: dict, ctx: dict, resultado: str) -> bool:
+    """¿Tiene sentido la pregunta por tu figura tras este partido? Ganar o empatar «gracias a él» pide que haya
+    marcado o asistido; perder «sin estar fino» pide que no lo haya hecho. Si no jugó, no se le pregunta. Lee las
+    filas del postpartido (estado['postpartido']); si no están, no puede saberlo y la deja pasar."""
+    try:
+        pp = estado.get('postpartido') or {}
+        filas = list(pp.get('filas_l') or []) + list(pp.get('filas_v') or [])
+        if not filas:
+            return True
+        mi = estado.get('mi_equipo')
+        figura = next((j for j in getattr(mi, 'jugadores', None) or []
+                       if str(getattr(j, 'id', '')) == str(ctx.get('jugador_id') or '')), None)
+        if figura is None:
+            return True
+        nombre = getattr(figura, 'nombre_completo', None) or getattr(figura, 'apellido', None)
+        fila = next((f for f in filas if f.get('nombre') == nombre), None)
+        if fila is None:
+            return False                                  # no jugó
+        decisivo = int(fila.get('g', 0) or 0) + int(fila.get('a', 0) or 0) > 0
+        return decisivo if resultado == 'gana' else (not decisivo)
+    except Exception as e:
+        logger.error(f"prensa: no se pudo ver la actuación de tu figura: {e}")
+        return True
+
+
+def _nota_cierre(cs: dict, motivo: Optional[str]) -> str:
+    """Cómo se definió la eliminatoria cuando el marcador del partido no lo cuenta (penales o global), para la
+    noticia: 'y clasificar en los penales (4-3)'. Vacío si el marcador ya lo dice todo."""
+    try:
+        if not cs or cs.get('avanza') is None or cs.get('tipo') not in ('vuelta', 'final'):
+            return ''
+        avanza, final = bool(cs['avanza']), cs['tipo'] == 'final'
+        pen, glob = cs.get('penales'), cs.get('global')
+        if pen is not None:
+            quien = ("y ganar la copa" if final else "y clasificar") if avanza else \
+                    ("y perder la final" if final else "y quedar eliminado")
+            return f"{quien} en los penales ({pen[0]}-{pen[1]})"
+        if cs['tipo'] == 'vuelta' and glob is not None:
+            return (f"y clasificar por el global ({glob[0]}-{glob[1]})" if avanza
+                    else f"y quedar eliminado por el global ({glob[0]}-{glob[1]})")
+    except Exception as e:
+        logger.error(f"prensa: no se pudo armar la nota de la eliminatoria: {e}")
+    return ''
+
+
 def evaluar_post(estado: dict, local, visitante, gl: int, gv: int, modo: str,
                  pos_antes: Optional[int] = None) -> Optional[dict]:
     """Conferencia de después del partido (el resultado ya está jugado). `pos_antes` = puesto de liga antes del partido."""
@@ -683,18 +1086,25 @@ def evaluar_post(estado: dict, local, visitante, gl: int, gv: int, modo: str,
         clave = _clave(estado, local, visitante, modo)
         if _ya_hecha(estado, clave, 'post'):
             return None
-        motivo = motivo_partido(estado, local, visitante, modo, pos=pos_antes, fase='post')
+        motivo, extra = _resolver_motivo(estado, local, visitante, modo, pos_antes, 'post')
         mi, rival = estado.get('mi_equipo'), _rival_de(estado, local, visitante)
         es_local = _es_mi(estado, local)
         gf, gc = (int(gl), int(gv)) if es_local else (int(gv), int(gl))
         resultado = 'gana' if gf > gc else ('pierde' if gf < gc else 'empata')
-        if abs(gf - gc) >= UMBRAL_GOLEADA and (motivo is None or motivo in _BAJA_PRIORIDAD):
+        ctx = contexto(estado, local, visitante, modo, pos_antes, 'post')
+        if motivo == 'figura' and not _figura_encaja(estado, ctx, resultado):
+            motivo = None                              # v0.4.27.0: no preguntes por quien no jugó o no hizo lo que dice
+        cs = extra.get('copa') or {}
+        resuelve_llave = cs.get('tipo') in ('vuelta', 'final') and cs.get('avanza') is not None
+        if (abs(gf - gc) >= UMBRAL_GOLEADA and (motivo is None or motivo in _BAJA_PRIORIDAD)
+                and not resuelve_llave):
             motivo = 'goleada_favor' if gf > gc else 'goleada_contra'      # el marcador manda sobre el contexto menor
-        if not motivo or not (BANCO.get(motivo, {}).get('post') or {}).get(resultado):
+            extra = {}
+        clave_banco = _clave_post(motivo, resultado, extra) if motivo else resultado
+        if not motivo or not _grupo_post(motivo, clave_banco):
             return None
         club, nombre_rival = getattr(mi, 'nombre', 'tu club'), getattr(rival, 'nombre', 'el rival')
-        ctx = contexto(estado, local, visitante, modo, pos_antes)
-        pregunta = _pregunta(motivo, 'post', resultado, clave, club, nombre_rival, ctx)
+        pregunta = _pregunta(motivo, 'post', clave_banco, clave, club, nombre_rival, ctx)
         pregunta_jugador = bool(pregunta.get('usa_jugador'))
         estado['prensa_overlay'] = {
             'fase': 'post', 'clave': clave, 'modo': modo, 'motivo': motivo,
@@ -703,7 +1113,8 @@ def evaluar_post(estado: dict, local, visitante, gl: int, gv: int, modo: str,
             'jugador_id': ctx.get('jugador_id', '') if pregunta_jugador else '',
             'rival': nombre_rival, 'rival_id': str(getattr(rival, 'id', '')), 'club': club,
             'dt_rival': None, 'declaracion': None,
-            'resultado': resultado, 'marcador': f"{gf}-{gc}", 'respuesta': None}
+            'resultado': resultado, 'marcador': f"{gf}-{gc}", 'nota': _nota_cierre(cs, motivo),
+            'respuesta': None}
         return estado['prensa_overlay']
     except Exception as e:
         logger.error(f"prensa: no se pudo armar la conferencia posterior: {e}", exc_info=True)
@@ -829,6 +1240,8 @@ def responder(estado: dict, conferencia: Optional[dict] = None, tono: str = 'hum
         else:
             verbo = {'gana': "ganar", 'empata': "empatar", 'pierde': "perder"}[conf['resultado']]
             cuando = f"Tras {verbo} {conf['marcador']} ante {rival}"
+            if conf.get('nota'):                           # v0.4.27.0: cómo se definió la eliminatoria (penales / global)
+                cuando += f" {conf['nota']}"
         _publicar(estado, _titular_de(tono, club, objetivo_nombre, conf.get('jugador') if tono == 'elogioso' else ''),
                   f"{cuando}, el DT de {club} dijo: «{texto}»", _IMPORTANCIA[tono],
                   f"prensa:{conf['clave']}:{conf['fase']}", [mi, conf.get('rival_id')])

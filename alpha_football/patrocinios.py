@@ -336,7 +336,7 @@ def firmar(estado: dict, oferta_id: int, con_prima: bool = False) -> tuple:
             prima = int(c['fijo'] * PRIMA_FRAC)
             c['fijo'] = int(c['fijo'] * PRIMA_FIJO)
             mi.balance = int(mi.balance) + prima
-            registrar(estado, 'patrocinio', prima)
+            registrar(estado, 'patrocinio', prima, concepto=f"Prima de firma de {c['marca']}")   # v0.4.27.0
             extra = f" Prima de firma: {_m(prima)}."
         p['contratos'][espacio] = c
         p['ofertas'] = [x for x in p['ofertas'] if x.get('espacio') != espacio]
@@ -408,7 +408,7 @@ def rescindir(estado: dict, espacio: str, rng: Optional[random.Random] = None) -
         if int(mi.balance) < multa:
             return False, f"Saldo insuficiente para la multa de {_m(multa)}."
         mi.balance = int(mi.balance) - multa
-        registrar(estado, 'patrocinio', -multa)
+        registrar(estado, 'patrocinio', -multa, concepto=f"Multa por rescindir con {c['marca']}")   # v0.4.27.0
         p['contratos'][espacio] = None
         _rep(p, REP_RESCISION)
         ventana = _ventana(estado)
@@ -457,7 +457,8 @@ def evaluar_temporada(estado: dict, posicion: int, temporada: int) -> Optional[d
             if ok is True:
                 bono = int(c.get('bono', 0) or 0)
                 mi.balance = int(mi.balance) + bono
-                registrar(estado, 'patrocinio', bono, int(temporada))
+                registrar(estado, 'patrocinio', bono, int(temporada),
+                          concepto=f"Bono de {c['marca']} por cumplir su objetivo")   # v0.4.27.0
                 total += bono
                 _rep(p, REP_CUMPLE)
                 lineas.append(f"{quien}: objetivo cumplido ({c['objetivo']['texto']}). Bono de {_m(bono)}.")

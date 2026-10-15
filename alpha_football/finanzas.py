@@ -42,23 +42,25 @@ CLAVES_LIBRO = ['taquilla', 'patrocinio', 'salarios', 'fichajes', 'ventas', 'pre
                 'camisetas']  # v3.2.0: + espaldarazo; v0.4.26.0: + venta de camisetas
 
 
-def _valor(j) -> int:
+def _valor(j, sano: bool = False) -> int:
+    """Valor de mercado del jugador. v0.4.27.0: `sano=True` ignora la lesión (base de sueldos y cláusulas)."""
     try:
         from alpha_football.market import calcular_valor
-        return int(calcular_valor(j))
+        return int(calcular_valor(j, con_lesion=not sano))
     except Exception:
         return int(getattr(j, 'valor', 0) or 0)
 
 
 def salario_mercado(j) -> int:
-    """v3.1.0: lo que 'merece' cobrar según su valor (base de contratos y de la moral)."""
-    return max(SALARIO_MIN, int(_valor(j) * SALARIO_PCT_VALOR))
+    """v3.1.0: lo que 'merece' cobrar según su valor (base de contratos y de la moral).
+    v0.4.27.0: con su valor sano: estar lesionado no abarata el sueldo."""
+    return max(SALARIO_MIN, int(_valor(j, sano=True) * SALARIO_PCT_VALOR))
 
 
 def contrato_inicial(j, rng: Optional[random.Random] = None) -> tuple[int, int, int]:
     """(salario anual, años, cláusula) de un contrato nuevo según valor y edad."""
     azar = rng or random.Random(f"{j.nombre}|{j.apellido}|{j.edad}|{j.posicion}")
-    v = _valor(j)
+    v = _valor(j, sano=True)
     edad = int(getattr(j, 'edad', 25) or 25)
     if edad <= 23:
         anios = azar.randint(3, 5)
@@ -90,13 +92,15 @@ def _todos_los_equipos(estado: dict) -> list:
     return equipos
 
 
-TECHO_PRESUPUESTO = 350_000_000       # v0.4.25.0: ningún club (el tuyo incluido) guarda más de 350 M€ en caja
+TECHO_PRESUPUESTO = 350_000_000       # v0.4.25.0: el presupuesto con que arranca una temporada no pasa de 350 M$
+# v0.4.27.0: durante la temporada un club SÍ puede juntar más de 350 M$; el techo solo recorta el presupuesto
+# nuevo al empezar la temporada (presupuesto_temporada / presupuesto_nuevo_ia). El reloj y la carga ya no recortan.
 
 
 def limitar_presupuestos(estado: dict) -> int:
-    """Recorta a TECHO_PRESUPUESTO el saldo de todo club de la partida y devuelve cuántos recortó. Es idempotente:
-    sirve de migración al cargar un guardado (los clubes grandes llegaron a juntar 3.000 M€ temporada a temporada)
-    y de red de seguridad cada día y al cobrar los ingresos de fin de temporada."""
+    """Recorta a TECHO_PRESUPUESTO el saldo de todo club de la partida y devuelve cuántos recortó. Es idempotente.
+    v0.4.27.0: ya no la llama el reloj ni la carga del guardado (el recorte es solo al empezar temporada nueva y
+    ya va dentro de presupuesto_temporada / presupuesto_nuevo_ia); queda como utilidad de migración."""
     recortados = 0
     clubes = _todos_los_equipos(estado) + list(getattr(estado.get('liga'), 'equipos', None) or [])
     for eq in clubes:
@@ -167,6 +171,31 @@ def ingreso_anual_camisetas(estado: dict) -> int:
 def valor_camisetas(estado: dict) -> int:
     """Lo que las camisetas suman al valor del club."""
     return MULT_VALOR_CAMISETAS * ingreso_anual_camisetas(estado)
+
+
+# v0.4.27.0: la meta de Marca de la directiva puede ser de camisetas: cobrar esta temporada un 10% más de lo que
+# dejaría la popularidad de hoy (con tope: la popularidad media exigida nunca pasa del 95% del máximo).
+FACTOR_META_CAMISETAS = 1.10
+POP_META_TOPE = POPULARIDAD_MAX * 0.95
+
+
+def meta_camisetas(estado: dict) -> int:
+    """Lo que debe cobrar el club por camisetas en la temporada para cumplir la meta de Marca (0 = sin base)."""
+    pop = popularidad(estado)
+    if pop <= 0:
+        return 0
+    exigida = min(pop * FACTOR_META_CAMISETAS, POP_META_TOPE)
+    return int(ingreso_anual_camisetas(estado) * exigida / pop)
+
+
+def cobrado_camisetas(estado: dict, temporada: Optional[int] = None) -> int:
+    """Camisetas cobradas en `temporada` (la actual por defecto), leídas del libro sin reiniciarlo."""
+    try:
+        t = int(temporada if temporada is not None else estado.get('temporada', 1) or 1)
+        return int(libro_de(estado, t).get('camisetas', 0) or 0)
+    except Exception as e:
+        logger.error(f"No se pudo leer lo cobrado en camisetas: {e}")
+        return 0
 
 
 def _cambiar_popularidad(estado: dict, delta: float) -> float:
@@ -300,8 +329,61 @@ def libro(estado: dict) -> dict:
     return lib
 
 
-def registrar(estado: dict, clave: str, monto: int, temporada: Optional[int] = None) -> None:
-    """Suma al libro de la temporada actual (o al de `temporada` si es la anterior)."""
+def libro_de(estado: dict, temporada: int) -> dict:
+    """v0.4.27.0: el libro de `temporada` (la actual o la anterior) SIN reiniciar nada; {} si no lo hay."""
+    dc = estado.get('datos_carrera') or {}
+    for lib in (dc.get('finanzas'), dc.get('finanzas_anterior')):
+        if isinstance(lib, dict) and lib.get('temporada') == int(temporada):
+            return lib
+    return {}
+
+
+# --- v0.4.27.0: historial de transacciones del club del user (FINANZAS › HISTORIAL DE TRANSACCIONES) ----------
+HISTORIAL_MAX = 600                       # movimientos guardados en datos_carrera['transacciones'] (salen los más viejos)
+GASTOS_LIBRO = ('salarios', 'fichajes')   # en estas claves del libro un monto positivo es un gasto (resta)
+CONCEPTO_LIBRO = {'taquilla': "Taquilla", 'patrocinio': "Patrocinio", 'salarios': "Salarios", 'fichajes': "Fichaje",
+                  'ventas': "Venta de jugador", 'premios': "Premio", 'directiva': "Directiva",
+                  'camisetas': "Venta de camisetas"}
+
+
+def anotar_movimiento(estado: dict, concepto: str, importe: int, clave: str = '') -> None:
+    """Una línea del historial de transacciones (fecha real del reloj del juego). `importe` va con signo: + entra,
+    − sale. Importe 0 no se anota. Un fallo aquí nunca debe impedir el movimiento de dinero."""
+    try:
+        importe = int(importe or 0)
+        if importe == 0:
+            return
+        dc = estado.setdefault('datos_carrera', {})
+        lista = dc.get('transacciones')
+        if not isinstance(lista, list):
+            lista = dc['transacciones'] = []
+        try:    # el reloj del juego (la misma fecha con que se sellan los correos); sin reloj, sin fecha
+            from alpha_football.correo import _hoy_iso
+            fecha = _hoy_iso(estado)
+        except Exception as e_fecha:
+            logger.error(f"No se pudo leer la fecha del movimiento: {e_fecha}")
+            fecha = None
+        lista.append({'fecha': fecha, 'temporada': int(estado.get('temporada', 1) or 1),
+                      'jornada': int(getattr(estado.get('liga'), 'jornada_actual', 1) or 1),
+                      'concepto': str(concepto or CONCEPTO_LIBRO.get(clave, "Movimiento"))[:90],
+                      'importe': importe, 'clave': clave})
+        if len(lista) > HISTORIAL_MAX:
+            del lista[:len(lista) - HISTORIAL_MAX]
+    except Exception as e:
+        logger.error(f"No se pudo anotar el movimiento '{concepto}' en el historial: {e}")
+
+
+def transacciones(estado: dict) -> list:
+    """El historial del club del user, el más reciente primero (lista vacía en partidas viejas)."""
+    lista = (estado.get('datos_carrera') or {}).get('transacciones')
+    return [t for t in reversed(lista) if isinstance(t, dict)] if isinstance(lista, list) else []
+
+
+def registrar(estado: dict, clave: str, monto: int, temporada: Optional[int] = None,
+              concepto: Optional[str] = None) -> None:
+    """Suma al libro de la temporada actual (o al de `temporada` si es la anterior).
+    v0.4.27.0: además anota el movimiento en el historial de transacciones (`concepto` lo describe; sin él, el
+    nombre de la clave). `monto` positivo en una clave de gasto (salarios, fichajes) sale del saldo."""
     dc = estado.setdefault('datos_carrera', {})
     anterior = dc.get('finanzas_anterior') or {}
     actual = dc.get('finanzas') or {}
@@ -312,6 +394,12 @@ def registrar(estado: dict, clave: str, monto: int, temporada: Optional[int] = N
     else:
         lib = libro(estado)
     lib[clave] = int(lib.get(clave, 0)) + int(monto)
+    es_gasto = clave in GASTOS_LIBRO
+    importe = -int(monto) if es_gasto else int(monto)
+    if not concepto:
+        base = CONCEPTO_LIBRO.get(clave, str(clave).capitalize())
+        concepto = base if (importe < 0) == es_gasto else f"{base} (ajuste)"
+    anotar_movimiento(estado, concepto, importe, clave)
 
 
 def quitar_de_plantilla(equipo, jugador) -> None:
@@ -425,10 +513,11 @@ def procesar_jornada(estado: dict, es_local: bool, gf: int, gc: int) -> dict:
     except Exception as e_cam:
         logger.error(f"Error en la venta de camisetas: {e_cam}")
     mi.balance = int(mi.balance) + patrocinio + taquilla + camisetas - salarios
-    registrar(estado, 'patrocinio', patrocinio)
-    registrar(estado, 'taquilla', taquilla)
-    registrar(estado, 'camisetas', camisetas)
-    registrar(estado, 'salarios', salarios)
+    jornada = int(getattr(liga, 'jornada_actual', 1) or 1)       # v0.4.27.0: conceptos del historial
+    registrar(estado, 'patrocinio', patrocinio, concepto=f"Patrocinio · jornada {jornada}")
+    registrar(estado, 'taquilla', taquilla, concepto=f"Taquilla · jornada {jornada} (local, {resultado})")
+    registrar(estado, 'camisetas', camisetas, concepto=f"Venta de camisetas · jornada {jornada}")
+    registrar(estado, 'salarios', salarios, concepto=f"Salarios · jornada {jornada}")
     dc = estado.setdefault('datos_carrera', {})
     estado.pop('aviso_finanzas', None)
     from alpha_football import correo as C
@@ -525,7 +614,10 @@ def aplicar_presupuesto_temporada(estado: dict) -> Optional[dict]:
     info = presupuesto_temporada(base, int(getattr(mi, 'balance', 0) or 0),
                                  reg.get('objetivo_resultado', '') if propio else '',
                                  propio and reg.get('campeon_liga') == mi.nombre, campeon_copa)
+    saldo_previo = int(getattr(mi, 'balance', 0) or 0)
     mi.balance = info['total']
+    anotar_movimiento(estado, f"Presupuesto de la temporada {temporada} (el saldo no se arrastra)",
+                      info['total'] - saldo_previo, 'presupuesto')      # v0.4.27.0: el reinicio también es un movimiento
     try:   # v0.4.26.0: la temporada que cierra deja huella en la popularidad de las camisetas
         resultado = reg.get('objetivo_resultado', '') if propio else ''
         sube = POP_SUPERADO if resultado == 'superado' else POP_FALLADO if resultado == 'fallado' else 0.0

@@ -231,7 +231,7 @@ BANCO_EXTRA = {
                h="Respeto total. En copa no hay favoritos y cualquier descuido te manda a casa.",
                a="Que salgan a morder desde el minuto uno. En copa no hay segundas oportunidades.",
                s="Hablaré cuando termine el partido. Hoy toca trabajar, no dar titulares."),
-            _q("{rival} es un rival a partido único. ¿Cómo se prepara una eliminatoria?",
+            _q("{rival} es su rival en la copa. ¿Cómo se prepara una eliminatoria?",
                d="Con calma: analizando al rival y entendiendo que cada detalle cuenta en 90 minutos.",
                p="Preparándonos para ganar. {rival} tiene que saber que aquí no vienen de paseo.",
                i="Con el manual de siempre: marcar un gol más que ellos. Es un método infalible.",

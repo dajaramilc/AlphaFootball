@@ -11,6 +11,8 @@ import logging
 from datetime import date
 from typing import Optional
 
+from alpha_football.noticias import negrita, sin_marcas   # noqa: F401  v0.4.27.0: negrita en los cuerpos ('**x**')
+
 logger = logging.getLogger(__name__)
 
 MAX_CORREOS = 200
@@ -122,7 +124,7 @@ def enviar(estado: dict, remitente: str, asunto: str, cuerpo: str, accion: Optio
     msg = {'id': max((int(m.get('id', 0)) for m in lista), default=0) + 1,
            'temporada': int(estado.get('temporada', 1) or 1),
            'jornada': int(getattr(liga, 'jornada_actual', 1) or 1),
-           'remitente': remitente, 'asunto': str(asunto)[:80], 'cuerpo': str(cuerpo),
+           'remitente': remitente, 'asunto': sin_marcas(asunto)[:80], 'cuerpo': str(cuerpo),
            'leido': False, 'accion': accion,
            'club': getattr(estado.get('mi_equipo'), 'nombre', '')}
     if firma:

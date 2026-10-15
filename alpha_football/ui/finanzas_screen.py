@@ -36,6 +36,9 @@ R_ESP = pygame.Rect(16, 392, 1248, 304)        # v4.7.0: espaldarazo (antes cont
 R_ESPALDARAZO = pygame.Rect(R_ESP.x + 20, R_ESP.y + 150, 460, 44)
 R_CAMISETAS = pygame.Rect(R_ESP.x + 608, R_ESP.y + 96, 624, 164)     # v0.4.26.0: venta de camisetas (mitad derecha de R_ESP)
 R_OVERLAY = pygame.Rect(SCREEN_W // 2 - 360, 180, 720, 340)
+R_HISTORIAL = pygame.Rect(664, 12, 440, 40)       # v0.4.27.0: botón HISTORIAL DE TRANSACCIONES (junto a VOLVER)
+R_LISTA = pygame.Rect(16, 76, 1248, 620)          # v0.4.27.0: la lista del historial; termina en y=696
+FILAS_HISTORIAL, ALTO_FILA = 17, 30
 
 
 def _rects_espaldarazo() -> list:
@@ -44,6 +47,79 @@ def _rects_espaldarazo() -> list:
 
 def _volver() -> pygame.Rect:
     return pygame.Rect(1116, 12, 148, 40)
+
+
+def _texto_fecha_mov(mov: dict) -> str:
+    """'sáb 15 ago 2026' (la fecha real del reloj del juego); sin ella (partida sin reloj), 'T2 · J7'."""
+    try:
+        if mov.get('fecha'):
+            from datetime import date
+            from alpha_football.calendario import texto_fecha
+            return texto_fecha(date.fromisoformat(str(mov['fecha'])))
+    except Exception as e:
+        logger.debug(f"finanzas_screen: fecha ilegible en un movimiento: {e}")
+    return f"T{mov.get('temporada', '?')} · J{mov.get('jornada', '?')}"
+
+
+def _ajustar(texto: str, ancho: int) -> str:
+    """Recorta `texto` (con …) para que entre en `ancho` píxeles con la fuente chica."""
+    fuente = get_font('sm')
+    if fuente.size(texto)[0] <= ancho:
+        return texto
+    while texto and fuente.size(texto + "…")[0] > ancho:
+        texto = texto[:-1]
+    return texto.rstrip(" ·") + "…"
+
+
+def _paso_scroll(ev) -> int:
+    """Cuántas filas mueve este evento la lista del historial (rueda, flechas, RePág/AvPág, Inicio/Fin)."""
+    if ev.type == pygame.MOUSEWHEEL:
+        return -int(ev.y) * 3
+    if ev.type == pygame.KEYDOWN:
+        return {pygame.K_UP: -1, pygame.K_DOWN: 1, pygame.K_PAGEUP: -FILAS_HISTORIAL,
+                pygame.K_PAGEDOWN: FILAS_HISTORIAL, pygame.K_HOME: -10 ** 9, pygame.K_END: 10 ** 9}.get(ev.key, 0)
+    return 0
+
+
+def _dibujar_historial(screen: pygame.Surface, estado: dict, mi, liga, mouse_pos) -> None:
+    """v0.4.27.0: HISTORIAL DE TRANSACCIONES: cada movimiento de dinero del club (fecha real, concepto, importe),
+    el más reciente arriba y con scroll."""
+    movs = F.transacciones(estado)
+    maximo = max(0, len(movs) - FILAS_HISTORIAL)
+    desde = max(0, min(maximo, int(estado.get('historial_trans_scroll', 0) or 0)))
+    estado['historial_trans_scroll'] = desde
+    draw_gradient_bg(screen)
+    draw_text(screen, "HISTORIAL DE TRANSACCIONES", (16, 12), size='lg', color='dorado')
+    draw_text(screen, f"{mi.nombre}  ·  {liga.nombre}  ·  Temporada {estado.get('temporada', 1)}",
+              (16, 48), size='sm', color='verde')
+    draw_button(screen, _volver(), "VOLVER", _volver().collidepoint(mouse_pos))
+    draw_panel(screen, R_LISTA)
+    x, y = R_LISTA.x + 20, R_LISTA.y + 12
+    draw_text(screen, "FECHA", (x, y), size='sm', color='azul')
+    draw_text(screen, "CONCEPTO", (x + 250, y), size='sm', color='azul')
+    cuenta = f"{len(movs)} movimiento{'s' if len(movs) != 1 else ''}"
+    draw_text(screen, cuenta, (R_LISTA.right - 40 - get_font('sm').size(cuenta)[0], y), size='sm', color='azul')
+    y += 34
+    if not movs:
+        draw_text(screen, "Aún no hay movimientos: aparecerán aquí desde el próximo pago, cobro o fichaje.",
+                  (x, y + 10), size='sm', color='blanco')
+    for i, mov in enumerate(movs[desde:desde + FILAS_HISTORIAL]):
+        fila_y = y + i * ALTO_FILA
+        importe = int(mov.get('importe', 0) or 0)
+        draw_text(screen, _texto_fecha_mov(mov), (x, fila_y), size='sm', color='blanco')
+        draw_text(screen, _ajustar(str(mov.get('concepto', '')), 780), (x + 250, fila_y), size='sm', color='blanco')
+        txt = ("+" if importe >= 0 else "") + _m(importe)
+        ancho_txt = get_font('sm').size(txt)[0]
+        draw_text(screen, txt, (R_LISTA.right - 60 - ancho_txt, fila_y), size='sm',
+                  color='verde' if importe >= 0 else 'rojo')
+    if maximo > 0:      # barra de desplazamiento
+        pista = pygame.Rect(R_LISTA.right - 16, y, 6, FILAS_HISTORIAL * ALTO_FILA)
+        alto_dedo = max(24, int(pista.height * FILAS_HISTORIAL / len(movs)))
+        dedo = pygame.Rect(pista.x, pista.y + int((pista.height - alto_dedo) * desde / maximo), pista.width, alto_dedo)
+        pygame.draw.rect(screen, (30, 40, 60), pista, border_radius=3)
+        pygame.draw.rect(screen, COLORS['azul'], dedo, border_radius=3)
+    draw_text(screen, "↑ ↓ RePág AvPág o la rueda del ratón desplazan  ·  T o ESC para volver a FINANZAS",
+              (x, R_LISTA.bottom - 30), size='sm', color='azul')
 
 
 def _m(v) -> str:
@@ -64,12 +140,28 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         obj = D.definir_objetivo(estado) or {}
         mouse_pos = pygame.mouse.get_pos()
         abierto = bool(estado.get('espaldarazo_abierto'))
+        historial = bool(estado.get('historial_trans_abierto'))      # v0.4.27.0
         nivel = None
         for ev in pygame.event.get():
             if ev.type == pygame.QUIT:
                 return 'menu'
             clic = ev.pos if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1 else None
             esc = ev.type == pygame.KEYDOWN and ev.key in (pygame.K_ESCAPE, pygame.K_BACKSPACE)
+            tecla_t = ev.type == pygame.KEYDOWN and ev.key == pygame.K_t
+            if historial:     # v0.4.27.0: HISTORIAL DE TRANSACCIONES (T, ESC o VOLVER cierran; scroll con rueda/flechas)
+                if esc or tecla_t or (clic and _volver().collidepoint(clic)):
+                    estado.pop('historial_trans_abierto', None)
+                    estado.pop('historial_trans_scroll', None)
+                    historial = False
+                else:
+                    paso = _paso_scroll(ev)
+                    if paso:
+                        estado['historial_trans_scroll'] = max(0, int(estado.get('historial_trans_scroll', 0) or 0) + paso)
+                continue
+            if not abierto and (tecla_t or (clic and R_HISTORIAL.collidepoint(clic))):
+                estado['historial_trans_abierto'] = historial = True
+                estado['historial_trans_scroll'] = 0
+                continue
             if abierto:       # overlay del espaldarazo (1/2/3 o clic; ESC cierra)
                 if ev.type == pygame.KEYDOWN and ev.key in (pygame.K_1, pygame.K_2, pygame.K_3):
                     nivel = {pygame.K_1: 0, pygame.K_2: 1, pygame.K_3: 2}[ev.key]
@@ -93,6 +185,10 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             abierto = False
             obj = D.definir_objetivo(estado) or {}
 
+        if historial:     # v0.4.27.0: la pantalla del historial ocupa FINANZAS entera
+            _dibujar_historial(screen, estado, mi, liga, mouse_pos)
+            return None
+
         lib = F.libro(estado)
         n = max(1, int(liga.num_jornadas or 10))
         restantes = max(0, n - sum(1 for p in liga.calendario if p.jugado and mi.id in (p.local_id, p.visitante_id)))
@@ -112,6 +208,8 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
         draw_text(screen, f"{mi.nombre}  ·  {liga.nombre}  ·  Temporada {estado.get('temporada', 1)}",
                   (16, 48), size='sm', color='verde')
         draw_button(screen, _volver(), "VOLVER", _volver().collidepoint(mouse_pos))
+        draw_button(screen, R_HISTORIAL, "HISTORIAL DE TRANSACCIONES",     # v0.4.27.0
+                    (not abierto) and R_HISTORIAL.collidepoint(mouse_pos))
 
         # --- Saldo ---
         draw_panel(screen, R_SALDO)
@@ -198,10 +296,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
             barra(screen, pygame.Rect(cx, cy + 52, 560, 16), cam['popularidad'] / 100.0, 'dorado')
             draw_text(screen, f"Con la de hoy: {_m(cam['ingreso_anual'])} al año · cobrado esta temporada: "
                               f"{_m(cam['cobrado'])}", (cx, cy + 78), size='sm', color='blanco')
-            draw_text(screen, f"Suma {_m(cam['valor'])} al valor del club ({F.MULT_VALOR_CAMISETAS} años de camisetas)",
-                      (cx, cy + 104), size='sm', color='blanco')
-            draw_text(screen, "Se dispara si rindes por encima de la meta de la directiva y baja despacio.",
-                      (cx, cy + 130), size='sm', color='azul')
+            # v0.4.27.0: sin las dos líneas de abajo ("Suma X al valor del club…", "Se dispara si rindes…")
         except Exception as e_cam:
             logger.error(f"No se pudo mostrar la venta de camisetas: {e_cam}")
 

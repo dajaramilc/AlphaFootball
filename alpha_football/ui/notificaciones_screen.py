@@ -123,7 +123,7 @@ def render(screen: pygame.Surface, estado: dict) -> Optional[str]:
                           shadow=False)
                 draw_text(screen, m['asunto'][:56], (ri.x + 8, ri.y + 28), size='sm',
                           color='blanco' if m.get('leido') else 'dorado', shadow=False)
-                previa = " ".join(str(m.get('cuerpo', '')).split())[:64]
+                previa = " ".join(C.sin_marcas(m.get('cuerpo', '')).split())[:64]    # v0.4.27.0: sin las marcas de negrita
                 draw_text(screen, previa, (ri.x + 8, ri.y + 54), size='sm', color='azul', shadow=False)
             draw_button(screen, rect_todos(p), "VER TODOS", rect_todos(p).collidepoint(mouse_pos))
         return None

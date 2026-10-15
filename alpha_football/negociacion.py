@@ -77,16 +77,26 @@ def indemnizacion_liberacion(jugador) -> int:
     return int(int(jugador.salario) * anios * INDEMNIZACION_LIBERACION)
 
 
+def motivo_no_liberable(estado: dict, jugador) -> Optional[str]:
+    """v0.4.27.0: por qué no se puede liberar a `jugador` (None si se puede). La pantalla lo consulta antes de abrir
+    la confirmación; `liberar_jugador` lo vuelve a comprobar."""
+    mi = estado.get('mi_equipo')
+    if mi is None or jugador not in getattr(mi, 'jugadores', []):
+        return "El jugador no está en tu plantilla."
+    if getattr(jugador, 'prestamo', None):
+        return f"{jugador.nombre_completo} está a préstamo: no se puede liberar."
+    from alpha_football.traspasos_pendientes import pendiente_de
+    if pendiente_de(estado, jugador) is not None:
+        return f"{jugador.nombre_completo} ya tiene un acuerdo: no se puede liberar."
+    return None
+
+
 def liberar_jugador(estado: dict, jugador) -> tuple[bool, str]:
     """Rescinde el contrato, paga la indemnización y deja al jugador como agente libre."""
     mi = estado.get('mi_equipo')
-    if mi is None or jugador not in getattr(mi, 'jugadores', []):
-        return False, "El jugador no está en tu plantilla."
-    if getattr(jugador, 'prestamo', None):
-        return False, f"{jugador.nombre_completo} está a préstamo: no se puede liberar."
-    from alpha_football.traspasos_pendientes import pendiente_de
-    if pendiente_de(estado, jugador) is not None:
-        return False, f"{jugador.nombre_completo} ya tiene un acuerdo: no se puede liberar."
+    motivo = motivo_no_liberable(estado, jugador)
+    if motivo:
+        return False, motivo
 
     indemnizacion = indemnizacion_liberacion(jugador)
     from alpha_football import finanzas, prestamos
@@ -99,7 +109,8 @@ def liberar_jugador(estado: dict, jugador) -> tuple[bool, str]:
     limpiar(jugador)
     liberar(estado, jugador)
     mi.balance = int(mi.balance) - indemnizacion
-    finanzas.registrar(estado, 'salarios', indemnizacion)
+    finanzas.registrar(estado, 'salarios', indemnizacion,       # v0.4.27.0: concepto del historial de transacciones
+                       concepto=f"Indemnización por liberar a {jugador.nombre_completo}")
     registrar_pase(estado, jugador, mi.nombre, 'Libre (rescisión)', 0, True)
     estado.setdefault('transfer_log', []).append(
         f"Rescisión: {jugador.nombre_completo} liberado (indemnización ${indemnizacion:,})")
@@ -327,6 +338,8 @@ def mejores(pool: list, n: int = N_MEJORES) -> list:
 
 MAX_FICHAJES_IA_JORNADA = 4     # noticias de fichajes entre clubes de la IA por jornada: quedan las de más puntaje
 BONO_TU_LIGA = 3                # puntaje = media + esto si participa un club de tu liga (tus rivales pesan más)
+MAX_LIBERACIONES_IA_JORNADA = 2     # v0.4.27.0: noticias de liberaciones de la IA por jornada (las de más puntaje)
+PASES_LIBERACION = ('Libre', 'Libre (rescisión)')   # destino de un jugador que su club suelta (no: fin de contrato)
 
 
 def _hora_del_ultimo_dia(estado: dict) -> Optional[int]:
@@ -344,16 +357,135 @@ def _hora_del_ultimo_dia(estado: dict) -> Optional[int]:
         return None
 
 
+# v0.4.27.0: fichajes atípicos. Son variantes del titular y del cuerpo de la MISMA noticia del fichaje (etiqueta propia,
+# +1 de importancia y +2 de puntaje para el tope de la jornada; no la hacen salir si no pasaba ya el filtro de media).
+GANGA_PCT_MAX = 60               # "Ganga de mercado": se pagó el 60 % o menos del valor del jugador (el remate es el 60 %)
+GENEROSO_PCT_MIN = 150           # "Pago generoso": se pagó el 150 % o más de su valor
+MONTO_MINIMO_ATIPICO = 5_000_000   # ganga: su valor llega a esto; pago generoso: lo pagado llega a esto (sin calderilla)
+BONO_IMPORTANCIA_ATIPICO = 1
+BONO_PUNTAJE_ATIPICO = 2         # (la etiqueta de cada variante vive en noticias.ETIQUETA_VARIANTE)
+
+
+def _millones(monto) -> str:
+    """'$222M' (un decimal solo si hace falta: '$7.5M'); por debajo del millón, en miles ('$850K')."""
+    v = int(monto or 0)
+    if v >= 1_000_000:
+        m = f"{v / 1_000_000:.1f}".rstrip('0').rstrip('.')
+        return f"${m}M"
+    return f"${v // 1000}K"
+
+
+def _valor_de_referencia(jugador) -> int:
+    """El valor del jugador en este momento, el mismo que muestra su ficha: el guardado si está sano y, si está
+    lesionado, el calculado hoy (con el descuento por lesión de market.calcular_valor). Así el precio normal de un
+    lesionado (que el mercado ya rebaja por su lesión) no pasa por "ganga": solo cuenta pagar mucho menos que lo que
+    vale hoy, lesionado o no."""
+    v = int(getattr(jugador, 'valor', 0) or 0)
+    if v <= 0 or int(getattr(jugador, 'lesion_dias', 0) or 0) > 0:
+        try:
+            from alpha_football.market import calcular_valor
+            v = int(calcular_valor(jugador))
+        except Exception as e:
+            logger.error(f"No se pudo calcular el valor para la noticia del fichaje: {e}")
+            v = 0
+    return v
+
+
+def _variante_fichaje(jugador, de: str, a: str, monto: int, clubes: dict) -> tuple:
+    """('traicion' | 'ganga' | 'generoso' | '', % del valor pagado). Prioridad: traición > ganga / pago generoso.
+    Traición: el jugador pasa entre clubes rivales (data/clasicos.es_clasico). Los préstamos y los pases libres no
+    llegan aquí (monto 0 → ni ganga ni pago generoso)."""
+    try:
+        monto = int(monto or 0)
+        valor = _valor_de_referencia(jugador)
+        pct = int(round(monto / valor * 100)) if valor > 0 and monto > 0 else 0
+        from alpha_football.data.clasicos import es_clasico
+        if str(de) in clubes and str(a) in clubes and es_clasico(clubes[str(de)], clubes[str(a)]):
+            return 'traicion', pct
+        if monto > 0 and valor >= MONTO_MINIMO_ATIPICO and pct <= GANGA_PCT_MAX:
+            return 'ganga', pct
+        if monto >= MONTO_MINIMO_ATIPICO and pct >= GENEROSO_PCT_MIN:
+            return 'generoso', pct
+    except Exception as e:
+        logger.error(f"No se pudo ver si el fichaje es atípico: {e}")
+    return '', 0
+
+
+def _textos_variante(variante: str, pct: int, pre: str, nombre: str, de: str, a: str, monto: int, jugador,
+                     media: int, formas: list, cuerpo: str) -> tuple:
+    """(formas del titular, cuerpo) de la noticia del fichaje en su variante; ante un error, los de siempre."""
+    try:
+        m = _millones(monto)
+        pos = getattr(jugador, 'posicion', '')
+        base = f"{a} cerró el fichaje de {nombre} ({pos}, media {media}) desde {de} por {dinero_exacto(monto)}"
+        if variante == 'traicion':
+            return ([f"{pre}Traición: {nombre} deja a {de} por su rival {a}", f"{pre}{nombre} traiciona a {de} y ficha por {a}",
+                     f"{pre}Traición: {nombre} ficha por {a}", f"{pre}Traición de {nombre}"],
+                    f"{base}. {a} es el gran rival de {de}: la hinchada lo vive como una traición.")
+        if variante == 'ganga':
+            return ([f"{pre}Ganga de mercado: {a} ficha a {nombre} por {m}", f"{pre}Ganga: {nombre} ficha por {a} ({m})",
+                     f"{pre}Ganga de mercado: {nombre} a {a}", f"{pre}Ganga de {nombre}"],
+                    f"{base}, apenas el {pct} % de lo que vale hoy en el mercado. Una ganga.")
+        if variante == 'generoso':
+            return ([f"{pre}Pago generoso: {a} paga {m} por {nombre}", f"{pre}Pago generoso: {nombre} por {m} a {a}",
+                     f"{pre}Pago generoso: {a} paga {m}", f"{pre}Pago generoso por {nombre}"],
+                    f"{base}, el {pct} % de lo que vale hoy: mucho más de lo que marca el mercado.")
+    except Exception as e:
+        logger.error(f"No se pudo armar la noticia del fichaje atípico: {e}")
+    return formas, cuerpo
+
+
+def _noticia_record_traspaso(estado: dict, jugador, de: str, a: str, monto: int, propio: bool) -> bool:
+    """v0.4.27.0: el récord de traspaso arranca en el de Neymar ($222M, datos_carrera['records']['traspaso']). Un pase
+    que lo supera (estrictamente) se lleva el récord, queda guardado (el siguiente tiene que superar a este) y sale
+    como noticia aparte de tipo 'record', importancia 5: siempre, y no cuenta para el tope de fichajes de la jornada.
+    Devuelve True si fue récord (entonces `_noticia_fichaje` no publica el fichaje además)."""
+    try:
+        monto = int(monto or 0)
+        if monto <= 0:
+            return False
+        from alpha_football import noticias, noticias_gen
+        from alpha_football.mercado_ia import ligas_de_la_partida
+        rec = noticias_gen.record_traspaso(estado)
+        anterior, anterior_nombre = int(rec.get('valor', 0) or 0), str(rec.get('nombre') or '')
+        if monto <= anterior:
+            return False
+        nombre = f"{jugador.nombre} {jugador.apellido}"
+        media, pos = int(getattr(jugador, 'overall', 0) or 0), getattr(jugador, 'posicion', '')
+        rec.update({'valor': monto, 'nombre': nombre, 'temporada': int(estado.get('temporada', 1) or 1),
+                    'de': str(de), 'a': str(a)})
+        previo = f"el récord de {anterior_nombre}, {_millones(anterior)}" if anterior_nombre else f"el récord anterior, {_millones(anterior)}"
+        clubes = {c.nombre: c for liga, _t, _d in ligas_de_la_partida(estado) for c in liga.equipos}
+        noticias.publicar(
+            estado, 'record',
+            noticias.titular(f"Récord de traspaso: {nombre} ficha por {a} ({_millones(monto)})",
+                             f"Récord de traspaso: {a} paga {_millones(monto)} por {nombre}",
+                             f"Récord de traspaso: {_millones(monto)}"),
+            f"{a} paga {dinero_exacto(monto)} a {de} por {nombre} ({pos}, media {media}) y establece un nuevo récord de "
+            f"traspaso: supera {previo}.",
+            importancia=5, equipos=[clubes[n] for n in (str(a), str(de)) if n in clubes], jugadores=[jugador],
+            media=media, propio=bool(propio), traspaso_record=True)
+        return True
+    except Exception as e:
+        logger.error(f"No se pudo registrar el récord de traspaso: {e}")
+        return False
+
+
 def _noticia_fichaje(estado: dict, jugador, de: str, a: str, monto: int, propio: bool, confirmado: bool) -> None:
     """v0.4.23.0: un traspaso relevante es noticia.
     Tuyo (compra o venta): siempre; media >= 85 → importancia 5, >= 80 → 4, resto → 3.
     Entre clubes de la IA: desde media 80 (76 si participa un club de tu liga); >= 90 → 5, >= 85 → 4, resto → 3;
     y como la IA mueve cientos de jugadores, solo quedan los MAX_FICHAJES_IA_JORNADA de más puntaje de cada jornada.
-    `confirmado` (lo había adelantado un rumor): se publica siempre y no cuenta para ese tope."""
+    `confirmado` (lo había adelantado un rumor): se publica siempre y no cuenta para ese tope.
+    v0.4.27.0: un pase que supera el récord de traspaso es la noticia aparte de `_noticia_record_traspaso` (y este
+    fichaje no se repite); si no, puede salir como TRAICIÓN (entre clubes rivales), GANGA (≤ 60 % del valor) o PAGO
+    GENEROSO (≥ 150 %): el mismo fichaje con otro titular, +1 de importancia y sujeto al mismo tope."""
     from alpha_football import noticias
     from alpha_football.mercado_ia import ligas_de_la_partida
     from alpha_football.salidas import _clave_jornada
     media = int(getattr(jugador, 'overall', 0) or 0)
+    if _noticia_record_traspaso(estado, jugador, de, a, monto, propio):
+        return                               # v0.4.27.0: el récord de traspaso es su propia noticia; el fichaje no se repite
     tuyas = {c.nombre for c in getattr(estado.get('liga'), 'equipos', None) or []}
     de_tu_liga = str(a) in tuyas or str(de) in tuyas
     puntaje = media + (BONO_TU_LIGA if de_tu_liga else 0)
@@ -363,6 +495,11 @@ def _noticia_fichaje(estado: dict, jugador, de: str, a: str, monto: int, propio:
         if not confirmado and media < (76 if de_tu_liga else 80):
             return
         importancia = 5 if media >= 90 else 4 if media >= 85 else 3
+    clubes = {c.nombre: c for liga, _t, _d in ligas_de_la_partida(estado) for c in liga.equipos}
+    variante, pct = _variante_fichaje(jugador, de, a, monto, clubes)     # v0.4.27.0: traición / ganga / pago generoso
+    if variante:
+        importancia = min(5, importancia + BONO_IMPORTANCIA_ATIPICO)
+        puntaje += BONO_PUNTAJE_ATIPICO      # gana puestos en el tope de la jornada, pero el tope se respeta
     hora = _hora_del_ultimo_dia(estado)      # v0.4.25.0: el último día cada hora tiene su propio cupo de noticias
     if not propio and not confirmado:
         ahora = tuple(_clave_jornada(estado))
@@ -379,13 +516,56 @@ def _noticia_fichaje(estado: dict, jugador, de: str, a: str, monto: int, propio:
     formas = [f"{pre}{nombre} ficha por {a}", f"{pre}{a} ficha a {nombre}", f"{pre}{nombre} cambia de club"]
     if not libre:
         formas.insert(0, f"{pre}{nombre} deja {de} y ficha por {a}")
-    clubes = {c.nombre: c for liga, _t, _d in ligas_de_la_partida(estado) for c in liga.equipos}
-    noticias.publicar(estado, 'fichaje', noticias.titular(*formas),
-                      f"{a} cerró el fichaje de {nombre} ({getattr(jugador, 'posicion', '')}, media {media}), "
-                      + ("que llega libre." if libre else f"que llega desde {de} por {dinero_exacto(monto)}."),
+    cuerpo = (f"{a} cerró el fichaje de {nombre} ({getattr(jugador, 'posicion', '')}, media {media}), "
+              + ("que llega libre." if libre else f"que llega desde {de} por {dinero_exacto(monto)}."))
+    if variante:                              # el mismo fichaje, con otro titular y una frase más
+        formas, cuerpo = _textos_variante(variante, pct, pre, nombre, de, a, monto, jugador, media, formas, cuerpo)
+    noticias.publicar(estado, 'fichaje', noticias.titular(*formas), cuerpo,
                       importancia=importancia, equipos=[clubes[n] for n in (str(a), str(de)) if n in clubes],
                       jugadores=[jugador], media=media, propio=bool(propio), confirmado=bool(confirmado),
-                      puntaje=puntaje, **({'hora': hora} if hora is not None else {}))
+                      puntaje=puntaje, **({'variante': variante} if variante else {}),
+                      **({'hora': hora} if hora is not None else {}))
+
+
+def _noticia_liberacion(estado: dict, jugador, de: str, propio: bool) -> None:
+    """v0.4.27.0: que un club suelte a un jugador es noticia. Tuyo (rescisión): siempre; media >= 85 → importancia 5,
+    >= 80 → 4, resto → 3. De la IA (suelta sobrantes): desde media 80 (76 si es un club de tu liga); >= 90 → 5,
+    >= 85 → 4, resto → 3; y como suelta a muchos, solo quedan los MAX_LIBERACIONES_IA_JORNADA de más puntaje de cada
+    jornada (o de cada hora del último día). Es una noticia de tipo 'otro' con la imagen de fichajes y la marca
+    `liberacion` (su etiqueta es LIBERADO); no cuenta para el tope de fichajes."""
+    from alpha_football import noticias
+    from alpha_football.mercado_ia import ligas_de_la_partida
+    from alpha_football.salidas import _clave_jornada
+    media = int(getattr(jugador, 'overall', 0) or 0)
+    tuyas = {c.nombre for c in getattr(estado.get('liga'), 'equipos', None) or []}
+    de_tu_liga = str(de) in tuyas
+    puntaje = media + (BONO_TU_LIGA if de_tu_liga else 0)
+    if propio:
+        importancia = 5 if media >= 85 else 4 if media >= 80 else 3
+    else:
+        if media < (76 if de_tu_liga else 80):
+            return
+        importancia = 5 if media >= 90 else 4 if media >= 85 else 3
+    hora = _hora_del_ultimo_dia(estado)
+    if not propio:
+        ahora = tuple(_clave_jornada(estado))
+        hoy = [n for n in noticias.lista(estado) if n.get('liberacion') and not n.get('propio')
+               and (n['temporada'], n['jornada']) == ahora and n.get('hora') == hora]
+        if len(hoy) >= MAX_LIBERACIONES_IA_JORNADA:
+            flojo = min(hoy, key=lambda n: (n.get('puntaje', 0), n['id']))
+            if puntaje <= flojo.get('puntaje', 0):
+                return
+            noticias.retirar(estado, flojo['id'])
+    nombre = f"{jugador.nombre} {jugador.apellido}"
+    posicion = getattr(jugador, 'posicion', '')
+    formas = [f"{de} libera a {nombre}", f"{de} deja libre a {nombre}", f"{nombre} sale de {de}"]
+    cuerpo = (f"{de} rescindió el contrato de {nombre} ({posicion}, media {media}). El jugador queda como agente "
+              "libre y cualquier club puede ficharlo sin pagar traspaso.")
+    clubes = {c.nombre: c for liga, _t, _d in ligas_de_la_partida(estado) for c in liga.equipos}
+    noticias.publicar(estado, 'otro', noticias.titular(*formas), cuerpo, importancia=importancia, categoria='fichaje',
+                      equipos=[clubes[str(de)]] if str(de) in clubes else [], jugadores=[jugador],
+                      liberacion=True, media=media, propio=bool(propio), puntaje=puntaje,
+                      **({'hora': hora} if hora is not None else {}))
 
 
 MAX_ULTIMO_PASE = 1500          # v0.4.26.0: notas de "cuándo cambió de club" que se guardan antes de podar las viejas
@@ -415,12 +595,19 @@ def _anotar_ultimo_pase(estado: dict, jugador) -> None:
 def registrar_pase(estado: dict, jugador, de: str, a: str, monto: int, propio: bool,
                    confirmado: bool = False) -> None:
     """Agrega un pase al historial persistente (datos_carrera['historial_pases']) y, si es relevante y no
-    es una liberación, publica la noticia del fichaje (`confirmado`: el titular empieza por "Confirmado:")."""
+    es una liberación, publica la noticia del fichaje (`confirmado`: el titular empieza por "Confirmado:").
+    v0.4.27.0: cuando un club suelta a un jugador (rescisión o sobrante de la IA) publica la noticia de la liberación;
+    el fin de contrato no (son cientos al cerrar la temporada)."""
     if not str(a).startswith('Libre'):
         try:
             _noticia_fichaje(estado, jugador, de, a, monto, propio, confirmado)
         except Exception as e:
             logger.error(f"No se pudo publicar la noticia del fichaje: {e}")
+    elif str(a) in PASES_LIBERACION:
+        try:
+            _noticia_liberacion(estado, jugador, de, propio)
+        except Exception as e:
+            logger.error(f"No se pudo publicar la noticia de la liberación: {e}")
     try:
         liga = estado.get('liga')
         hist = estado.setdefault('datos_carrera', {}).setdefault('historial_pases', [])
@@ -545,7 +732,8 @@ def fichar(estado: dict, jugador, club, precio: Optional[int] = None) -> tuple[b
         registrar_pase(estado, jugador, de, mi.nombre, precio, True)
         try:
             from alpha_football.finanzas import registrar
-            registrar(estado, 'fichajes', precio)
+            registrar(estado, 'fichajes', precio,       # v0.4.27.0: concepto del historial de transacciones
+                      concepto=f"Fichaje de {jugador.nombre_completo} (de {de})")
         except Exception as e_fin:
             logger.error(f"No se pudo registrar el gasto del fichaje: {e_fin}")
         avisar_llegada(estado, jugador)     # v4.4.0
@@ -578,7 +766,8 @@ def _fichar_diferido(estado: dict, jugador, club, precio: int) -> tuple[bool, st
             f"Compra acordada: {jugador.nombre_completo} de {de} por ${precio:,} (llega en la ventana)")
         try:
             from alpha_football.finanzas import registrar
-            registrar(estado, 'fichajes', precio)
+            registrar(estado, 'fichajes', precio,       # v0.4.27.0: concepto del historial de transacciones
+                      concepto=f"Fichaje acordado de {jugador.nombre_completo} (de {de})")
         except Exception as e_fin:
             logger.error(f"No se pudo registrar el gasto del fichaje: {e_fin}")
         C.enviar(estado, 'club', f"Fichaje acordado: {jugador.nombre_completo}",

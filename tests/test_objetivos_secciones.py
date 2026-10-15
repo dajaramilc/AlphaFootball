@@ -30,9 +30,11 @@ def test_marca_valor_y_estrella():
     e = estado_carrera(); mi = e['mi_equipo']
     D._dc(e).pop('objetivo_marca', None)
     om = D.definir_objetivo_marca(e, random.Random(1))
-    assert om['tipo'] in ('valor', 'estrella')
+    assert om['tipo'] in ('valor', 'estrella', 'camisetas')          # v0.4.27.0: + la venta de camisetas
     if om['tipo'] == 'valor':
         assert om['meta'] == int(F.valor_club(mi, e) * 1.10)         # v0.4.26.0: el valor suma las camisetas
+    elif om['tipo'] == 'camisetas':
+        assert om['meta'] == F.meta_camisetas(e)
     else:
         assert om['meta'] == round(mi.ovr_promedio) + 5
     assert D.definir_objetivo_marca(e) is om          # se fija una vez por temporada

@@ -364,7 +364,8 @@ _TEXTO_TARJETA = {
     'ojeador_screen': "Tres fichajes recomendados por tu ojeador en cada ventana de pases.",
     'correo_screen': "Mensajes de la directiva, jugadores y otros clubes. El número rojo son los no leídos.",
     'notificaciones_screen': "Mensajes de jugadores y presidente a la izquierda; correo del club a la derecha. Últimos 5 de cada uno.",   # v0.4.10.0
-    'noticias_screen': "Titulares vigentes: elige uno y lee su detalle. El punto dorado marca las no leídas.",   # v0.4.23.0
+    'noticias_screen': "Titulares vigentes: elige uno y lee su detalle. El punto dorado marca las no leídas."
+                       " Un fichaje puede salir como GANGA, PAGO GENEROSO o TRAICIÓN, y un traspaso récord como RÉCORD.",   # v0.4.23.0; v0.4.27.0
     'stats_screen': "Goleadores, asistidores, vallas invictas y mejores notas de la liga y tu equipo.",
     'copa_screen': "Tu copa internacional: fase de liga o grupos, llaves y estadísticas.",
     'career_screen': "Tus temporadas anteriores, títulos y récords como DT.",
@@ -410,7 +411,7 @@ def _ayuda_hub(estado: dict) -> list:
             (L.R_SOBRE, "Correo", "El número rojo son los mensajes sin leer. Clic o tecla M para abrir el correo."),
             (L.R_TABLA, "Tabla", "Abre en NOTICIAS; las pestañas NOTICIAS / LIGA / COPA cambian el panel (LIGA: posiciones, tu club resaltado)."),
             (_union([L.rect_tab_tabla('liga'), L.rect_tab_tabla('copa')]), "LIGA / COPA",
-             "Alterna entre la tabla de la liga y la de tu copa internacional. Si tu club no la juega, VER COPA te lleva a Otras ligas › Copas."),   # v0.4.26.0
+             "Alterna entre la tabla de la liga y la de tu copa internacional: tu fase de liga o de grupos y, al terminarla, las llaves. Si tu club no la juega, VER COPA te lleva a Otras ligas › Copas."),   # v0.4.26.0; v0.4.27.0: llaves
             (L.rect_tab_tabla('noticias'), "NOTICIAS", "Las 3 más recientes primero; cada 5 s corren a las viejas y reinician al parar (N). Clic: ver."),
             (L.R_HIST, "Historial", "Tus partidos jugados. Rueda del mouse o ▲ ▼ para desplazarte."),
             (L.R_JUGAR, "JUGAR", "Juega el partido del día. Sin partido es CONTINUAR: los días pasan hasta tu partido, una oferta o un evento."),   # v0.4.14.1
@@ -692,6 +693,13 @@ AYUDA['otras_ligas_screen'] = _ayuda_otras_ligas
 def _ayuda_plantilla(estado: dict) -> list:
     from alpha_football.ui import plantilla_screen as P
     r = P._rects()
+    if estado.get('plantilla_liberar_sel') is not None:       # v0.4.27.0: la ventana de confirmar LIBERAR
+        rs = P.rects_overlay_liberar()
+        return [(P.R_OVERLAY_LIB, "Liberar jugador",
+                 "Rescinde su contrato: pagas la indemnización que ves aquí (la mitad de los sueldos pendientes) "
+                 "y queda como agente libre."),
+                (rs['confirmar'], "Confirmar", "Libera al jugador y paga la indemnización (Enter)."),
+                (rs['cancelar'], "Cancelar", "Cierra la ventana sin liberar a nadie (Esc).")]
     cab = _union(P.rect_columna(c) for c, _t, _x in P.COLUMNAS if c)
     return [
         (r['orden'], "Orden rápido", "Cicla el orden: posición, media, edad, valor y contrato (tecla S)."),
@@ -713,7 +721,7 @@ def _ayuda_plantilla(estado: dict) -> list:
         (r['renovar'], "Renovar contrato", "Abre la negociación para extender su contrato (tecla R)."),
         (r['transferible'], "Transferible", "Lo pone en venta o lo quita (tecla T). Ponerlo baja su moral."),
         (r['lista_prestamo'], "Préstamo", "Pone al jugador en la lista de préstamo: los clubes te mandan ofertas de cesión (tecla P)."),
-        (r['liberar'], "Liberar jugador", "Rescinde su contrato: pagas la mitad de los sueldos pendientes y queda como agente libre (tecla L, con confirmación)."),
+        (r['liberar'], "Liberar jugador", "Rescinde su contrato: pagas la mitad de los sueldos pendientes y queda como agente libre (tecla L; una ventana muestra la indemnización para confirmar o cancelar)."),
         (r['prestamos'], "Préstamos", "Tus jugadores a préstamo y los cedidos, con CONCLUIR PRÉSTAMO."),
         (r['volver'], "Volver", "Regresa al hub (también ESC)."),
     ]
@@ -835,6 +843,8 @@ def _ayuda_ojeador(estado: dict) -> list:
         (_union(R(t.x, t.y, t.width, f.y - t.y - 6) for t, f in zip(tarjetas, fichar)), "Recomendados",
          "Hasta 3 jugadores con su club, precio y el motivo de la recomendación."),
         (_union(fichar), "Negociar", "Abre la negociación de fichaje del jugador de esa tarjeta."),
+        (_union(O._rects_favorito(n)), "Favoritos",      # v0.4.27.0
+         "Agrega el jugador a tu lista de FAVORITOS o lo quita (tecla F sobre la tarjeta con foco)."),
         (O._volver(), "Volver", "Regresa al hub (también ESC)."),
     ]
 
@@ -873,6 +883,8 @@ def _ayuda_correo(estado: dict) -> list:
     except Exception:
         pass
     its.append((C._rect_accion(), "Decisiones", "Algunos mensajes piden decidir: clic o ← → y Enter. Sin responder, se deja pasar."))   # v0.4.10.0
+    its.append((R(C.R_MSG.x, C.R_MSG.y, C.R_MSG.width, C._rect_accion().y - C.R_MSG.y - 6), "Mensajes largos",   # v0.4.27.0
+                "Las listas de jugadores llevan el nombre en negrita; si el texto no cabe, RePág / AvPág o la rueda del ratón lo recorren."))
     its.append((C.R_LISTA, "Forma de tus jugadores",      # v0.4.26.0
                 "Los jugadores de tu club avisan al entrar en racha imparable y al terminarla (con lo que avanzaron)."))
     its.append((C._volver(), "Volver", "Regresa a NOTIFICACIONES (también ESC)."))
@@ -889,9 +901,17 @@ def _ayuda_notificaciones(estado: dict) -> list:     # v0.4.10.0
 
 def _ayuda_noticias(estado: dict) -> list:     # v0.4.23.0
     from alpha_football.ui import noticias_screen as NS
+    if estado.get('_noticias_ficha'):          # v0.4.27.0: la ficha del jugador abierta desde una noticia
+        rs = NS.rects_overlay_ficha()
+        return [(NS.R_OVERLAY_FICHA, "Ficha del jugador", "Datos, contrato, atributos y estadísticas del jugador de la noticia."),
+                (rs['favorito'], "Favoritos", "Agrega o quita al jugador de tu lista de FAVORITOS (tecla F); no aparece con tus propios jugadores."),
+                (_union([rs['anterior'], rs['siguiente']]), "Otro jugador", "Con varios jugadores en la noticia: ← → pasan de uno a otro."),
+                (rs['cerrar'], "Cerrar", "Vuelve a la noticia (Esc o Enter).")]
     return [(NS.R_LISTA, "Lista", "Noticias vigentes, las más recientes primero (mismo día: las importantes). Punto dorado = sin leer."),
             (NS.R_DETALLE, "Detalle", "Imagen, titular, fecha y cuerpo de la noticia elegida. Al verla queda leída."),
             (NS.R_ACCION, "Botón", "Algunas noticias traen un atajo (por ejemplo ver los remates): clic o Enter."),
+            (NS.rect_ver_ficha(), "Ver ficha",     # v0.4.27.0
+             "Si la noticia trata de un jugador: su ficha en una ventana (Enter). Con varios jugadores, ← → pasan de uno a otro."),
             (NS._volver(), "Volver", "Regresa al hub (también ESC).")]
 
 
@@ -931,9 +951,19 @@ def _ayuda_finanzas(estado: dict) -> list:
             (rs[1], "Nivel 2", "Más dinero, meta 2 puestos más alta (tecla 2)."),
             (rs[2], "Nivel 3", "El mayor aporte, meta 3 puestos más alta (tecla 3). ESC cierra sin pedir."),
         ]
+    if estado.get('historial_trans_abierto'):      # v0.4.27.0: HISTORIAL DE TRANSACCIONES
+        return [
+            (F.R_LISTA, "Historial de transacciones",
+             "Cada movimiento de dinero del club con su fecha real: taquilla, camisetas, patrocinio, salarios, "
+             "fichajes, ventas, premios, multas e indemnizaciones. + verde entra, − rojo sale; el más reciente "
+             "va arriba. Rueda del ratón o ↑ ↓ RePág AvPág para desplazar."),
+            (F._volver(), "Volver", "Regresa a FINANZAS (también T o ESC)."),
+        ]
     return [
         (F.R_SALDO, "Saldo y valor", "Saldo, valor del club (plantilla + saldo), sus proyecciones y la masa salarial contra el tope."),
         (F.R_LIBRO, "Ingresos y gastos", "Taquilla, patrocinio y premios contra salarios y fichajes de la temporada."),
+        (F.R_HISTORIAL, "Historial de transacciones",      # v0.4.27.0
+         "Abre la lista de cada movimiento de dinero del club con su fecha real (también la tecla T)."),
         (F.R_ESPALDARAZO, "Espaldarazo financiero", "Dinero ya a cambio de una meta más alta; la mitad se descuenta al cierre."
                                                       " También sube el tope de masa salarial en el mismo porcentaje."),   # v0.4.26.0
         (F.R_CAMISETAS, "Venta de camisetas",      # v0.4.26.0
@@ -951,6 +981,8 @@ def _ayuda_negociacion(estado: dict) -> list:
     etapa = neg.get('etapa', 'club')
     renovar = neg.get('modo') == 'renovar' or neg.get('club') is None
     its = [(N.R_INFO, "Jugador", "Club, media, valor y contrato actual del jugador.")]
+    if neg.get('modo') != 'renovar':           # v0.4.27.0: seguir al jugador (los tuyos no)
+        its.append((r['favorito'], "Favoritos", "Agrega al jugador a tu lista de FAVORITOS o lo quita (tecla F)."))
     if etapa == 'club' and not renovar:
         its += [
             (_union([r['monto_menos'], r['monto'], r['monto_mas']]), "Tu oferta",
@@ -1159,7 +1191,7 @@ def _ayuda_copa(estado: dict) -> list:
         (R(36, 14, 850, 80), "Estado de la copa", "Fase en juego o campeón, y cómo va tu club."),
         (R(36, 14, 850, 80), "Copa Intercontinental",     # v0.4.26.0
          "En diciembre, una semana después de la final de la Libertadores, el campeón de la Libertadores juega contra "
-         "el campeón de Europa a partido único (empate = penales). El campeón cobra 20 M€ y el finalista 6 M€. Si tu "
+         "el campeón de Europa a partido único (empate = penales). El campeón cobra $20M y el finalista $6M. Si tu "
          "club la juega, aparece en tu calendario y se juega desde JUGAR."),
         (S.R_SELECTOR_COPA, "Champions / Libertadores", "Alterna la copa que ves (tecla C)."),
         (_union(S.rect_pestana(p) for p in S.PESTANAS), "Pestañas", "Fase de liga o grupos, llaves, partidos y estadísticas (1-4 o ← →)."),

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ALPHA FOOTBALL — Logros del DT (v0.4.25.0: de 9 a 29 hitos).
+ALPHA FOOTBALL — Logros del DT (v0.4.25.0: de 9 a 29 hitos; v0.4.27.0: 31).
 Hitos de la carrera. Cada uno que se desbloquea queda en `datos_carrera['logros']` y publica una noticia
 'logro' de importancia 5 con un botón que abre HISTORIAL DE CARRERA. Lógica pura sobre `estado`: nada de pygame
 (el overlay vive en ui/career_screen.py).
@@ -26,6 +26,8 @@ LOGROS = [
     ('tricampeon', "Tricampeón", "Gana 3 títulos de liga."),
     ('final_continental', "Final continental", "Llega a una final de copa internacional."),
     ('campeon_continental', "Campeón continental", "Gana la copa internacional de tu continente."),
+    ('rey_continental', "Rey Continental", "Gana la Champions y la Libertadores."),        # v0.4.27.0
+    ('el_alpha', "El Alpha", "Gana la Copa Intercontinental."),                          # v0.4.27.0
     ('balon_oro', "Balón de Oro en casa", "Un jugador de tu club gana el Balón de Oro."),
     ('pj_50', "50 partidos", "Dirige 50 partidos oficiales (liga y copa)."),
     ('pj_100', "100 partidos", "Dirige 100 partidos oficiales (liga y copa)."),
@@ -47,7 +49,7 @@ LOGROS = [
     ('clasicos_5', "Rey de los clásicos", "Gana 5 clásicos seguidos."),
     ('fichaje_84', "Fichaje de lujo", "Ficha a un jugador de media 84 o más."),
     ('goleador_30', "Goleador de 30", "Que uno de tus jugadores marque 30 goles en una temporada."),
-    ('millonario', "Caja fuerte", "Junta 1.000 millones de euros en la caja del club."),
+    ('millonario', "Caja fuerte", "Junta 550 millones de dólares en la caja del club."),
     ('temporadas_5', "Cinco temporadas", "Completa 5 temporadas al frente del club."),
     ('temporadas_10', "Una década", "Completa 10 temporadas al frente del club."),
 ]
@@ -64,7 +66,7 @@ _CONTADORES = ('pj', 'racha', 'clasicos_seguidos', 'victorias', 'invicto', 'derr
 _DIFERENCIA_MANITA = 5
 _MEDIA_LUJO = 84
 _GOLES_GOLEADOR = 30
-_CAJA_MILLONARIO = 1_000_000_000
+_CAJA_MILLONARIO = 550_000_000          # v0.4.27.0: antes 1.000 M
 _ACCION = {'pantalla': 'career_screen', 'texto': "VER LOGROS"}
 
 
@@ -214,6 +216,30 @@ def _caja(estado: dict) -> int:
     return int(getattr(estado.get('mi_equipo'), 'balance', 0) or 0)
 
 
+def _copas_ganadas(estado: dict) -> set:
+    """v0.4.27.0: copas continentales ('champions' / 'libertadores') que ganó el user en su carrera. La copa de la
+    temporada se pisa con la siguiente, así que cada revisión anota en datos_carrera['logros']['copas_ganadas'] la
+    que vea con tu club de campeón."""
+    est = logros(estado)
+    ganadas = set(est.get('copas_ganadas') or [])
+    user = getattr(estado.get('mi_equipo'), 'nombre', None)
+    if user:
+        from alpha_football import competiciones as CP
+        for tipo in ('champions', 'libertadores'):
+            if CP.campeon(estado, tipo) == user:
+                ganadas.add(tipo)
+    est['copas_ganadas'] = sorted(ganadas)
+    return ganadas
+
+
+def _gano_intercontinental(estado: dict) -> bool:
+    """v0.4.27.0: tu club figura como campeón en el historial de la Intercontinental."""
+    user = getattr(estado.get('mi_equipo'), 'nombre', None)
+    reg = (estado.get('datos_carrera') or {}).get('intercontinental') or {}
+    return bool(user) and any(isinstance(h, dict) and h.get('campeon') == user
+                              for h in reg.get('historial') or [])
+
+
 def revisar(estado: dict, temporada: Optional[int] = None, jornada: Optional[int] = None) -> list:
     """Los logros que salen de mirar el estado (títulos, finales y copas, fichaje de lujo, goleador, caja,
     temporadas cumplidas). Se llama al cerrar cada jornada y al cerrar la temporada; devuelve los ids
@@ -227,6 +253,8 @@ def revisar(estado: dict, temporada: Optional[int] = None, jornada: Optional[int
         ('tricampeon', lambda: _titulos_de_liga(historial) >= 3),
         ('final_continental', lambda: any(_es_final(t) for t in fases)),
         ('campeon_continental', lambda: any(_es_campeon(t) for t in fases)),
+        ('rey_continental', lambda: len(_copas_ganadas(estado)) >= 2),
+        ('el_alpha', lambda: _gano_intercontinental(estado)),
         ('fichaje_84', lambda: _hay_fichaje_de_lujo(estado)),
         ('goleador_30', lambda: _hay_goleador(estado)),
         ('millonario', lambda: _caja(estado) >= _CAJA_MILLONARIO),
